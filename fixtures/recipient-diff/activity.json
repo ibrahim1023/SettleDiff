@@ -1,0 +1,1 @@
+[{"ledger_id":"syn_ledger_recipient","vendor_slug":"synthetic-search","amount":{"amount":"0.01","unit":"USDC"},"asset":"USDC","protocol":"mpp","chain":"tempo","recipient":"syn_recipient_ledger","status":"confirmed","error_reason":null,"transaction_id":"syn_tx_recipient","session_id":null,"transaction_hash":null,"occurred_at":"2026-08-12T00:00:00Z"}]

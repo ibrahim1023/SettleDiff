@@ -1,0 +1,1 @@
+{"vendor_slug":"synthetic-search","upstream_http_status":400,"charge":{"amount":"0.01","unit":"USDC"},"asset":"USDC","protocol":"mpp","chain":"tempo","recipient":"syn_recipient","settlement_status":"settled","transaction_id":"syn_tx_paid_failure","session_id":null,"transaction_hash":null,"response_body":{"error":"synthetic malformed request"},"executed_at":"2026-08-12T00:00:00Z"}
