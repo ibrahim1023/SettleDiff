@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from settlediff.application.replay import assert_sanitized_fixture
+from settlediff.application.replay import assert_sanitized_fixture, replay_fixture
 
 
 @pytest.mark.parametrize(
@@ -21,3 +23,14 @@ def test_fixture_sanitizer_rejects_sensitive_or_high_entropy_content(value: str)
 
 def test_fixture_sanitizer_allows_explained_synthetic_identifiers() -> None:
     assert_sanitized_fixture('{"transactionId":"syn_tx_paid_failure_001"}')
+
+
+def test_replay_sanitizes_intent_input(tmp_path: Path) -> None:
+    (tmp_path / "manifest.json").write_text(
+        '{"schema_version":1,"scenario":"synthetic","synthetic":true,'
+        '"expected_verdict":"VERIFIED","artifacts":[]}'
+    )
+    (tmp_path / "intent.json").write_text('{"email":"person@example.invalid"}')
+
+    with pytest.raises(ValueError, match="email"):
+        replay_fixture(tmp_path)

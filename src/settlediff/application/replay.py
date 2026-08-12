@@ -42,7 +42,9 @@ def replay_fixture(path: Path) -> MachineReport:
             raise ValueError(f"fixture declares missing artifact {name}")
         assert_sanitized_fixture((path / name).read_text())
 
-    intent = PurchaseIntent.model_validate_json((path / "intent.json").read_text())
+    intent_text = (path / "intent.json").read_text()
+    assert_sanitized_fixture(intent_text)
+    intent = PurchaseIntent.model_validate_json(intent_text)
     contract = normalize_contract(_artifact(path, "contract.json", ArtifactType.SERVICE_CONTRACT))
     execution = normalize_execution(_artifact(path, "execution.json", ArtifactType.EXECUTION))
     activity = normalize_activity(_artifact(path, "activity.json", ArtifactType.ACTIVITY))
