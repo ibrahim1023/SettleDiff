@@ -20,6 +20,8 @@ Build SettleDiff as a local developer tool that keeps agentic investigation sepa
 3. Preserve public contracts or update their tests, ADRs, and docs in the same change.
 4. Run the verification loop in `docs/development/verification-loops.md` before claiming completion.
 
+Do not use Superpowers skills to execute implementation or fixes. Follow the tracked implementation plan, repository tests, ADRs, and verification loops directly. The files under `docs/superpowers/` are planning records, not an implementation workflow dependency.
+
 ## No AI slop
 
 Avoid AI slop throughout development. Do not add speculative abstractions, duplicate wrappers, generic helper modules, placeholder/TODO prose, fake data presented as real, needless dependencies, verbose comments that restate code, broad exception swallowing, invented API fields, or generic dashboard styling. Prefer exact domain names, small focused files, evidence-backed behavior, purposeful UI copy, and deletion of code that does not serve an accepted requirement. If a generated artifact cannot explain its consumer and test, remove it.

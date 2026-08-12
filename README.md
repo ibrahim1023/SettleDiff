@@ -74,6 +74,7 @@ See [Architecture](docs/architecture/overview.md), [ADRs](docs/decisions/README.
 - Money-moving failures are never retried until submission certainty is resolved.
 - Changes are committed in independently reviewable, passing increments.
 - Generated-looking filler, unnecessary abstractions, placeholder copy, and other AI slop are rejected.
+- Superpowers is not used to execute implementation or fixes; the tracked plan and repository verification loops are authoritative.
 
 Repository instructions are in [AGENTS.md](AGENTS.md). Verification gates are in [Testing](docs/testing/strategy.md), [Evaluation](docs/evaluation/strategy.md), [Observability](docs/observability/strategy.md), and [Verification loops](docs/development/verification-loops.md).
 

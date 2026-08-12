@@ -1,6 +1,6 @@
 # SettleDiff MVP Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For implementers:** Execute this plan directly using the repository's ADRs, tests, and verification loops. Do not invoke Superpowers skills for implementation or fixes. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a local developer tool that performs one authorized Perflo purchase investigation, deterministically verifies its evidence, and renders the same report through a CLI and local web UI.
 
