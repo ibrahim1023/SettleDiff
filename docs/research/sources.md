@@ -18,6 +18,7 @@ Research was conducted on 2026-08-12. Primary and official sources were preferre
 - [SQLite file format](https://sqlite.org/fileformat.html) and [WAL](https://sqlite.org/wal.html) — transactional local persistence and WAL operational trade-offs.
 - [Typer testing](https://typer.tiangolo.com/tutorial/testing/) — CLI tests through `CliRunner`.
 - [Hypothesis](https://hypothesis.readthedocs.io/en/latest/) — property-based invariant testing.
+- [GitHub Actions secure use](https://docs.github.com/en/actions/reference/security/secure-use) and [Python build/test guidance](https://docs.github.com/en/actions/tutorials/build-and-test-code/python) — least-privilege workflow permissions, immutable full-SHA action pinning, and consistent Python setup.
 
 ### Agent, context, harness, loop, graph, and eval practices
 
@@ -52,6 +53,7 @@ Research was conducted on 2026-08-12. Primary and official sources were preferre
 | Correlation IDs and low-cardinality metrics | Connects layers without turning identifiers into unsafe metric labels. |
 | Small reviewable commits | Makes generated changes auditable and failures easy to bisect. |
 | Explicit anti-slop review | Prevents speculative abstractions, filler UI, invented fields, and placeholder artifacts. |
+| Least-privilege offline CI with full-SHA action pinning | Repeats the local gate without credentials and reduces workflow supply-chain exposure. |
 
 ## Rejected or deferred practices
 

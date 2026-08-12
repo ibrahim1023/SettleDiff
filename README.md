@@ -88,7 +88,7 @@ Repository instructions are in [AGENTS.md](AGENTS.md). Verification gates are in
 7. Optional Context.dev evidence path.
 8. ElevenLabs only after core acceptance criteria pass.
 
-The detailed task-by-task plan lives under `docs/superpowers/plans/`.
+The detailed task-by-task plan is [SettleDiff MVP Implementation Plan](docs/superpowers/plans/2026-08-12-settlediff-mvp.md).
 
 ## Documentation
 
@@ -101,6 +101,7 @@ The detailed task-by-task plan lives under `docs/superpowers/plans/`.
 - [Observability strategy](docs/observability/strategy.md)
 - [Security and data handling](docs/security/data-handling.md)
 - [Research sources and practice assessment](docs/research/sources.md)
+- [Decisions requiring owner input](docs/development/open-decisions.md)
 
 ## Scope
 
