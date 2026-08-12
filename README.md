@@ -12,7 +12,8 @@ intent → contract → execution → receipt → service outcome → activity r
 
 ## Status
 
-The production foundation is designed and documented. Product implementation has not started.
+Phase 1 is implemented: the locked Python project, offline safety guard, documentation checker,
+and least-privilege CI gate are available. Product behavior is not implemented yet.
 
 - LLM provider: Hyperfusion, through its OpenAI-compatible Chat Completions API.
 - Agent SDK: PydanticAI, one bounded investigator.

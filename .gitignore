@@ -7,10 +7,15 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+.hypothesis/
 .mypy_cache/
+.pyright/
 .ruff_cache/
 .coverage
 htmlcov/
+build/
+dist/
+*.egg-info/
 
 # Local runtime data and secrets
 .env
