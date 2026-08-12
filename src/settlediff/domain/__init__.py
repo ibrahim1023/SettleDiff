@@ -17,6 +17,7 @@ from settlediff.domain.models import (
     Verdict,
 )
 from settlediff.domain.money import Money, UnitMismatchError
+from settlediff.domain.redaction import mask_identifier, redact_artifact
 
 __all__ = [
     "ArtifactType",
@@ -35,4 +36,6 @@ __all__ = [
     "Severity",
     "UnitMismatchError",
     "Verdict",
+    "mask_identifier",
+    "redact_artifact",
 ]
