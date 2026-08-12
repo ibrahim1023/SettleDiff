@@ -1,5 +1,6 @@
 """Deterministic SettleDiff domain types and rules."""
 
+from settlediff.domain.checks import run_checks
 from settlediff.domain.matching import (
     MatchConfidence,
     MatchResult,
@@ -26,6 +27,7 @@ from settlediff.domain.models import (
 )
 from settlediff.domain.money import Money, UnitMismatchError
 from settlediff.domain.redaction import mask_identifier, redact_artifact
+from settlediff.domain.verdict import PRECEDENCE, derive_verdict
 
 __all__ = [
     "ArtifactType",
@@ -44,6 +46,7 @@ __all__ = [
     "MatchStrategy",
     "Money",
     "PaymentReceipt",
+    "PRECEDENCE",
     "PurchaseIntent",
     "SettlementStatus",
     "Severity",
@@ -51,5 +54,7 @@ __all__ = [
     "Verdict",
     "mask_identifier",
     "match_activity",
+    "derive_verdict",
+    "run_checks",
     "redact_artifact",
 ]
