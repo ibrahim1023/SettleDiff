@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+DECIMAL_TEXT = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 
 
 class UnitMismatchError(ValueError):
@@ -35,6 +38,10 @@ class Money(BaseModel):
 
         data = cast(dict[str, object], value)
         raw_amount = data.get("amount")
+        if isinstance(raw_amount, str) and DECIMAL_TEXT.fullmatch(raw_amount):
+            raw_amount = Decimal(raw_amount)
+            data = {**data, "amount": raw_amount}
+
         minor_units = data.get("minor_units")
         if (
             not isinstance(raw_amount, Decimal)

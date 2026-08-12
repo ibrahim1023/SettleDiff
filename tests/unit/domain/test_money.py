@@ -38,6 +38,18 @@ def test_normalized_minor_amount_round_trips_through_canonical_dump() -> None:
     assert Money.model_validate(normalized.model_dump()) == normalized
 
 
+def test_money_round_trips_through_json_without_float_coercion() -> None:
+    money = Money(amount=Decimal("0.010000"), unit="USDC")
+
+    assert Money.model_validate_json(money.model_dump_json()) == money
+
+
+@pytest.mark.parametrize("amount", [" 0.01", "0.01 ", "1_000", "one"])
+def test_money_rejects_noncanonical_decimal_text(amount: str) -> None:
+    with pytest.raises(ValidationError):
+        Money.model_validate({"amount": amount, "unit": "USD"})
+
+
 @given(raw_amount=st.integers(min_value=0, max_value=10**18), exponent=st.integers(0, 18))
 def test_minor_amount_normalization_is_exact_and_idempotent(raw_amount: int, exponent: int) -> None:
     money = Money(amount=Decimal(raw_amount), unit="USDC", minor_units=exponent)

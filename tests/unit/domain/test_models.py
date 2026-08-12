@@ -200,3 +200,9 @@ def test_explanation_is_separate_from_machine_report() -> None:
 
     assert not hasattr(report, "explanation")
     assert explanation.deterministic_verdict is report.verdict
+
+
+def test_machine_report_round_trips_through_versioned_json() -> None:
+    report = machine_report_fixture()
+
+    assert MachineReport.model_validate_json(report.model_dump_json()) == report
