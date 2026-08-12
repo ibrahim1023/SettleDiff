@@ -3,6 +3,8 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from settlediff.domain.money import Money, UnitMismatchError
@@ -24,9 +26,24 @@ def test_money_normalizes_unit_and_minor_amount() -> None:
     canonical = Money(amount=Decimal("0.01"), unit="USDC")
 
     assert normalized.amount == Decimal("0.010000")
+    assert normalized.minor_units is None
     assert normalized.unit == "USDC"
     assert normalized == canonical
     assert hash(normalized) == hash(canonical)
+
+
+def test_normalized_minor_amount_round_trips_through_canonical_dump() -> None:
+    normalized = Money(amount=Decimal("10000"), unit="USDC", minor_units=6)
+
+    assert Money.model_validate(normalized.model_dump()) == normalized
+
+
+@given(raw_amount=st.integers(min_value=0, max_value=10**18), exponent=st.integers(0, 18))
+def test_minor_amount_normalization_is_exact_and_idempotent(raw_amount: int, exponent: int) -> None:
+    money = Money(amount=Decimal(raw_amount), unit="USDC", minor_units=exponent)
+
+    assert money.amount == Decimal(raw_amount).scaleb(-exponent)
+    assert Money.model_validate(money.model_dump()) == money
 
 
 def test_minor_amount_must_be_integral() -> None:

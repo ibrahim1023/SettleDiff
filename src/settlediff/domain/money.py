@@ -17,7 +17,8 @@ class Money(BaseModel):
 
     When ``minor_units`` is supplied, ``amount`` is interpreted as an integer minor-unit
     quantity and normalized by that decimal exponent. For example, ``10000`` with six minor
-    units represents ``0.01``.
+    units represents ``0.01``. The exponent is consumed during validation so serialized values
+    are always canonical and safe to validate again.
     """
 
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
@@ -47,6 +48,7 @@ class Money(BaseModel):
 
         normalized = dict(data)
         normalized["amount"] = raw_amount.scaleb(-minor_units)
+        normalized["minor_units"] = None
         return normalized
 
     @field_validator("amount")
