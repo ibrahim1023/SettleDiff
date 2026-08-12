@@ -1,0 +1,14 @@
+{
+  "ok": false,
+  "error": {
+    "code": "GUARDRAIL_DENIED",
+    "message": "Synthetic request exceeds the configured limit.",
+    "recoverable": false,
+    "details": {
+      "limit": "0.05",
+      "attempted": "0.06"
+    },
+    "hint": "Use a synthetic amount within the configured limit.",
+    "submissionUncertain": false
+  }
+}

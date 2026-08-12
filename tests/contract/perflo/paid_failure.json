@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "result": {
+    "vendorSlug": "synthetic-search",
+    "upstreamHttpStatus": 400,
+    "settlementStatus": "settled",
+    "transactionId": "syn_tx_paid_failure_001"
+  }
+}

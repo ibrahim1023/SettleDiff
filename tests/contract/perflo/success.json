@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "result": {
+    "vendorSlug": "synthetic-search",
+    "upstreamHttpStatus": 200,
+    "transactionId": "syn_tx_success_001"
+  }
+}

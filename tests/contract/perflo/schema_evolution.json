@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "result": {
+    "vendorSlug": "synthetic-search",
+    "upstreamHttpStatus": 200,
+    "transactionId": "syn_tx_evolved_001",
+    "futureResultField": {
+      "contractVersion": 2
+    }
+  },
+  "futureEnvelopeField": "preserve-me"
+}
