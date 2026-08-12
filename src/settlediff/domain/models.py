@@ -98,6 +98,7 @@ class ExpectedContract(CanonicalModel):
     protocol: NonEmptyStr | None
     chain: NonEmptyStr | None
     request_schema: dict[str, JsonValue]
+    normalization_notes: tuple[NonEmptyStr, ...] = ()
 
 
 class ExecutionRecord(CanonicalModel):
@@ -115,6 +116,22 @@ class ExecutionRecord(CanonicalModel):
     transaction_hash: NonEmptyStr | None
     response_body: JsonValue | None
     executed_at: UtcDatetime
+    normalization_notes: tuple[NonEmptyStr, ...] = ()
+
+
+class PaymentReceipt(CanonicalModel):
+    schema_version: int = Field(default=1, ge=1)
+    amount: Money | None
+    asset: NonEmptyStr | None
+    protocol: NonEmptyStr | None
+    chain: NonEmptyStr | None
+    recipient: NonEmptyStr | None
+    settlement_status: SettlementStatus
+    transaction_id: NonEmptyStr | None
+    session_id: NonEmptyStr | None
+    transaction_hash: NonEmptyStr | None
+    issued_at: UtcDatetime | None
+    normalization_notes: tuple[NonEmptyStr, ...] = ()
 
 
 class LedgerRecord(CanonicalModel):
@@ -132,6 +149,7 @@ class LedgerRecord(CanonicalModel):
     session_id: NonEmptyStr | None
     transaction_hash: NonEmptyStr | None
     occurred_at: UtcDatetime
+    normalization_notes: tuple[NonEmptyStr, ...] = ()
 
 
 class EvidenceArtifact(CanonicalModel):

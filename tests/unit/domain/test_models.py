@@ -17,6 +17,7 @@ from settlediff.domain.models import (
     LedgerRecord,
     LedgerStatus,
     MachineReport,
+    PaymentReceipt,
     PurchaseIntent,
     SettlementStatus,
     Severity,
@@ -206,3 +207,24 @@ def test_machine_report_round_trips_through_versioned_json() -> None:
     report = machine_report_fixture()
 
     assert MachineReport.model_validate_json(report.model_dump_json()) == report
+
+
+def test_payment_receipt_is_a_strict_versioned_canonical_record() -> None:
+    receipt = PaymentReceipt(
+        amount=Money(amount=Decimal("0.01"), unit="USDC"),
+        asset="USDC",
+        protocol="mpp",
+        chain="tempo",
+        recipient="syn_recipient_001",
+        settlement_status=SettlementStatus.SETTLED,
+        transaction_id="syn_tx_001",
+        session_id="syn_session_001",
+        transaction_hash="syn_hash_001",
+        issued_at=NOW,
+        normalization_notes=(),
+    )
+
+    assert receipt.schema_version == 1
+    assert PaymentReceipt.model_validate_json(receipt.model_dump_json()) == receipt
+    with pytest.raises(ValidationError):
+        PaymentReceipt.model_validate({**receipt.model_dump(), "invented": True})
