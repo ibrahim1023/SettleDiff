@@ -1,5 +1,12 @@
 """Deterministic SettleDiff domain types and rules."""
 
+from settlediff.domain.matching import (
+    MatchConfidence,
+    MatchResult,
+    MatchStatus,
+    MatchStrategy,
+    match_activity,
+)
 from settlediff.domain.models import (
     ArtifactType,
     CheckStatus,
@@ -31,6 +38,10 @@ __all__ = [
     "LedgerRecord",
     "LedgerStatus",
     "MachineReport",
+    "MatchConfidence",
+    "MatchResult",
+    "MatchStatus",
+    "MatchStrategy",
     "Money",
     "PaymentReceipt",
     "PurchaseIntent",
@@ -39,5 +50,6 @@ __all__ = [
     "UnitMismatchError",
     "Verdict",
     "mask_identifier",
+    "match_activity",
     "redact_artifact",
 ]
