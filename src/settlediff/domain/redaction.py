@@ -84,6 +84,8 @@ def redact_value(value: JsonValue, *, key: str | None = None) -> JsonValue:
     normalized_key = normalize_key(key) if key is not None else None
     if normalized_key in SECRET_KEYS:
         return REDACTED
+    if normalized_key in IDENTIFIER_KEYS:
+        return mask_identifier(value) if isinstance(value, str) else REDACTED
 
     if isinstance(value, dict):
         mapping = cast(dict[str, JsonValue], value)
@@ -94,8 +96,6 @@ def redact_value(value: JsonValue, *, key: str | None = None) -> JsonValue:
         items = cast(list[JsonValue], value)
         return [redact_value(item) for item in items]
     if isinstance(value, str):
-        if normalized_key in IDENTIFIER_KEYS:
-            return mask_identifier(value)
         return redact_embedded_identifiers(value)
     return value
 

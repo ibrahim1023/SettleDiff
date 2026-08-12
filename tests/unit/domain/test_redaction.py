@@ -78,6 +78,22 @@ def test_secret_like_keys_redact_non_string_values() -> None:
     }
 
 
+def test_identifier_keys_redact_non_string_values() -> None:
+    artifact = EvidenceArtifact(
+        artifact_id="artifact_syn_003",
+        artifact_type=ArtifactType.ACTIVITY,
+        source="synthetic_fixture",
+        collected_at=NOW,
+        redacted=False,
+        data={"device_id": 12345, "recipient": {"raw": "value"}},
+    )
+
+    assert redact_artifact(artifact).data == {
+        "device_id": "[REDACTED]",
+        "recipient": "[REDACTED]",
+    }
+
+
 @given(st.text(alphabet=st.characters(categories=("L", "N")), min_size=9, max_size=80))
 def test_mask_identifier_is_idempotent_and_hides_original(identifier: str) -> None:
     masked = mask_identifier(identifier)
