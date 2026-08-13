@@ -8,7 +8,8 @@ from threading import RLock
 from typing import cast
 
 from settlediff.application.run import RunEvent
-from settlediff.domain.models import MachineReport
+from settlediff.domain.models import EvidenceArtifact, MachineReport
+from settlediff.domain.redaction import redact_artifact
 
 
 class SQLiteReportRepository:
@@ -21,23 +22,52 @@ class SQLiteReportRepository:
         self._migrate()
 
     def _migrate(self) -> None:
-        migration = Path(__file__).with_name("migrations") / "001_initial.sql"
         with self._lock, self._connection:
-            self._connection.executescript(migration.read_text())
-            self._connection.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (1)")
+            self._connection.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)"
+            )
+            migrations = sorted(Path(__file__).with_name("migrations").glob("*.sql"))
+            for migration in migrations:
+                version = int(migration.name.split("_", maxsplit=1)[0])
+                exists = self._connection.execute(
+                    "SELECT 1 FROM schema_migrations WHERE version = ?", (version,)
+                ).fetchone()
+                if exists is None:
+                    self._connection.executescript(migration.read_text())
+                    self._connection.execute(
+                        "INSERT INTO schema_migrations(version) VALUES (?)", (version,)
+                    )
 
-    def save(self, report: MachineReport, *, events: tuple[RunEvent, ...] = ()) -> None:
+    def save(
+        self,
+        report: MachineReport,
+        *,
+        events: tuple[RunEvent, ...] = (),
+        artifacts: tuple[EvidenceArtifact, ...] = (),
+    ) -> None:
         with self._lock, self._connection:
             self._connection.execute(
                 "INSERT OR REPLACE INTO reports(run_id, report_json) VALUES (?, ?)",
                 (report.run_id, report.model_dump_json()),
             )
             self._connection.execute("DELETE FROM run_events WHERE run_id = ?", (report.run_id,))
+            self._connection.execute("DELETE FROM artifacts WHERE run_id = ?", (report.run_id,))
             self._connection.executemany(
                 "INSERT INTO run_events(run_id, position, event_json) VALUES (?, ?, ?)",
                 (
                     (report.run_id, index, event.model_dump_json())
                     for index, event in enumerate(events)
+                ),
+            )
+            self._connection.executemany(
+                "INSERT INTO artifacts(run_id, artifact_id, artifact_json) VALUES (?, ?, ?)",
+                (
+                    (
+                        report.run_id,
+                        artifact.artifact_id,
+                        redact_artifact(artifact).model_dump_json(),
+                    )
+                    for artifact in artifacts
                 ),
             )
 
@@ -66,6 +96,14 @@ class SQLiteReportRepository:
                 "SELECT event_json FROM run_events WHERE run_id = ? ORDER BY position", (run_id,)
             ).fetchall()
         return tuple(RunEvent.model_validate_json(cast(str, row[0])) for row in rows)
+
+    def artifacts(self, run_id: str) -> tuple[EvidenceArtifact, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT artifact_json FROM artifacts WHERE run_id = ? ORDER BY artifact_id",
+                (run_id,),
+            ).fetchall()
+        return tuple(EvidenceArtifact.model_validate_json(cast(str, row[0])) for row in rows)
 
     def close(self) -> None:
         with self._lock:
