@@ -31,9 +31,7 @@ def test_runs_and_detail_are_persisted_and_escaped(tmp_path: Path) -> None:
 def test_all_fixture_reports_render_without_recomputing(tmp_path: Path) -> None:
     repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
     reports = tuple(
-        replay_fixture(path)
-        for path in sorted(Path("fixtures").iterdir())
-        if path.is_dir()
+        replay_fixture(path) for path in sorted(Path("fixtures").iterdir()) if path.is_dir()
     )
     for report in reports:
         repository.save(report)
