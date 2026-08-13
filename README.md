@@ -12,10 +12,12 @@ intent → contract → execution → receipt → service outcome → activity r
 
 ## Status
 
-Phases 1 through 6 are implemented: the offline development foundation now includes strict,
+Phases 1 through 8 are implemented offline: the development foundation now includes strict,
 versioned evidence models, exact money semantics, recursive redaction, bounded Perflo envelope
 parsing, deterministic Activity matching, independent verification checks, verdict precedence,
-and fully offline sanitized fixture replay. The live product workflow is not implemented yet.
+fully offline sanitized fixture replay, and a safe Perflo subprocess boundary. Hyperfusion's
+optional PydanticAI provider factory and an opt-in compatibility probe are also in place. The
+live workflow and its owner-authorized provider probe have not been run.
 
 - LLM provider: Hyperfusion, through its OpenAI-compatible Chat Completions API.
 - Agent SDK: PydanticAI, one bounded investigator.
