@@ -1,10 +1,13 @@
 """Command-line interface for deterministic fixture verification and live preflight."""
 
+import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlparse
+from uuid import uuid4
 
 import typer
 import uvicorn
@@ -13,8 +16,10 @@ from pydantic import JsonValue, ValidationError
 from settlediff.api.app import create_app
 from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
 from settlediff.application.replay import replay_fixture
+from settlediff.application.run import LiveEvidenceCollector, LiveRunCommand, RunInvestigation
 from settlediff.domain.models import MachineReport
 from settlediff.domain.money import Money
+from settlediff.perflo.client import PerfloClient, PerfloClientError
 from settlediff.storage.sqlite import SQLiteReportRepository
 
 app = typer.Typer(
@@ -66,28 +71,62 @@ def run(
     url: str = typer.Option(...),
     body: str = typer.Option(...),
     budget: str = typer.Option(...),
+    database: Path | None = OPTIONAL_DATABASE_OPTION,
+    json_mode: bool = JSON_OPTION,
 ) -> None:
-    """Validate and display an exact live authorization request before any adapter exists."""
+    """Run one explicit paid request after interactive authorization."""
     try:
         parsed_body = json.loads(body)
         if not isinstance(parsed_body, dict):
             raise ValueError("body must be a JSON object")
         amount = Decimal(budget)
+        parsed_url = urlparse(url)
+        if parsed_url.scheme != "https" or not parsed_url.netloc:
+            raise ValueError("url must be an absolute HTTPS URL")
+        if amount <= 0:
+            raise ValueError("budget must be greater than zero")
     except (json.JSONDecodeError, InvalidOperation, ValueError) as error:
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error
     request = PaidExecutionRequest(
-        run_id="interactive-preflight",
+        run_id=f"live_{uuid4().hex}",
         target=url,
         body=cast(dict[str, JsonValue], parsed_body),
         budget=Money(amount=amount, unit="USDC"),
     )
-    capability = PaidExecutionCapability.issue(request, expires_at=datetime.now(UTC))
+    collector = LiveEvidenceCollector(PerfloClient())
+    try:
+        asyncio.run(collector.preflight(request))
+    except (PerfloClientError, ValueError) as error:
+        typer.echo(f"Live preflight failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+
+    capability = PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=5)
+    )
     typer.echo(
         f"Target: {request.target}\nBody digest: {capability.body_digest}\nBudget: {request.budget}"
     )
-    typer.echo("Live execution wiring is not available yet; no external call was made.", err=True)
-    raise typer.Exit(code=2)
+    if not typer.confirm("Authorize this exact paid request?"):
+        typer.echo("Authorization declined; no paid request was sent.")
+        raise typer.Exit(code=1)
+
+    try:
+        outcome = asyncio.run(
+            RunInvestigation(collector.execute, lambda: collector.verify(request)).execute(
+                LiveRunCommand(request=request, capability=capability)
+            )
+        )
+    except (PerfloClientError, ValueError) as error:
+        typer.echo(f"Live investigation failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    if database is not None:
+        repository = SQLiteReportRepository(database)
+        try:
+            repository.save(outcome.report, events=outcome.events, artifacts=collector.artifacts)
+        finally:
+            repository.close()
+    _render(outcome.report, json_mode=json_mode)
 
 
 @app.command()

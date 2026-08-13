@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from settlediff.application.replay import replay_fixture
 from settlediff.cli import app
+from settlediff.perflo.parser import PerfloSuccessEnvelope
 from settlediff.storage.sqlite import SQLiteReportRepository
 
 runner = CliRunner()
@@ -37,6 +38,56 @@ def test_live_run_rejects_invalid_json_before_any_adapter_call() -> None:
     )
     assert result.exit_code == 2
     assert "Invalid live preflight" in result.stderr
+
+
+def test_live_run_decline_does_not_execute_a_paid_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class FakePerflo:
+        async def inspect_service(self, _target: str) -> PerfloSuccessEnvelope:
+            calls.append("check")
+            return _envelope(
+                {
+                    "vendor_slug": "synthetic-search",
+                    "url": "https://example.invalid/search",
+                    "price": {"amount": "0.01", "unit": "USDC"},
+                    "asset": "USDC",
+                    "protocol": "mpp",
+                    "chain": "tempo",
+                    "request_schema": {},
+                }
+            )
+
+        async def get_schema(self, _slug: str) -> PerfloSuccessEnvelope:
+            calls.append("schema")
+            return _envelope({"request_schema": {}})
+
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            calls.append("fetch")
+            raise AssertionError("must not execute when authorization is declined")
+
+        async def get_activity(self) -> PerfloSuccessEnvelope:
+            raise AssertionError("must not read activity when authorization is declined")
+
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    result = runner.invoke(
+        app,
+        ["run", "--url", "https://example.invalid/search", "--body", "{}", "--budget", "0.01"],
+        input="n\n",
+    )
+    assert result.exit_code == 1
+    assert calls == ["check", "schema"]
+    assert "Body digest:" in result.stdout
+
+
+def _envelope(result: object) -> PerfloSuccessEnvelope:
+    return PerfloSuccessEnvelope(
+        ok=True,
+        payload={"ok": True, "result": result},
+        stdout_bytes=0,
+        stderr_bytes=0,
+        returncode=0,
+    )
 
 
 def test_show_renders_persisted_report(tmp_path: Path) -> None:
