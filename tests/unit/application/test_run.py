@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from pydantic import JsonValue
 
 from settlediff.application.auth import (
     ConsumedPaidAuthorization,
@@ -16,6 +17,7 @@ from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
     LiveEvidenceCollector,
     LiveRunCommand,
+    RunEvent,
     RunInvestigation,
     RunState,
     RunTimeline,
@@ -58,7 +60,7 @@ async def test_uncertain_execution_verifies_without_a_second_paid_attempt() -> N
         request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
     )
     attempts = 0
-    persisted = []
+    persisted: list[RunState] = []
 
     async def execute(
         _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
@@ -70,7 +72,7 @@ async def test_uncertain_execution_verifies_without_a_second_paid_attempt() -> N
     async def verify():
         return report
 
-    async def persist(event):
+    async def persist(event: RunEvent) -> None:
         persisted.append(event.state)
 
     outcome = await RunInvestigation(execute, verify, persist).execute(
@@ -93,15 +95,18 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
     )
 
     class FakePerflo:
-        async def inspect_service(self, _target: str) -> PerfloSuccessEnvelope:
+        async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
+            del target
             return _envelope(_fixture_data("contract.json"))
 
-        async def get_schema(self, _slug: str) -> PerfloSuccessEnvelope:
+        async def get_schema(self, slug: str) -> PerfloSuccessEnvelope:
+            del slug
             return _envelope({"request_schema": {}})
 
         async def execute(
-            self, _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
+            self, authorization: ConsumedPaidAuthorization, request: PaidExecutionRequest
         ) -> PerfloSuccessEnvelope:
+            del authorization, request
             return _envelope(_fixture_data("execution.json"))
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
@@ -125,13 +130,13 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
     }
 
 
-def _fixture_data(filename: str):
+def _fixture_data(filename: str) -> JsonValue:
     return cast(
-        dict, __import__("json").loads((Path("fixtures/clean-success") / filename).read_text())
+        JsonValue, __import__("json").loads((Path("fixtures/clean-success") / filename).read_text())
     )
 
 
-def _envelope(result: object) -> PerfloSuccessEnvelope:
+def _envelope(result: JsonValue) -> PerfloSuccessEnvelope:
     return PerfloSuccessEnvelope(
         ok=True,
         payload={"ok": True, "result": result},

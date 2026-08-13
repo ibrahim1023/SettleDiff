@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
+from pydantic import JsonValue
 from typer.testing import CliRunner
 
 from settlediff.application.replay import replay_fixture
@@ -80,7 +81,7 @@ def test_live_run_decline_does_not_execute_a_paid_call(monkeypatch: pytest.Monke
     assert "Body digest:" in result.stdout
 
 
-def _envelope(result: object) -> PerfloSuccessEnvelope:
+def _envelope(result: JsonValue) -> PerfloSuccessEnvelope:
     return PerfloSuccessEnvelope(
         ok=True,
         payload={"ok": True, "result": result},

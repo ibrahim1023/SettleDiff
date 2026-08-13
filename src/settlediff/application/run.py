@@ -21,7 +21,7 @@ from settlediff.domain.models import ArtifactType, EvidenceArtifact, MachineRepo
 from settlediff.domain.normalize import normalize_activity, normalize_contract, normalize_execution
 from settlediff.domain.verdict import derive_verdict
 from settlediff.perflo.client import PerfloMutationUncertainError
-from settlediff.perflo.parser import PerfloSuccessEnvelope
+from settlediff.perflo.parser import PerfloEnvelope, PerfloSuccessEnvelope
 
 
 class RunState(StrEnum):
@@ -96,15 +96,15 @@ class InvestigationOutcome:
 class PerfloEvidencePort(Protocol):
     """The four narrow Perflo calls used by a live investigation."""
 
-    async def inspect_service(self, target: str) -> PerfloSuccessEnvelope: ...
+    async def inspect_service(self, target: str) -> PerfloEnvelope: ...
 
-    async def get_schema(self, slug: str) -> PerfloSuccessEnvelope: ...
+    async def get_schema(self, slug: str) -> PerfloEnvelope: ...
 
     async def execute(
         self, authorization: ConsumedPaidAuthorization, request: PaidExecutionRequest
-    ) -> PerfloSuccessEnvelope: ...
+    ) -> PerfloEnvelope: ...
 
-    async def get_activity(self) -> PerfloSuccessEnvelope: ...
+    async def get_activity(self) -> PerfloEnvelope: ...
 
 
 class LiveEvidenceCollector:
@@ -230,7 +230,9 @@ def _artifact(
     )
 
 
-def _result_data(envelope: PerfloSuccessEnvelope) -> JsonValue:
+def _result_data(envelope: PerfloEnvelope) -> JsonValue:
+    if not isinstance(envelope, PerfloSuccessEnvelope):
+        raise RunTransitionError("Perflo returned an error envelope after the adapter accepted it")
     result = envelope.payload.get("result")
     if result is None:
         raise RunTransitionError("Perflo success envelope did not include result evidence")
