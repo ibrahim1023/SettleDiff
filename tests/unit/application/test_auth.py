@@ -49,7 +49,8 @@ async def test_exact_authorization_consumes_once() -> None:
         ({"target": "https://example.invalid/other"}, "target"),
         ({"body": {"query": "changed"}}, "body"),
         ({"budget": Money(amount=Decimal("0.06"), unit="USDC")}, "budget"),
-        ({"budget": Money(amount=Decimal("0.05"), unit="USD")}, "unit"),
+        ({"budget": Money(amount=Decimal("0.04"), unit="USDC")}, "budget"),
+        ({"budget": Money(amount=Decimal("0.05"), unit="USD")}, "budget"),
     ],
 )
 async def test_mismatch_fails_without_consuming(override: dict[str, object], message: str) -> None:
@@ -75,3 +76,16 @@ def test_canonical_body_digest_ignores_object_key_order() -> None:
     authorized = PaidExecutionCapability.issue(first, expires_at=NOW + timedelta(minutes=5))
 
     assert authorized.body_digest == PaidExecutionCapability.body_digest_for(reordered.body)
+
+
+@pytest.mark.asyncio
+async def test_consumed_authorization_rejects_changed_request() -> None:
+    exact_request = request()
+    token = await capability().consume(exact_request, now=NOW)
+
+    with pytest.raises(AuthorizationError, match="exact budget"):
+        token.require_exact_request(
+            exact_request.model_copy(
+                update={"budget": Money(amount=Decimal("0.04"), unit="USDC")}
+            )
+        )

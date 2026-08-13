@@ -50,7 +50,8 @@ def capability(request: PaidExecutionRequest) -> PaidExecutionCapability:
 async def test_arguments_are_preserved_without_shell_interpretation() -> None:
     request = paid_request()
 
-    envelope = await client("success").execute(capability(request), request, now=NOW)
+    authorization = await capability(request).consume(request, now=NOW)
+    envelope = await client("success").execute(authorization, request)
 
     assert isinstance(envelope, PerfloSuccessEnvelope)
     result = envelope.payload["result"]
@@ -69,17 +70,19 @@ async def test_arguments_are_preserved_without_shell_interpretation() -> None:
 async def test_authorization_mismatch_fails_before_process_start() -> None:
     request = paid_request()
     changed = request.model_copy(update={"target": "https://example.invalid/changed"})
+    authorization = await capability(request).consume(request, now=NOW)
 
     with pytest.raises(AuthorizationError):
-        await client("success").execute(capability(request), changed, now=NOW)
+        await client("success").execute(authorization, changed)
 
 
 @pytest.mark.asyncio
 async def test_clean_refusal_preserves_typed_error_and_certainty() -> None:
     request = paid_request()
+    authorization = await capability(request).consume(request, now=NOW)
 
     with pytest.raises(PerfloCommandError) as raised:
-        await client("refusal").execute(capability(request), request, now=NOW)
+        await client("refusal").execute(authorization, request)
 
     assert raised.value.error.code == "GUARDRAIL_DENIED"
     assert raised.value.error.details == {"limit": "0.05"}
@@ -92,11 +95,12 @@ async def test_timeout_is_uncertain_and_consumed_capability_cannot_retry(tmp_pat
     authorized = capability(request)
     counter = tmp_path / "count.txt"
     timed_client = client("count-sleep", str(counter), timeout=0.05)
+    authorization = await authorized.consume(request, now=NOW)
 
     with pytest.raises(PerfloMutationUncertainError):
-        await timed_client.execute(authorized, request, now=NOW)
+        await timed_client.execute(authorization, request)
     with pytest.raises(AuthorizationError, match="already consumed"):
-        await timed_client.execute(authorized, request, now=NOW)
+        await authorized.consume(request, now=NOW)
 
     assert counter.read_text() == "1"
 
@@ -104,8 +108,9 @@ async def test_timeout_is_uncertain_and_consumed_capability_cannot_retry(tmp_pat
 @pytest.mark.asyncio
 async def test_malformed_mutation_output_is_submission_uncertain() -> None:
     request = paid_request()
+    authorization = await capability(request).consume(request, now=NOW)
     with pytest.raises(PerfloMutationUncertainError):
-        await client("malformed").execute(capability(request), request, now=NOW)
+        await client("malformed").execute(authorization, request)
 
 
 @pytest.mark.asyncio

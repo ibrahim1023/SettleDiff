@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from datetime import datetime
 
-from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
+from settlediff.application.auth import ConsumedPaidAuthorization, PaidExecutionRequest
 from settlediff.perflo.parser import (
     PerfloEnvelope,
     PerfloError,
@@ -68,12 +67,10 @@ class PerfloClient:
 
     async def execute(
         self,
-        capability: PaidExecutionCapability,
+        authorization: ConsumedPaidAuthorization,
         request: PaidExecutionRequest,
-        *,
-        now: datetime | None = None,
     ) -> PerfloEnvelope:
-        await capability.consume(request, now=now)
+        authorization.require_exact_request(request)
         body = json.dumps(request.body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         return await self._run(
             ("fetch", request.target, "-b", body, "--json"),

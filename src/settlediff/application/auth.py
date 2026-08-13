@@ -28,14 +28,35 @@ class PaidExecutionRequest(BaseModel):
 class ConsumedPaidAuthorization:
     """Opaque proof that the exact capability was consumed before execution."""
 
-    __slots__ = ("run_id", "target", "_proof")
+    __slots__ = ("run_id", "target", "_body_digest", "_budget", "_proof")
 
-    def __init__(self, run_id: str, target: str, proof: object) -> None:
+    def __init__(
+        self,
+        request: PaidExecutionRequest,
+        *,
+        body_digest: str,
+        proof: object,
+    ) -> None:
         if proof is not _TOKEN_PROOF:
             raise TypeError("consumed authorization tokens cannot be constructed directly")
-        self.run_id = run_id
-        self.target = target
+        self.run_id = request.run_id
+        self.target = request.target
+        self._body_digest = body_digest
+        self._budget = request.budget
         self._proof = proof
+
+    def require_exact_request(self, request: PaidExecutionRequest) -> None:
+        """Reject a request that differs from the capability already consumed."""
+        if self._proof is not _TOKEN_PROOF:
+            raise AuthorizationError("authorization token is invalid")
+        if request.run_id != self.run_id:
+            raise AuthorizationError("authorization does not cover this run")
+        if request.target != self.target:
+            raise AuthorizationError("authorization does not cover this target")
+        if PaidExecutionCapability.body_digest_for(request.body) != self._body_digest:
+            raise AuthorizationError("authorization does not cover this request body")
+        if request.budget != self._budget:
+            raise AuthorizationError("authorization does not cover this exact budget")
 
 
 _TOKEN_PROOF = object()
@@ -98,10 +119,12 @@ class PaidExecutionCapability:
                 raise AuthorizationError("authorization does not cover this target")
             if self.body_digest_for(request.body) != self._body_digest:
                 raise AuthorizationError("authorization does not cover this request body")
-            if request.budget.unit != self._budget.unit:
-                raise AuthorizationError("authorization budget unit differs")
-            if not request.budget.is_within(self._budget):
-                raise AuthorizationError("request budget exceeds authorization budget")
+            if request.budget != self._budget:
+                raise AuthorizationError("authorization does not cover this exact budget")
 
             self._consumed = True
-            return ConsumedPaidAuthorization(self._run_id, self._target, _TOKEN_PROOF)
+            return ConsumedPaidAuthorization(
+                request,
+                body_digest=self._body_digest,
+                proof=_TOKEN_PROOF,
+            )
