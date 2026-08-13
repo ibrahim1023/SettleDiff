@@ -55,6 +55,7 @@ async def test_uncertain_execution_verifies_without_a_second_paid_attempt() -> N
         request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
     )
     attempts = 0
+    persisted = []
 
     async def execute(
         _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
@@ -66,7 +67,13 @@ async def test_uncertain_execution_verifies_without_a_second_paid_attempt() -> N
     async def verify():
         return report
 
-    outcome = await RunInvestigation(execute, verify).execute(LiveRunCommand(request, capability))
+    async def persist(event):
+        persisted.append(event.state)
+
+    outcome = await RunInvestigation(execute, verify, persist).execute(
+        LiveRunCommand(request, capability)
+    )
     assert attempts == 1
     assert outcome.submission_uncertain
     assert outcome.events[-1].state is RunState.COMPLETE
+    assert persisted == [event.state for event in outcome.events]

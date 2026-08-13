@@ -94,26 +94,36 @@ class RunInvestigation:
         self,
         execute_paid: Callable[[ConsumedPaidAuthorization, PaidExecutionRequest], Awaitable[None]],
         verify: Callable[[], Awaitable[MachineReport]],
+        persist_event: Callable[[RunEvent], Awaitable[None]] | None = None,
     ) -> None:
         self._execute_paid = execute_paid
         self._verify = verify
+        self._persist_event = persist_event
 
     async def execute(self, command: LiveRunCommand) -> InvestigationOutcome:
         timeline = RunTimeline()
-        timeline.transition(RunState.AUTHORIZED)
+        await self._record(timeline.events[-1])
+        await self._transition(timeline, RunState.AUTHORIZED)
         authorization = await command.capability.consume(command.request)
-        timeline.transition(RunState.EXECUTING)
+        await self._transition(timeline, RunState.EXECUTING)
         uncertain = False
         try:
             await self._execute_paid(authorization, command.request)
         except PerfloMutationUncertainError:
             uncertain = True
-            timeline.transition(RunState.EVIDENCE_RECOVERY)
-        timeline.transition(RunState.VERIFYING)
+            await self._transition(timeline, RunState.EVIDENCE_RECOVERY)
+        await self._transition(timeline, RunState.VERIFYING)
         report = await self._verify()
-        timeline.transition(RunState.COMPLETE)
+        await self._transition(timeline, RunState.COMPLETE)
         return InvestigationOutcome(
             report=report,
             events=timeline.events,
             submission_uncertain=uncertain,
         )
+
+    async def _transition(self, timeline: RunTimeline, state: RunState) -> None:
+        await self._record(timeline.transition(state))
+
+    async def _record(self, event: RunEvent) -> None:
+        if self._persist_event is not None:
+            await self._persist_event(event)
