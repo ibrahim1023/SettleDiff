@@ -61,6 +61,10 @@ async def test_arguments_are_preserved_without_shell_interpretation() -> None:
         request.target,
         "-b",
         '{"query":"synthetic value; $(ignored)"}',
+        "--price",
+        "0.05",
+        "--asset",
+        "USDC",
         "--json",
     ]
     assert envelope.stderr_bytes == len(b"synthetic stderr")

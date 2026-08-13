@@ -73,7 +73,17 @@ class PerfloClient:
         authorization.require_exact_request(request)
         body = json.dumps(request.body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         return await self._run(
-            ("fetch", request.target, "-b", body, "--json"),
+            (
+                "fetch",
+                request.target,
+                "-b",
+                body,
+                "--price",
+                str(request.budget.amount),
+                "--asset",
+                request.budget.unit,
+                "--json",
+            ),
             mutation=True,
         )
 
