@@ -42,6 +42,8 @@ def test_runs_and_detail_are_persisted_and_escaped(tmp_path: Path) -> None:
     detail = client.get(f"/runs/{report.run_id}")
     assert detail.status_code == 200
     assert "hx-get" in detail.text
+    assert "0.01 USDC" in detail.text
+    assert "syn_recipient" not in detail.text
     events = client.get(f"/runs/{report.run_id}/events")
     assert events.status_code == 200
     assert events.json()[-1]["state"] == "authorized"

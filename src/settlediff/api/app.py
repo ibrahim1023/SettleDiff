@@ -11,6 +11,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from settlediff.domain.money import Money
+from settlediff.domain.redaction import mask_identifier
 from settlediff.storage.sqlite import SQLiteReportRepository
 
 
@@ -50,33 +52,33 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
             rows=(
                 (
                     "Price",
-                    report.contract.price if report.contract else None,
-                    report.execution.charge if report.execution else None,
-                    report.ledger.amount if report.ledger else None,
+                    _display(report.contract.price if report.contract else None),
+                    _display(report.execution.charge if report.execution else None),
+                    _display(report.ledger.amount if report.ledger else None),
                 ),
                 (
                     "Protocol",
-                    _value(report.contract, "protocol"),
-                    _value(report.execution, "protocol"),
-                    _value(report.ledger, "protocol"),
+                    _display(_value(report.contract, "protocol")),
+                    _display(_value(report.execution, "protocol")),
+                    _display(_value(report.ledger, "protocol")),
                 ),
                 (
                     "Chain",
-                    _value(report.contract, "chain"),
-                    _value(report.execution, "chain"),
-                    _value(report.ledger, "chain"),
+                    _display(_value(report.contract, "chain")),
+                    _display(_value(report.execution, "chain")),
+                    _display(_value(report.ledger, "chain")),
                 ),
                 (
                     "Recipient",
                     None,
-                    _value(report.execution, "recipient"),
-                    _value(report.ledger, "recipient"),
+                    _display(_value(report.execution, "recipient"), identifier=True),
+                    _display(_value(report.ledger, "recipient"), identifier=True),
                 ),
                 (
                     "Status",
                     None,
-                    _value(report.execution, "settlement_status"),
-                    _value(report.ledger, "status"),
+                    _display(_value(report.execution, "settlement_status")),
+                    _display(_value(report.ledger, "status")),
                 ),
             ),
         )
@@ -123,3 +125,13 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
 
 def _value(record: object | None, field: str) -> object | None:
     return getattr(record, field) if record is not None else None
+
+
+def _display(value: object | None, *, identifier: bool = False) -> str | None:
+    if value is None:
+        return None
+    if identifier and isinstance(value, str):
+        return mask_identifier(value)
+    if isinstance(value, Money):
+        return f"{value.amount} {value.unit}"
+    return str(value)
