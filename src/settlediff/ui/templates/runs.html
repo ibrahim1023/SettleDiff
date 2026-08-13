@@ -1,1 +1,1 @@
-<!doctype html><title>SettleDiff runs</title><main><h1>SettleDiff runs</h1><ul>{% for report in reports %}<li><a href="/runs/{{ report.run_id }}">{{ report.run_id }}</a> — {{ report.verdict.value }}</li>{% endfor %}</ul></main>
+{% extends "base.html" %}{% block title %}SettleDiff runs{% endblock %}{% block content %}<h1>SettleDiff runs</h1><ul>{% for report in reports %}<li><a href="/runs/{{ report.run_id }}">{{ report.run_id }}</a> — {{ report.verdict.value }}</li>{% endfor %}</ul>{% endblock %}

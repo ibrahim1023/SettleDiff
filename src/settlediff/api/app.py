@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from settlediff.storage.sqlite import SQLiteReportRepository
@@ -18,6 +19,8 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
         loader=FileSystemLoader(Path(__file__).parents[1] / "ui" / "templates"),
         autoescape=select_autoescape(["html"]),
     )
+    static_directory = Path(__file__).parents[1] / "ui" / "static"
+    app.mount("/static", StaticFiles(directory=static_directory), name="static")
 
     async def security_headers(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]

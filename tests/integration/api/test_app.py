@@ -21,6 +21,7 @@ def test_runs_and_detail_are_persisted_and_escaped(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert report.run_id in response.text
     assert response.headers["content-security-policy"].startswith("default-src")
+    assert client.get("/static/settlediff.css").status_code == 200
     assert client.get(f"/runs/{report.run_id}").status_code == 200
     events = client.get(f"/runs/{report.run_id}/events")
     assert events.status_code == 200
