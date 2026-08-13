@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from fastapi import FastAPI
 from typer.testing import CliRunner
 
 from settlediff.application.replay import replay_fixture
@@ -47,3 +49,17 @@ def test_show_renders_persisted_report(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0
     assert "VERIFIED" in result.stdout
+
+
+def test_serve_is_loopback_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(_app: FastAPI, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr("settlediff.cli.uvicorn.run", fake_run)
+    database = tmp_path / "reports.sqlite3"
+    SQLiteReportRepository(database).close()
+    result = runner.invoke(app, ["serve", "--database", str(database)])
+    assert result.exit_code == 0
+    assert captured["host"] == "127.0.0.1"

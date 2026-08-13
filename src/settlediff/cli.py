@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import cast
 
 import typer
+import uvicorn
 from pydantic import JsonValue, ValidationError
 
+from settlediff.api.app import create_app
 from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
 from settlediff.application.replay import replay_fixture
 from settlediff.domain.models import MachineReport
@@ -104,3 +106,10 @@ def show(
         typer.echo(f"Run {run_id} was not found.", err=True)
         raise typer.Exit(code=1)
     _render(report, json_mode)
+
+
+@app.command()
+def serve(database: Path = DATABASE_OPTION) -> None:
+    """Serve persisted reports on loopback only."""
+    repository = SQLiteReportRepository(database)
+    uvicorn.run(create_app(repository), host="127.0.0.1", port=8765)
