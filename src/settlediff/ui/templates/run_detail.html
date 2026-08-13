@@ -1,10 +1,22 @@
 {% extends "base.html" %}
 {% block title %}SettleDiff {{ report.run_id }}{% endblock %}
 {% block content %}
-  <h1>{{ report.intent.task }}</h1>
-  <p>{{ report.run_id }} — <strong>{{ report.verdict.value }}</strong></p>
-  <section>
-    <h2>Expected ↔ Executed ↔ Recorded</h2>
+  <section class="run-hero">
+    <div>
+      <p class="eyebrow">Investigation report</p>
+      <h1>{{ report.intent.task }}</h1>
+      <p class="run-id">{{ report.run_id }}</p>
+    </div>
+    <span class="verdict verdict-{{ report.verdict.value|lower }}">{{ report.verdict.value }}</span>
+  </section>
+  <section class="panel evidence-panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Evidence comparison</p>
+        <h2>Expected · Executed · Recorded</h2>
+      </div>
+      <p>Values are captured; findings are not recomputed here.</p>
+    </div>
     <table>
       <thead><tr><th>Field</th><th>Expected</th><th>Executed</th><th>Recorded</th></tr></thead>
       <tbody>
@@ -14,22 +26,22 @@
       </tbody>
     </table>
   </section>
-  <section>
-    <h2>Service outcome</h2>
-    <p>{% if report.execution %}HTTP {{ report.execution.upstream_http_status or "unknown" }}{% else %}No execution evidence.{% endif %}</p>
+  <section class="panel outcome-panel">
+    <p class="eyebrow">Service outcome</p>
+    <h2>{% if report.execution %}HTTP {{ report.execution.upstream_http_status or "unknown" }}{% else %}No execution evidence{% endif %}</h2>
     {% if report.verdict.value == "PAID_FAILURE" %}
       <p><strong>PAID FAILURE</strong> — payment settled successfully, but the purchased operation failed.</p>
     {% endif %}
   </section>
-  <section>
-    <h2>Findings</h2>
-    <ul>{% for finding in report.findings %}<li>{{ finding.status }} — {{ finding.message }}</li>{% endfor %}</ul>
+  <section class="panel">
+    <div class="section-heading"><div><p class="eyebrow">Deterministic checks</p><h2>Findings</h2></div></div>
+    <ul class="finding-list">{% for finding in report.findings %}<li><span class="finding-status finding-{{ finding.status|lower }}">{{ finding.status }}</span><span>{{ finding.message }}</span></li>{% endfor %}</ul>
   </section>
-  <section aria-live="polite">
-    <h2>Run transitions</h2>
+  <section class="panel" aria-live="polite">
+    <div class="section-heading"><div><p class="eyebrow">Audit trail</p><h2>Run transitions</h2></div><p>Updates every 10 seconds while this page is open.</p></div>
     <div hx-get="/runs/{{ report.run_id }}/events-fragment" hx-trigger="load, every 10s" hx-swap="innerHTML">
       <p>Loading transitions…</p>
     </div>
   </section>
-  <p><a href="/runs/{{ report.run_id }}/artifacts">View redacted evidence artifacts</a></p>
+  <p class="artifact-link"><a href="/runs/{{ report.run_id }}/artifacts">View redacted evidence artifacts <span aria-hidden="true">→</span></a></p>
 {% endblock %}

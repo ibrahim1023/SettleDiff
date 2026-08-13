@@ -44,6 +44,8 @@ def test_runs_and_detail_are_persisted_and_escaped(tmp_path: Path) -> None:
     assert "hx-get" in detail.text
     assert "0.01 USDC" in detail.text
     assert "syn_recipient" not in detail.text
+    assert 'class="verdict verdict-verified"' in detail.text
+    assert "Expected · Executed · Recorded" in detail.text
     events = client.get(f"/runs/{report.run_id}/events")
     assert events.status_code == 200
     assert events.json()[-1]["state"] == "authorized"
@@ -66,6 +68,7 @@ def test_all_fixture_reports_render_without_recomputing(tmp_path: Path) -> None:
     client = TestClient(create_app(repository))
     listing = client.get("/runs")
     assert listing.status_code == 200
+    assert "Local evidence ledger" in listing.text
     for report in reports:
         detail = client.get(f"/runs/{report.run_id}")
         assert detail.status_code == 200

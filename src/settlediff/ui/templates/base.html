@@ -8,6 +8,15 @@
     <title>{% block title %}SettleDiff{% endblock %}</title>
   </head>
   <body>
-    <main>{% block content %}{% endblock %}</main>
+    <div class="page-shell">
+      <header class="site-header">
+        <a class="brand" href="/runs" aria-label="SettleDiff runs">
+          <span class="brand-mark" aria-hidden="true">S</span>
+          <span>SettleDiff</span>
+        </a>
+        <p>Deterministic purchase verification</p>
+      </header>
+      <main>{% block content %}{% endblock %}</main>
+    </div>
   </body>
 </html>

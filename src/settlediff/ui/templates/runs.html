@@ -1,1 +1,26 @@
-{% extends "base.html" %}{% block title %}SettleDiff runs{% endblock %}{% block content %}<h1>SettleDiff runs</h1><ul>{% for report in reports %}<li><a href="/runs/{{ report.run_id }}">{{ report.run_id }}</a> — {{ report.verdict.value }}</li>{% endfor %}</ul>{% endblock %}
+{% extends "base.html" %}
+{% block title %}SettleDiff runs{% endblock %}
+{% block content %}
+  <section class="intro">
+    <p class="eyebrow">Local evidence ledger</p>
+    <h1>Investigation runs</h1>
+    <p>Compare expected terms, the provider execution, and the persisted Activity record.</p>
+  </section>
+  {% if reports %}
+    <ol class="run-list">
+      {% for report in reports %}
+        <li>
+          <a href="/runs/{{ report.run_id }}">
+            <span>
+              <strong>{{ report.intent.task }}</strong>
+              <small>{{ report.run_id }}</small>
+            </span>
+            <span class="verdict verdict-{{ report.verdict.value|lower }}">{{ report.verdict.value }}</span>
+          </a>
+        </li>
+      {% endfor %}
+    </ol>
+  {% else %}
+    <p class="empty-state">No persisted investigations yet. Replay a sanitized fixture to create one.</p>
+  {% endif %}
+{% endblock %}
