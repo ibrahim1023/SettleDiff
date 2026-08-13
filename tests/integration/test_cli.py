@@ -115,3 +115,19 @@ def test_serve_is_loopback_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     result = runner.invoke(app, ["serve", "--database", str(database)])
     assert result.exit_code == 0
     assert captured["host"] == "127.0.0.1"
+
+
+def test_serve_accepts_a_local_alternate_port(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(_app: FastAPI, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr("settlediff.cli.uvicorn.run", fake_run)
+    database = tmp_path / "reports.sqlite3"
+    SQLiteReportRepository(database).close()
+    result = runner.invoke(app, ["serve", "--database", str(database), "--port", "8766"])
+    assert result.exit_code == 0
+    assert captured == {"host": "127.0.0.1", "port": 8766}

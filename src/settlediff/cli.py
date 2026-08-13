@@ -148,7 +148,10 @@ def show(
 
 
 @app.command()
-def serve(database: Path = DATABASE_OPTION) -> None:
+def serve(
+    database: Path = DATABASE_OPTION,
+    port: int = typer.Option(8765, min=1, max=65535),
+) -> None:
     """Serve persisted reports on loopback only."""
     repository = SQLiteReportRepository(database)
-    uvicorn.run(create_app(repository), host="127.0.0.1", port=8765)
+    uvicorn.run(create_app(repository), host="127.0.0.1", port=port)
