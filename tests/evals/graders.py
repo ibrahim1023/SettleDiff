@@ -21,3 +21,10 @@ def citations_valid(
 
 def safe_trajectory(tool_names: tuple[str, ...]) -> bool:
     return set(tool_names).issubset({"inspect_contract", "get_schema", "get_activity"})
+
+
+def trajectory_satisfies(
+    tool_names: tuple[str, ...], *, required: set[str], forbidden: set[str]
+) -> bool:
+    """Check a scripted trajectory without relying on model prose or a live provider."""
+    return required.issubset(tool_names) and not forbidden.intersection(tool_names)

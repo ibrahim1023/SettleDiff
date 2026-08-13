@@ -38,6 +38,7 @@ def test_validate_explanation_accepts_grounded_response(report: MachineReport) -
 @pytest.mark.parametrize(
     "updates",
     [
+        {"run_id": "other-run"},
         {"deterministic_verdict": Verdict.PAID_FAILURE},
         {"finding_ids": ("missing",)},
         {"evidence_used": ("missing",)},
