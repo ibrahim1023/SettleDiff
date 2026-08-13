@@ -13,12 +13,15 @@ from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRe
 from settlediff.application.replay import replay_fixture
 from settlediff.domain.models import MachineReport
 from settlediff.domain.money import Money
+from settlediff.storage.sqlite import SQLiteReportRepository
 
 app = typer.Typer(
     name="settlediff",
     help="Investigate agent purchases with deterministic verification.",
     no_args_is_help=True,
 )
+DATABASE_OPTION = typer.Option(..., "--database", exists=True, readable=True)
+JSON_OPTION = typer.Option(False, "--json")
 
 
 @app.callback()
@@ -36,7 +39,7 @@ def _render(report: MachineReport, json_mode: bool) -> None:
 
 
 @app.command("verify-fixture")
-def verify_fixture(path: Path, json_mode: bool = typer.Option(False, "--json")) -> None:
+def verify_fixture(path: Path, json_mode: bool = JSON_OPTION) -> None:
     """Replay a sanitized fixture with no provider or payment call."""
     try:
         _render(replay_fixture(path), json_mode)
@@ -74,7 +77,18 @@ def run(
 
 
 @app.command()
-def show(run_id: str) -> None:
-    """Report that durable report lookup arrives with the local repository."""
-    typer.echo(f"Run {run_id} is not persisted yet; SQLite storage arrives in Phase 11.", err=True)
-    raise typer.Exit(code=2)
+def show(
+    run_id: str,
+    database: Path = DATABASE_OPTION,
+    json_mode: bool = JSON_OPTION,
+) -> None:
+    """Render one persisted machine report without recomputing its findings."""
+    repository = SQLiteReportRepository(database)
+    try:
+        report = repository.get(run_id)
+    finally:
+        repository.close()
+    if report is None:
+        typer.echo(f"Run {run_id} was not found.", err=True)
+        raise typer.Exit(code=1)
+    _render(report, json_mode)

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from typer.testing import CliRunner
 
+from settlediff.application.replay import replay_fixture
 from settlediff.cli import app
+from settlediff.storage.sqlite import SQLiteReportRepository
 
 runner = CliRunner()
 
@@ -19,3 +23,15 @@ def test_live_run_rejects_invalid_json_before_any_adapter_call() -> None:
     )
     assert result.exit_code == 2
     assert "Invalid live preflight" in result.stderr
+
+
+def test_show_renders_persisted_report(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository.save(report)
+    repository.close()
+    result = runner.invoke(
+        app, ["show", report.run_id, "--database", str(tmp_path / "reports.sqlite3")]
+    )
+    assert result.exit_code == 0
+    assert "VERIFIED" in result.stdout

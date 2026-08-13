@@ -1,0 +1,1 @@
+<!doctype html><title>SettleDiff {{ report.run_id }}</title><main><h1>{{ report.run_id }}</h1><p>Verdict: {{ report.verdict.value }}</p><h2>Expected / Executed / Recorded</h2><ul>{% for finding in report.findings %}<li>{{ finding.status }} — {{ finding.message }}</li>{% endfor %}</ul></main>
