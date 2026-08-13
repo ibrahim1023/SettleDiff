@@ -27,14 +27,26 @@ async def test_hyperfusion_supports_structured_output_and_tool_continuation(
         pytest.skip("set SETTLEDIFF_LIVE_HYPERFUSION=1 to run the live compatibility probe")
 
     monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", True)
+    structured_agent = Agent(
+        build_hyperfusion_model(Settings().require_hyperfusion()),
+        output_type=ContractOutput,
+        instructions="Return the exact word 'structured-ok' in the answer field.",
+        retries=0,
+    )
+    structured_result = await structured_agent.run("Perform the structured-output check.")
+
+    assert structured_result.output.answer == "structured-ok"
+    assert structured_result.usage.requests >= 1
+
     tool_calls: list[str] = []
     evidence_token = uuid4().hex
     agent = Agent(
         build_hyperfusion_model(Settings().require_hyperfusion()),
-        output_type=ContractOutput,
+        output_type=str,
         instructions=(
             "Call the echo_evidence tool exactly once with the word 'ping'. "
-            "After the tool result, return its value unchanged in the answer field."
+            "After the tool result, reply with its complete returned value, including its "
+            "'evidence:' prefix and opaque trailing token. Do not reply with only the argument."
         ),
         retries=0,
     )
@@ -48,7 +60,7 @@ async def test_hyperfusion_supports_structured_output_and_tool_continuation(
     result = await agent.run("Perform the compatibility check.")
 
     assert tool_calls == ["ping"]
-    assert result.output.answer == f"evidence:ping:{evidence_token}"
-    usage = result.usage()
+    assert result.output == f"evidence:ping:{evidence_token}"
+    usage = result.usage
     assert usage.requests >= 2
     assert usage.tool_calls >= 1

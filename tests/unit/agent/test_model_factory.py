@@ -59,7 +59,7 @@ async def test_factory_builds_explicit_chat_model_without_leaking_secret() -> No
     assert model.provider.client.max_retries == 0
     assert model.provider.client.timeout == 12
     assert model.profile.supports_tools is True
-    assert model.profile.default_structured_output_mode == "tool"
+    assert model.profile.default_structured_output_mode == "prompted"
     assert model.profile.openai_supports_strict_tool_definition is False
     assert secret not in repr(model)
     assert secret not in repr(model.provider)

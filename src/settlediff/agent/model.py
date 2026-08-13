@@ -13,7 +13,7 @@ HYPERFUSION_PROFILE = OpenAIModelProfile(
     supports_tools=True,
     supports_json_schema_output=False,
     supports_json_object_output=False,
-    default_structured_output_mode="tool",
+    default_structured_output_mode="prompted",
     openai_supports_strict_tool_definition=False,
 )
 
