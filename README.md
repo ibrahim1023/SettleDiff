@@ -17,7 +17,8 @@ versioned evidence models, exact money semantics, recursive redaction, bounded P
 parsing, deterministic Activity matching, independent verification checks, verdict precedence,
 fully offline sanitized fixture replay, and a safe Perflo subprocess boundary. Hyperfusion's
 optional PydanticAI provider factory and an opt-in compatibility probe are also in place. The
-live workflow and its owner-authorized provider probe have not been run.
+owner-authorized provider probe ran on 2026-08-13 but did not meet the required tool-call
+behavior, so live compatibility remains unverified.
 
 - LLM provider: Hyperfusion, through its OpenAI-compatible Chat Completions API.
 - Agent SDK: PydanticAI, one bounded investigator.
