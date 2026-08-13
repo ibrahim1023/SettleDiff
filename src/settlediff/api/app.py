@@ -45,7 +45,41 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
         report = repository.get(run_id)
         if report is None:
             raise HTTPException(status_code=404, detail="run not found")
-        return templates.get_template("run_detail.html").render(report=report)
+        return templates.get_template("run_detail.html").render(
+            report=report,
+            rows=(
+                (
+                    "Price",
+                    report.contract.price if report.contract else None,
+                    report.execution.charge if report.execution else None,
+                    report.ledger.amount if report.ledger else None,
+                ),
+                (
+                    "Protocol",
+                    _value(report.contract, "protocol"),
+                    _value(report.execution, "protocol"),
+                    _value(report.ledger, "protocol"),
+                ),
+                (
+                    "Chain",
+                    _value(report.contract, "chain"),
+                    _value(report.execution, "chain"),
+                    _value(report.ledger, "chain"),
+                ),
+                (
+                    "Recipient",
+                    None,
+                    _value(report.execution, "recipient"),
+                    _value(report.ledger, "recipient"),
+                ),
+                (
+                    "Status",
+                    None,
+                    _value(report.execution, "settlement_status"),
+                    _value(report.ledger, "status"),
+                ),
+            ),
+        )
 
     app.get("/runs/{run_id}", response_class=HTMLResponse)(run_detail)
 
@@ -69,3 +103,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
     app.get("/runs/{run_id}/artifacts", response_class=HTMLResponse)(run_artifacts)
 
     return app
+
+
+def _value(record: object | None, field: str) -> object | None:
+    return getattr(record, field) if record is not None else None

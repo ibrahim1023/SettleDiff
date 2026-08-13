@@ -61,5 +61,5 @@ def test_all_fixture_reports_render_without_recomputing(tmp_path: Path) -> None:
         detail = client.get(f"/runs/{report.run_id}")
         assert detail.status_code == 200
         assert report.verdict.value in detail.text
-        for section in ("Expected", "Executed", "Recorded"):
-            assert f"<h2>{section}</h2>" in detail.text
+        for heading in ("Expected", "Executed", "Recorded"):
+            assert f"<th>{heading}</th>" in detail.text
