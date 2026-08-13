@@ -17,6 +17,18 @@ def test_fixture_replay_requires_no_live_configuration() -> None:
     assert '"verdict":"PAID_FAILURE"' in result.stdout
 
 
+def test_fixture_replay_can_persist_for_show(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    replay = runner.invoke(
+        app, ["verify-fixture", "fixtures/clean-success", "--database", str(database)]
+    )
+    assert replay.exit_code == 0
+    report = replay_fixture(Path("fixtures/clean-success"))
+    shown = runner.invoke(app, ["show", report.run_id, "--database", str(database), "--json"])
+    assert shown.exit_code == 0
+    assert '"run_id":"syn_run_clean"' in shown.stdout
+
+
 def test_live_run_rejects_invalid_json_before_any_adapter_call() -> None:
     result = runner.invoke(
         app, ["run", "--url", "https://example.invalid", "--body", "no", "--budget", "1"]

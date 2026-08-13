@@ -22,6 +22,7 @@ app = typer.Typer(
 )
 DATABASE_OPTION = typer.Option(..., "--database", exists=True, readable=True)
 JSON_OPTION = typer.Option(False, "--json")
+OPTIONAL_DATABASE_OPTION = typer.Option(None, "--database")
 
 
 @app.callback()
@@ -39,12 +40,23 @@ def _render(report: MachineReport, json_mode: bool) -> None:
 
 
 @app.command("verify-fixture")
-def verify_fixture(path: Path, json_mode: bool = JSON_OPTION) -> None:
+def verify_fixture(
+    path: Path,
+    json_mode: bool = JSON_OPTION,
+    database: Path | None = OPTIONAL_DATABASE_OPTION,
+) -> None:
     """Replay a sanitized fixture with no provider or payment call."""
     try:
-        _render(replay_fixture(path), json_mode)
+        report = replay_fixture(path)
     except (OSError, ValueError, ValidationError) as error:
         raise typer.Exit(code=2) from typer.BadParameter(str(error))
+    if database is not None:
+        repository = SQLiteReportRepository(database)
+        try:
+            repository.save(report)
+        finally:
+            repository.close()
+    _render(report, json_mode)
 
 
 @app.command()
