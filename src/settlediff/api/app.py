@@ -45,4 +45,11 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
 
     app.get("/runs/{run_id}", response_class=HTMLResponse)(run_detail)
 
+    def run_events(run_id: str) -> list[dict[str, str]]:
+        if repository.get(run_id) is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return [event.model_dump(mode="json") for event in repository.events(run_id)]
+
+    app.get("/runs/{run_id}/events")(run_events)
+
     return app

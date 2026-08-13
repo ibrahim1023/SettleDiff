@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import RLock
 from typing import cast
 
+from settlediff.application.run import RunEvent
 from settlediff.domain.models import MachineReport
 
 
@@ -25,11 +26,19 @@ class SQLiteReportRepository:
             self._connection.executescript(migration.read_text())
             self._connection.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (1)")
 
-    def save(self, report: MachineReport) -> None:
+    def save(self, report: MachineReport, *, events: tuple[RunEvent, ...] = ()) -> None:
         with self._lock, self._connection:
             self._connection.execute(
                 "INSERT OR REPLACE INTO reports(run_id, report_json) VALUES (?, ?)",
                 (report.run_id, report.model_dump_json()),
+            )
+            self._connection.execute("DELETE FROM run_events WHERE run_id = ?", (report.run_id,))
+            self._connection.executemany(
+                "INSERT INTO run_events(run_id, position, event_json) VALUES (?, ?, ?)",
+                (
+                    (report.run_id, index, event.model_dump_json())
+                    for index, event in enumerate(events)
+                ),
             )
 
     def get(self, run_id: str) -> MachineReport | None:
@@ -50,6 +59,13 @@ class SQLiteReportRepository:
         with self._lock, self._connection:
             cursor = self._connection.execute("DELETE FROM reports WHERE run_id = ?", (run_id,))
             return cursor.rowcount == 1
+
+    def events(self, run_id: str) -> tuple[RunEvent, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT event_json FROM run_events WHERE run_id = ? ORDER BY position", (run_id,)
+            ).fetchall()
+        return tuple(RunEvent.model_validate_json(cast(str, row[0])) for row in rows)
 
     def close(self) -> None:
         with self._lock:
