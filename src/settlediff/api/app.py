@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from html import escape
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -54,5 +55,17 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
         return [event.model_dump(mode="json") for event in repository.events(run_id)]
 
     app.get("/runs/{run_id}/events")(run_events)
+
+    def run_artifacts(run_id: str) -> str:
+        if repository.get(run_id) is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        payloads = "".join(
+            f"<details><summary>{escape(artifact.artifact_id)}</summary>"
+            f"<pre>{escape(artifact.model_dump_json())}</pre></details>"
+            for artifact in repository.artifacts(run_id)
+        )
+        return f"<main><h1>Artifacts</h1>{payloads}</main>"
+
+    app.get("/runs/{run_id}/artifacts", response_class=HTMLResponse)(run_artifacts)
 
     return app

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from settlediff.api.app import create_app
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import RunState, RunTimeline
+from settlediff.domain.models import ArtifactType, EvidenceArtifact
 from settlediff.storage.sqlite import SQLiteReportRepository
 
 
@@ -15,7 +17,20 @@ def test_runs_and_detail_are_persisted_and_escaped(tmp_path: Path) -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     timeline = RunTimeline()
     timeline.transition(RunState.AUTHORIZED)
-    repository.save(report, events=timeline.events)
+    repository.save(
+        report,
+        events=timeline.events,
+        artifacts=(
+            EvidenceArtifact(
+                artifact_id="artifact:unsafe",
+                artifact_type=ArtifactType.SERVICE_RESPONSE,
+                source="test",
+                collected_at=datetime(2026, 8, 13, tzinfo=UTC),
+                redacted=False,
+                data={"message": "<script>alert(1)</script>"},
+            ),
+        ),
+    )
     client = TestClient(create_app(repository))
     response = client.get("/runs")
     assert response.status_code == 200
@@ -26,6 +41,9 @@ def test_runs_and_detail_are_persisted_and_escaped(tmp_path: Path) -> None:
     events = client.get(f"/runs/{report.run_id}/events")
     assert events.status_code == 200
     assert events.json()[-1]["state"] == "authorized"
+    artifacts = client.get(f"/runs/{report.run_id}/artifacts")
+    assert artifacts.status_code == 200
+    assert "&lt;script&gt;" in artifacts.text
     assert client.get("/runs/not-found").status_code == 404
 
 
