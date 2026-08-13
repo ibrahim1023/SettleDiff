@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from hashlib import sha384
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -37,10 +38,16 @@ def test_runs_and_detail_are_persisted_and_escaped(tmp_path: Path) -> None:
     assert report.run_id in response.text
     assert response.headers["content-security-policy"].startswith("default-src")
     assert client.get("/static/settlediff.css").status_code == 200
-    assert client.get(f"/runs/{report.run_id}").status_code == 200
+    assert client.get("/static/htmx.min.js").status_code == 200
+    detail = client.get(f"/runs/{report.run_id}")
+    assert detail.status_code == 200
+    assert "hx-get" in detail.text
     events = client.get(f"/runs/{report.run_id}/events")
     assert events.status_code == 200
     assert events.json()[-1]["state"] == "authorized"
+    event_fragment = client.get(f"/runs/{report.run_id}/events-fragment")
+    assert event_fragment.status_code == 200
+    assert "authorized" in event_fragment.text
     artifacts = client.get(f"/runs/{report.run_id}/artifacts")
     assert artifacts.status_code == 200
     assert "&lt;script&gt;" in artifacts.text
@@ -63,3 +70,13 @@ def test_all_fixture_reports_render_without_recomputing(tmp_path: Path) -> None:
         assert report.verdict.value in detail.text
         for heading in ("Expected", "Executed", "Recorded"):
             assert f"<th>{heading}</th>" in detail.text
+
+
+def test_vendored_htmx_checksum_is_recorded() -> None:
+    static = Path("src/settlediff/ui/static")
+    expected = (
+        "1f94ab71fca01e602e4c366984c1ea0492dcdc586cb0a8c6ef0fc2782a4545e49"
+        "fc015834caa64ccf3fc73e70bb0af95"
+    )
+    assert sha384((static / "htmx.min.js").read_bytes()).hexdigest() == expected
+    assert expected in (static / "HTMX-SOURCE.md").read_text()

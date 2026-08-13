@@ -90,6 +90,22 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
 
     app.get("/runs/{run_id}/events")(run_events)
 
+    def event_fragment(run_id: str) -> str:
+        if repository.get(run_id) is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        events = repository.events(run_id)
+        if not events:
+            return "<p>No recorded transitions.</p>"
+        items = "".join(
+            "<li>"
+            f'<time datetime="{escape(event.occurred_at.isoformat())}">'
+            f"{escape(event.occurred_at.isoformat())}</time> — {escape(event.state.value)}</li>"
+            for event in events
+        )
+        return f"<ol>{items}</ol>"
+
+    app.get("/runs/{run_id}/events-fragment", response_class=HTMLResponse)(event_fragment)
+
     def run_artifacts(run_id: str) -> str:
         if repository.get(run_id) is None:
             raise HTTPException(status_code=404, detail="run not found")

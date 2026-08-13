@@ -4,3 +4,15 @@ main { max-width: 52rem; margin: 0 auto; padding: 2rem 1rem; }
 h1, h2 { line-height: 1.2; }
 li { margin: .45rem 0; }
 a { color: #075d59; }
+section { margin-block: 2rem; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border-bottom: 1px solid #cdd4d4; padding: .65rem; text-align: left; vertical-align: top; }
+td { overflow-wrap: anywhere; }
+@media (max-width: 38rem) {
+  main { padding: 1.25rem .75rem; }
+  table, thead, tbody, th, td, tr { display: block; }
+  thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  tr { border: 1px solid #cdd4d4; margin-block: .75rem; }
+  th, td { border: 0; padding: .45rem .6rem; }
+  td::before { content: attr(data-label); display: block; color: #4b5563; font-size: .85rem; }
+}

@@ -1,1 +1,35 @@
-{% extends "base.html" %}{% block title %}SettleDiff {{ report.run_id }}{% endblock %}{% block content %}<h1>{{ report.intent.task }}</h1><p>{{ report.run_id }} — <strong>{{ report.verdict.value }}</strong></p><section><h2>Expected ↔ Executed ↔ Recorded</h2><table><thead><tr><th>Field</th><th>Expected</th><th>Executed</th><th>Recorded</th></tr></thead><tbody>{% for label, expected, executed, recorded in rows %}<tr><th>{{ label }}</th><td>{{ expected or "—" }}</td><td>{{ executed or "—" }}</td><td>{{ recorded or "—" }}</td></tr>{% endfor %}</tbody></table></section><section><h2>Service outcome</h2><p>{% if report.execution %}HTTP {{ report.execution.upstream_http_status or "unknown" }}{% else %}No execution evidence.{% endif %}</p>{% if report.verdict.value == "PAID_FAILURE" %}<p><strong>PAID FAILURE</strong> — payment settled successfully, but the purchased operation failed.</p>{% endif %}</section><section><h2>Findings</h2><ul>{% for finding in report.findings %}<li>{{ finding.status }} — {{ finding.message }}</li>{% endfor %}</ul></section>{% endblock %}
+{% extends "base.html" %}
+{% block title %}SettleDiff {{ report.run_id }}{% endblock %}
+{% block content %}
+  <h1>{{ report.intent.task }}</h1>
+  <p>{{ report.run_id }} — <strong>{{ report.verdict.value }}</strong></p>
+  <section>
+    <h2>Expected ↔ Executed ↔ Recorded</h2>
+    <table>
+      <thead><tr><th>Field</th><th>Expected</th><th>Executed</th><th>Recorded</th></tr></thead>
+      <tbody>
+        {% for label, expected, executed, recorded in rows %}
+          <tr><th>{{ label }}</th><td data-label="Expected">{{ expected or "—" }}</td><td data-label="Executed">{{ executed or "—" }}</td><td data-label="Recorded">{{ recorded or "—" }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  <section>
+    <h2>Service outcome</h2>
+    <p>{% if report.execution %}HTTP {{ report.execution.upstream_http_status or "unknown" }}{% else %}No execution evidence.{% endif %}</p>
+    {% if report.verdict.value == "PAID_FAILURE" %}
+      <p><strong>PAID FAILURE</strong> — payment settled successfully, but the purchased operation failed.</p>
+    {% endif %}
+  </section>
+  <section>
+    <h2>Findings</h2>
+    <ul>{% for finding in report.findings %}<li>{{ finding.status }} — {{ finding.message }}</li>{% endfor %}</ul>
+  </section>
+  <section aria-live="polite">
+    <h2>Run transitions</h2>
+    <div hx-get="/runs/{{ report.run_id }}/events-fragment" hx-trigger="load, every 10s" hx-swap="innerHTML">
+      <p>Loading transitions…</p>
+    </div>
+  </section>
+  <p><a href="/runs/{{ report.run_id }}/artifacts">View redacted evidence artifacts</a></p>
+{% endblock %}
