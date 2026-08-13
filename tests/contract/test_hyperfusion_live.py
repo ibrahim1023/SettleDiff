@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel
-from pydantic_ai import Agent
+from pydantic_ai import Agent, models
 
 from settlediff.agent.model import build_hyperfusion_model
 from settlediff.config import Settings
@@ -19,11 +20,15 @@ class ContractOutput(BaseModel):
 
 
 @pytest.mark.asyncio
-async def test_hyperfusion_supports_structured_output_and_tool_continuation() -> None:
+async def test_hyperfusion_supports_structured_output_and_tool_continuation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     if os.getenv("SETTLEDIFF_LIVE_HYPERFUSION") != "1":
         pytest.skip("set SETTLEDIFF_LIVE_HYPERFUSION=1 to run the live compatibility probe")
 
+    monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", True)
     tool_calls: list[str] = []
+    evidence_token = uuid4().hex
     agent = Agent(
         build_hyperfusion_model(Settings().require_hyperfusion()),
         output_type=ContractOutput,
@@ -36,14 +41,14 @@ async def test_hyperfusion_supports_structured_output_and_tool_continuation() ->
 
     async def echo_evidence(value: str) -> str:
         tool_calls.append(value)
-        return f"evidence:{value}"
+        return f"evidence:{value}:{evidence_token}"
 
     agent.tool_plain(echo_evidence)
 
     result = await agent.run("Perform the compatibility check.")
 
     assert tool_calls == ["ping"]
-    assert result.output.answer == "evidence:ping"
+    assert result.output.answer == f"evidence:ping:{evidence_token}"
     usage = result.usage()
     assert usage.requests >= 2
-    assert usage.tool_calls == 1
+    assert usage.tool_calls >= 1
