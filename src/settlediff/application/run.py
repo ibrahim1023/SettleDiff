@@ -6,16 +6,22 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Protocol, cast
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from settlediff.application.auth import (
     ConsumedPaidAuthorization,
     PaidExecutionCapability,
     PaidExecutionRequest,
 )
-from settlediff.domain.models import MachineReport
+from settlediff.domain.checks import run_checks
+from settlediff.domain.matching import match_activity
+from settlediff.domain.models import ArtifactType, EvidenceArtifact, MachineReport, PurchaseIntent
+from settlediff.domain.normalize import normalize_activity, normalize_contract, normalize_execution
+from settlediff.domain.verdict import derive_verdict
 from settlediff.perflo.client import PerfloMutationUncertainError
+from settlediff.perflo.parser import PerfloSuccessEnvelope
 
 
 class RunState(StrEnum):
@@ -87,6 +93,88 @@ class InvestigationOutcome:
     submission_uncertain: bool
 
 
+class PerfloEvidencePort(Protocol):
+    """The four narrow Perflo calls used by a live investigation."""
+
+    async def inspect_service(self, target: str) -> PerfloSuccessEnvelope: ...
+
+    async def get_schema(self, slug: str) -> PerfloSuccessEnvelope: ...
+
+    async def execute(
+        self, authorization: ConsumedPaidAuthorization, request: PaidExecutionRequest
+    ) -> PerfloSuccessEnvelope: ...
+
+    async def get_activity(self) -> PerfloSuccessEnvelope: ...
+
+
+class LiveEvidenceCollector:
+    """Capture provider evidence, then derive a report with deterministic code only."""
+
+    def __init__(self, perflo: PerfloEvidencePort) -> None:
+        self._perflo = perflo
+        self._contract: EvidenceArtifact | None = None
+        self._schema: EvidenceArtifact | None = None
+        self._execution: EvidenceArtifact | None = None
+        self._activity: EvidenceArtifact | None = None
+
+    @property
+    def artifacts(self) -> tuple[EvidenceArtifact, ...]:
+        return tuple(
+            artifact
+            for artifact in (self._contract, self._schema, self._execution, self._activity)
+            if artifact is not None
+        )
+
+    async def preflight(self, request: PaidExecutionRequest) -> None:
+        contract_data = _result_data(await self._perflo.inspect_service(request.target))
+        self._contract = _artifact(
+            request.run_id, ArtifactType.SERVICE_CONTRACT, "perflo.check", contract_data
+        )
+        contract = normalize_contract(self._contract)
+        schema_data = _result_data(await self._perflo.get_schema(contract.vendor_slug))
+        self._schema = _artifact(
+            request.run_id, ArtifactType.CONTEXT_EVIDENCE, "perflo.schema", schema_data
+        )
+
+    async def execute(
+        self, authorization: ConsumedPaidAuthorization, request: PaidExecutionRequest
+    ) -> None:
+        execution_data = _result_data(await self._perflo.execute(authorization, request))
+        self._execution = _artifact(
+            request.run_id, ArtifactType.EXECUTION, "perflo.fetch", execution_data
+        )
+
+    async def verify(self, request: PaidExecutionRequest) -> MachineReport:
+        if self._contract is None or self._execution is None:
+            raise RunTransitionError(
+                "live verification requires captured contract and execution evidence"
+            )
+        activity_data = _result_data(await self._perflo.get_activity())
+        self._activity = _artifact(
+            request.run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data
+        )
+        contract = normalize_contract(self._contract)
+        execution = normalize_execution(self._execution)
+        matched = match_activity(execution, normalize_activity(self._activity))
+        intent = PurchaseIntent(
+            run_id=request.run_id,
+            task=f"Paid request to {request.target}",
+            max_budget=request.budget,
+            requested_service=contract.vendor_slug,
+            created_at=datetime.now(UTC),
+        )
+        findings = run_checks(intent, contract, execution, matched)
+        return MachineReport(
+            run_id=request.run_id,
+            intent=intent,
+            contract=contract,
+            execution=execution,
+            ledger=matched.matched,
+            findings=findings,
+            verdict=derive_verdict(findings),
+        )
+
+
 class RunInvestigation:
     """Coordinate one authorized execution without embedding verification logic."""
 
@@ -127,3 +215,23 @@ class RunInvestigation:
     async def _record(self, event: RunEvent) -> None:
         if self._persist_event is not None:
             await self._persist_event(event)
+
+
+def _artifact(
+    run_id: str, artifact_type: ArtifactType, source: str, data: JsonValue
+) -> EvidenceArtifact:
+    return EvidenceArtifact(
+        artifact_id=f"{run_id}:{artifact_type.value}",
+        artifact_type=artifact_type,
+        source=source,
+        collected_at=datetime.now(UTC),
+        redacted=False,
+        data=data,
+    )
+
+
+def _result_data(envelope: PerfloSuccessEnvelope) -> JsonValue:
+    result = envelope.payload.get("result")
+    if result is None:
+        raise RunTransitionError("Perflo success envelope did not include result evidence")
+    return cast(JsonValue, result)
