@@ -12,10 +12,11 @@ intent → contract → execution → receipt → service outcome → activity r
 
 ## Status
 
-Phases 1 through 8 are implemented offline: the development foundation now includes strict,
+Phases 1 through 11 are implemented offline: the development foundation now includes strict,
 versioned evidence models, exact money semantics, recursive redaction, bounded Perflo envelope
 parsing, deterministic Activity matching, independent verification checks, verdict precedence,
-fully offline sanitized fixture replay, and a safe Perflo subprocess boundary. Hyperfusion's
+fully offline sanitized fixture replay, a safe Perflo subprocess boundary, an explicitly authorized
+live-run state machine, SQLite report storage, and a loopback-only debugger UI. Hyperfusion's
 optional PydanticAI provider factory and an opt-in compatibility probe are also in place. The
 owner-authorized provider probe passed on 2026-08-13 with `openai/gpt-oss-120b`: structured
 output, tool calling, and tool-result continuation are compatible with the configured profile.
@@ -39,23 +40,30 @@ The local product specification is intentionally excluded from Git. The approved
 
 The flagship result is `PAID_FAILURE`: money settled, but the purchased operation failed.
 
-## Planned 60-second fixture demo
+## 60-second fixture demo
 
 The first implementation milestone will make this path executable without credentials or spending:
 
 ```bash
 uv sync --locked --all-groups
-uv run settlediff verify-fixture fixtures/paid-failure
+uv run settlediff verify-fixture fixtures/paid-failure --database /tmp/settlediff-demo.sqlite3
+uv run settlediff show syn_run_paid_failure --database /tmp/settlediff-demo.sqlite3
+uv run settlediff serve --database /tmp/settlediff-demo.sqlite3
 ```
 
-Expected terminal verdict:
+The first two commands print the deterministic report. Then open `http://127.0.0.1:8765/runs` to
+inspect the persisted Expected, Executed, and Recorded evidence. This demo never contacts a model,
+Perflo, or a paid service.
+
+Expected verdict:
 
 ```text
 PAID_FAILURE
-Payment settled successfully, but the purchased service failed.
 ```
 
-Until that milestone lands, these commands are a documented target rather than an available interface.
+For a live call, `settlediff run --url URL --body JSON --budget AMOUNT` inspects provider metadata,
+shows the exact target, canonical body digest, and USDC budget, then requires an interactive yes/no
+authorization. It is never part of the default test suite.
 
 ## Architecture
 
