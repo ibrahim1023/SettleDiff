@@ -85,7 +85,5 @@ async def test_consumed_authorization_rejects_changed_request() -> None:
 
     with pytest.raises(AuthorizationError, match="exact budget"):
         token.require_exact_request(
-            exact_request.model_copy(
-                update={"budget": Money(amount=Decimal("0.04"), unit="USDC")}
-            )
+            exact_request.model_copy(update={"budget": Money(amount=Decimal("0.04"), unit="USDC")})
         )
