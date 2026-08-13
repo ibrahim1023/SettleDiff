@@ -4,7 +4,6 @@ These choices are intentionally unresolved. None blocks the documentation founda
 
 | Decision | Recommended default | Needed by |
 |---|---|---|
-| Hyperfusion endpoint and model ID | The configured model was probed on 2026-08-13: it returned structured output but did not call a required tool. Select a tool-capable model, then rerun the opt-in compatibility contract; keep both values in environment configuration. | Implementation Task 8 |
 | Live CLI confirmation behavior | Require an interactive confirmation showing target, canonical body digest, and budget. Add non-interactive authorization only when a concrete automation use case defines an equally explicit approval mechanism. | Implementation Task 10 |
 | Local artifact retention | Keep reports until the developer deletes them, provide explicit per-run deletion, and do not collect raw sensitive payloads by default. Revisit time-based retention only if real usage requires it. | Implementation Task 11 |
 | Context.dev timing | Include the single narrow evidence path after the offline core, CLI, and debugger UI pass. Treat it as bonus acceptance, not a release blocker. | Implementation Task 12 |
