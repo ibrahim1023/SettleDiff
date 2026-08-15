@@ -15,7 +15,11 @@ from decimal import Decimal
 from typing import IO, cast
 
 from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.metrics import Counter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import MetricReader, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExporter
@@ -26,6 +30,7 @@ from pydantic_ai import Agent
 from pydantic_ai.agent import InstrumentationSettings
 
 from settlediff.config import Settings
+from settlediff.domain.models import CheckStatus, Verdict
 from settlediff.domain.redaction import redact_embedded_identifiers
 
 SAFE_ATTRIBUTE_KEYS = frozenset(
@@ -62,6 +67,32 @@ SAFE_ATTRIBUTE_KEYS = frozenset(
 _EVENT_NAME = re.compile(r"[a-z][a-z0-9_.]{0,63}\Z")
 _SPAN_NAME = re.compile(r"settlediff\.[a-z][a-z0-9_.]{0,63}\Z")
 _MAX_STRING_CHARS = 256
+_RUN_MODES = frozenset({"live", "replay"})
+_CHECK_NAMES = frozenset(
+    {
+        "activity_persistence",
+        "asset",
+        "budget",
+        "chain",
+        "ledger_outcome",
+        "paid_failure",
+        "price",
+        "protocol",
+        "recipient",
+        "service_execution",
+        "settlement",
+    }
+)
+_METRIC_ATTRIBUTE_ENUMS = {
+    "settlediff.runs": {
+        "mode": _RUN_MODES,
+        "verdict": frozenset(verdict.value for verdict in Verdict),
+    },
+    "settlediff.checks": {
+        "check_name": _CHECK_NAMES,
+        "check_status": frozenset(status.value for status in CheckStatus),
+    },
+}
 
 
 class JsonLogFormatter(logging.Formatter):
@@ -84,18 +115,26 @@ class TelemetryRuntime:
         self,
         *,
         provider: TracerProvider,
+        meter_provider: MeterProvider,
+        owns_meter_provider: bool,
         instrumentation: InstrumentationSettings,
         logger: logging.Logger,
         handler: logging.Handler,
         secret_values: frozenset[str],
     ) -> None:
         self._provider = provider
+        self._meter_provider = meter_provider
+        self._owns_meter_provider = owns_meter_provider
         self.instrumentation = instrumentation
         self._logger = logger
         self._handler = handler
         self._secret_values = secret_values
         self._correlation_salt = secrets.token_bytes(32)
         self._tracer: Tracer = provider.get_tracer("settlediff")
+        meter = meter_provider.get_meter("settlediff")
+        self._counters: dict[str, Counter] = {
+            name: meter.create_counter(name) for name in _METRIC_ATTRIBUTE_ENUMS
+        }
 
     def safe_attributes(self, attributes: Mapping[str, object]) -> dict[str, AttributeValue]:
         """Allow only bounded operational fields; replace local run IDs with a hash."""
@@ -110,6 +149,23 @@ class TelemetryRuntime:
             if converted is not None:
                 safe[key] = converted
         return safe
+
+    def counter(self, name: str, attributes: Mapping[str, object]) -> None:
+        """Increment one approved counter after validating its bounded labels."""
+        attribute_enums = _METRIC_ATTRIBUTE_ENUMS.get(name)
+        if attribute_enums is None:
+            raise ValueError("unknown telemetry metric name")
+        if set(attributes) != set(attribute_enums):
+            raise ValueError("metric attributes must exactly match the approved keys")
+
+        bounded_attributes: dict[str, AttributeValue] = {}
+        for key, value in attributes.items():
+            if not isinstance(value, str) or value not in attribute_enums[key]:
+                raise ValueError("metric attributes must use bounded enum values")
+            bounded_attributes[key] = value
+
+        with suppress(Exception):
+            self._counters[name].add(1, bounded_attributes)
 
     def event(
         self,
@@ -147,10 +203,15 @@ class TelemetryRuntime:
     def force_flush(self) -> None:
         with suppress(Exception):
             self._provider.force_flush()
+        with suppress(Exception):
+            self._meter_provider.force_flush()
 
     def shutdown(self) -> None:
         with suppress(Exception):
             self._provider.shutdown()
+        if self._owns_meter_provider:
+            with suppress(Exception):
+                self._meter_provider.shutdown()
         self._logger.removeHandler(self._handler)
         with suppress(Exception):
             self._handler.close()
@@ -178,16 +239,21 @@ def configure_telemetry(
     settings: Settings,
     *,
     span_exporter: SpanExporter | None = None,
+    meter_provider: MeterProvider | None = None,
+    metric_reader: MetricReader | None = None,
     log_stream: IO[str] | None = None,
 ) -> TelemetryRuntime:
     """Configure local JSON diagnostics and optional private OTLP export."""
-    provider = TracerProvider(resource=Resource.create({"service.name": "settlediff"}))
+    if meter_provider is not None and metric_reader is not None:
+        raise ValueError("inject either a meter provider or a metric reader, not both")
+
+    resource = Resource.create({"service.name": "settlediff"})
+    otlp_endpoint = settings.otlp_endpoint.strip() if settings.otlp_endpoint else None
+    provider = TracerProvider(resource=resource)
     if span_exporter is not None:
         provider.add_span_processor(SimpleSpanProcessor(span_exporter))
-    elif settings.otlp_endpoint is not None and settings.otlp_endpoint.strip():
-        provider.add_span_processor(
-            BatchSpanProcessor(OTLPSpanExporter(endpoint=settings.otlp_endpoint.strip()))
-        )
+    elif otlp_endpoint:
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=otlp_endpoint)))
 
     instrumentation = InstrumentationSettings(
         tracer_provider=provider,
@@ -196,6 +262,15 @@ def configure_telemetry(
         event_mode="attributes",
     )
     Agent.instrument_all(instrumentation)
+
+    owns_meter_provider = meter_provider is None
+    if meter_provider is None:
+        if metric_reader is None and otlp_endpoint:
+            metric_reader = PeriodicExportingMetricReader(
+                OTLPMetricExporter(endpoint=otlp_endpoint)
+            )
+        readers = (metric_reader,) if metric_reader is not None else ()
+        meter_provider = MeterProvider(metric_readers=readers, resource=resource)
 
     logger = logging.getLogger(f"settlediff.telemetry.{id(provider)}")
     logger.setLevel(logging.INFO)
@@ -206,6 +281,8 @@ def configure_telemetry(
 
     return TelemetryRuntime(
         provider=provider,
+        meter_provider=meter_provider,
+        owns_meter_provider=owns_meter_provider,
         instrumentation=instrumentation,
         logger=logger,
         handler=handler,

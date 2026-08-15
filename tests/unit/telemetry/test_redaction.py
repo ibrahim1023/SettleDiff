@@ -5,6 +5,9 @@ from collections.abc import Sequence
 from contextlib import suppress
 from decimal import Decimal
 
+import pytest
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -104,6 +107,65 @@ def test_pydantic_ai_instrumentation_disables_content_capture() -> None:
     assert telemetry.instrumentation.include_content is False
     assert telemetry.instrumentation.include_binary_content is False
     assert telemetry.instrumentation.event_mode == "attributes"
+    telemetry.shutdown()
+
+
+def test_metric_canary_is_rejected_without_dropping_useful_counters() -> None:
+    reader = InMemoryMetricReader()
+    telemetry = configure_telemetry(
+        configured_settings(), metric_reader=reader, log_stream=io.StringIO()
+    )
+
+    telemetry.counter("settlediff.runs", {"mode": "replay", "verdict": "VERIFIED"})
+    telemetry.counter("settlediff.checks", {"check_name": "chain", "check_status": "PASS"})
+    with pytest.raises(ValueError, match="bounded enum"):
+        telemetry.counter("settlediff.runs", {"mode": SecretStr(CANARY), "verdict": "VERIFIED"})
+
+    exported = repr(reader.get_metrics_data())
+    assert CANARY not in exported
+    assert "settlediff.runs" in exported
+    assert "settlediff.checks" in exported
+    assert "replay" in exported
+    assert "chain" in exported
+    telemetry.shutdown()
+
+
+def test_injected_meter_provider_records_approved_metrics() -> None:
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=(reader,))
+    telemetry = configure_telemetry(
+        configured_settings(), meter_provider=provider, log_stream=io.StringIO()
+    )
+
+    telemetry.counter("settlediff.runs", {"mode": "live", "verdict": "PAID_FAILURE"})
+    telemetry.shutdown()
+
+    exported = repr(reader.get_metrics_data())
+    assert "settlediff.runs" in exported
+    assert "PAID_FAILURE" in exported
+    provider.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("name", "attributes"),
+    [
+        ("settlediff.unknown", {"mode": "replay", "verdict": "VERIFIED"}),
+        ("settlediff.runs", {"mode": "replay", "verdict": "VERIFIED", "url": "x"}),
+        ("settlediff.runs", {"mode": ["replay"], "verdict": "VERIFIED"}),
+        ("settlediff.runs", {"mode": "customer-specific", "verdict": "VERIFIED"}),
+        ("settlediff.checks", {"check_name": "invented", "check_status": "PASS"}),
+    ],
+)
+def test_metric_contract_fails_closed(name: str, attributes: dict[str, object]) -> None:
+    reader = InMemoryMetricReader()
+    telemetry = configure_telemetry(
+        configured_settings(), metric_reader=reader, log_stream=io.StringIO()
+    )
+
+    with pytest.raises(ValueError):
+        telemetry.counter(name, attributes)
+
+    assert reader.get_metrics_data() is None
     telemetry.shutdown()
 
 

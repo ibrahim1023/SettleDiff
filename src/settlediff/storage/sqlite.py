@@ -9,7 +9,7 @@ from typing import cast
 
 from settlediff.application.run import RunEvent
 from settlediff.domain.models import EvidenceArtifact, MachineReport
-from settlediff.domain.redaction import redact_artifact
+from settlediff.domain.redaction import redact_artifact, redact_report
 
 
 class SQLiteReportRepository:
@@ -45,10 +45,11 @@ class SQLiteReportRepository:
         events: tuple[RunEvent, ...] = (),
         artifacts: tuple[EvidenceArtifact, ...] = (),
     ) -> None:
+        persisted_report = redact_report(report)
         with self._lock, self._connection:
             self._connection.execute(
                 "INSERT OR REPLACE INTO reports(run_id, report_json) VALUES (?, ?)",
-                (report.run_id, report.model_dump_json()),
+                (report.run_id, persisted_report.model_dump_json()),
             )
             self._connection.execute("DELETE FROM run_events WHERE run_id = ?", (report.run_id,))
             self._connection.execute("DELETE FROM artifacts WHERE run_id = ?", (report.run_id,))

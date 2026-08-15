@@ -7,7 +7,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from settlediff.domain.models import EvidenceArtifact
+from settlediff.domain.models import EvidenceArtifact, MachineReport
 
 REDACTED = "[REDACTED]"
 EMAIL_PATTERN = re.compile(
@@ -103,3 +103,14 @@ def redact_value(value: JsonValue, *, key: str | None = None) -> JsonValue:
 def redact_artifact(artifact: EvidenceArtifact) -> EvidenceArtifact:
     """Return a redacted copy of an evidence artifact."""
     return artifact.model_copy(update={"data": redact_value(artifact.data), "redacted": True})
+
+
+def redact_report(report: MachineReport) -> MachineReport:
+    """Redact nested service response data without changing deterministic results."""
+    execution = report.execution
+    if execution is None or execution.response_body is None:
+        return report
+    redacted_execution = execution.model_copy(
+        update={"response_body": redact_value(execution.response_body)}
+    )
+    return report.model_copy(update={"execution": redacted_execution})
