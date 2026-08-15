@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol, cast
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
@@ -19,8 +20,12 @@ from settlediff.application.auth import (
 from settlediff.contextdev.client import (
     ContextDevProtocolError,
     ContextDevUnavailableError,
+    ContextEvidenceDiagnostic,
+    ContextEvidenceErrorClass,
     ContextEvidencePort,
+    ContextEvidenceRecord,
     ContextEvidenceRequest,
+    ContextEvidenceState,
     eligible_evidence_url,
 )
 from settlediff.domain.checks import run_checks
@@ -33,6 +38,7 @@ from settlediff.domain.models import (
     PurchaseIntent,
 )
 from settlediff.domain.normalize import normalize_activity, normalize_contract, normalize_execution
+from settlediff.domain.redaction import redact_artifact, redact_embedded_identifiers
 from settlediff.domain.verdict import derive_verdict
 from settlediff.perflo.client import PerfloMutationUncertainError
 from settlediff.perflo.parser import PerfloEnvelope, PerfloSuccessEnvelope
@@ -128,6 +134,8 @@ class TelemetryPort(Protocol):
 
     def event(self, name: str, attributes: Mapping[str, object]) -> None: ...
 
+    def counter(self, name: str, attributes: Mapping[str, object]) -> None: ...
+
 
 class NullTelemetrySpan:
     def __enter__(self) -> None:
@@ -198,7 +206,6 @@ class LiveEvidenceCollector:
         )
         contract = normalize_contract(self._contract)
         execution = normalize_execution(self._execution)
-        await self._collect_context(request, execution)
         matched = match_activity(execution, normalize_activity(self._activity))
         intent = PurchaseIntent(
             run_id=request.run_id,
@@ -208,7 +215,7 @@ class LiveEvidenceCollector:
             created_at=datetime.now(UTC),
         )
         findings = run_checks(intent, contract, execution, matched)
-        return MachineReport(
+        report = MachineReport(
             run_id=request.run_id,
             intent=intent,
             contract=contract,
@@ -217,30 +224,93 @@ class LiveEvidenceCollector:
             findings=findings,
             verdict=derive_verdict(findings),
         )
+        await self._collect_context(request, execution)
+        return report
 
     async def _collect_context(
         self, request: PaidExecutionRequest, execution: ExecutionRecord
     ) -> None:
-        """Record independent reachability evidence for a failed service, when configured.
-
-        A Context.dev failure never changes the run: the evidence is absent instead.
-        """
+        """Record Context evidence state without feeding it into deterministic checks."""
         url = eligible_evidence_url(execution)
         if url is None:
+            failed = execution.upstream_http_status is not None and not (
+                200 <= execution.upstream_http_status < 300
+            )
+            diagnostic = (
+                ContextEvidenceDiagnostic.MISSING_ELIGIBLE_HTTPS_STATUS_URL
+                if failed
+                else ContextEvidenceDiagnostic.SERVICE_DID_NOT_FAIL
+            )
+            self._record_context(
+                request.run_id,
+                ContextEvidenceRecord(
+                    state=ContextEvidenceState.NOT_APPLICABLE,
+                    status_url=None,
+                    excerpt=None,
+                    observed_at=datetime.now(UTC),
+                    diagnostic=diagnostic,
+                    error_class=None,
+                    body_bytes=None,
+                ),
+            )
             return
+
+        safe_url = _safe_status_url(url)
         try:
             evidence = await self._contextdev.verify(
                 ContextEvidenceRequest(url=url, claim=f"HTTP {execution.upstream_http_status}")
             )
-        except (ContextDevProtocolError, ContextDevUnavailableError):
-            return
-        self._context = EvidenceArtifact(
-            artifact_id=f"{request.run_id}:contextdev",
-            artifact_type=ArtifactType.CONTEXT_EVIDENCE,
-            source="contextdev",
-            collected_at=datetime.now(UTC),
-            redacted=False,
-            data=cast(JsonValue, evidence.model_dump(mode="json")),
+        except ContextDevProtocolError as error:
+            record = ContextEvidenceRecord(
+                state=ContextEvidenceState.PROTOCOL_ERROR,
+                status_url=safe_url,
+                excerpt=None,
+                observed_at=datetime.now(UTC),
+                diagnostic=ContextEvidenceDiagnostic.PROVIDER_RESPONSE_INVALID,
+                error_class=ContextEvidenceErrorClass.PROTOCOL,
+                body_bytes=error.body_bytes,
+            )
+        except ContextDevUnavailableError as error:
+            record = ContextEvidenceRecord(
+                state=ContextEvidenceState.PROVIDER_UNAVAILABLE,
+                status_url=safe_url,
+                excerpt=None,
+                observed_at=datetime.now(UTC),
+                diagnostic=ContextEvidenceDiagnostic.PROVIDER_REQUEST_FAILED,
+                error_class=ContextEvidenceErrorClass.UNAVAILABLE,
+                body_bytes=error.body_bytes,
+            )
+        else:
+            if not evidence.reachable:
+                state = ContextEvidenceState.SOURCE_UNREACHABLE
+                diagnostic = ContextEvidenceDiagnostic.SOURCE_SCRAPE_FAILED
+            elif evidence.evidence_present:
+                state = ContextEvidenceState.PRESENT
+                diagnostic = ContextEvidenceDiagnostic.EXACT_CLAIM_PRESENT
+            else:
+                state = ContextEvidenceState.ABSENT
+                diagnostic = ContextEvidenceDiagnostic.EXACT_CLAIM_ABSENT
+            record = ContextEvidenceRecord(
+                state=state,
+                status_url=safe_url,
+                excerpt=evidence.excerpt if state is ContextEvidenceState.PRESENT else None,
+                observed_at=evidence.fetched_at,
+                diagnostic=diagnostic,
+                error_class=None,
+                body_bytes=evidence.body_bytes,
+            )
+        self._record_context(request.run_id, record)
+
+    def _record_context(self, run_id: str, record: ContextEvidenceRecord) -> None:
+        self._context = redact_artifact(
+            EvidenceArtifact(
+                artifact_id=f"{run_id}:contextdev",
+                artifact_type=ArtifactType.CONTEXT_EVIDENCE,
+                source="contextdev",
+                collected_at=record.observed_at,
+                redacted=False,
+                data=cast(JsonValue, record.model_dump(mode="json")),
+            )
         )
 
 
@@ -279,6 +349,7 @@ class RunInvestigation:
             await self._transition(timeline, RunState.VERIFYING, run_id)
             with self._span("settlediff.verify", {"run_id": run_id, "component": "domain"}):
                 report = await self._verify()
+            self._record_metrics(report)
             await self._transition(timeline, RunState.COMPLETE, run_id)
             return InvestigationOutcome(
                 report=report,
@@ -302,6 +373,33 @@ class RunInvestigation:
         if self._telemetry is None:
             return NullTelemetrySpan()
         return self._telemetry.span(name, attributes)
+
+    def _record_metrics(self, report: MachineReport) -> None:
+        if self._telemetry is None:
+            return
+        with suppress(Exception):
+            self._telemetry.counter(
+                "settlediff.runs", {"mode": "live", "verdict": report.verdict.value}
+            )
+            for finding in report.findings:
+                self._telemetry.counter(
+                    "settlediff.checks",
+                    {"check_name": finding.check_id, "check_status": finding.status.value},
+                )
+
+
+def _safe_status_url(url: str) -> str:
+    parts = urlsplit(url)
+    netloc = parts.netloc.rsplit("@", maxsplit=1)[-1]
+    return urlunsplit(
+        (
+            parts.scheme,
+            netloc,
+            redact_embedded_identifiers(parts.path),
+            "",
+            "",
+        )
+    )
 
 
 def _artifact(

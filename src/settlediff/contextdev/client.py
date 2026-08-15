@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Literal, Protocol, cast
+from enum import StrEnum
+from typing import Literal, Protocol, Self, cast
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import BaseModel, ConfigDict, JsonValue, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, model_validator
 
 from settlediff.domain.models import CanonicalModel, ExecutionRecord, NonEmptyStr, UtcDatetime
 from settlediff.domain.redaction import redact_embedded_identifiers
@@ -30,6 +31,34 @@ class ContextDevProtocolError(ValueError):
 class ContextDevUnavailableError(RuntimeError):
     """Context.dev itself could not be reached, authenticated, or used."""
 
+    def __init__(self, message: str, *, body_bytes: int | None = None) -> None:
+        super().__init__(message)
+        self.body_bytes = body_bytes
+
+
+class ContextEvidenceState(StrEnum):
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    PRESENT = "PRESENT"
+    ABSENT = "ABSENT"
+    SOURCE_UNREACHABLE = "SOURCE_UNREACHABLE"
+    PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
+    PROTOCOL_ERROR = "PROTOCOL_ERROR"
+
+
+class ContextEvidenceDiagnostic(StrEnum):
+    SERVICE_DID_NOT_FAIL = "service_did_not_fail"
+    MISSING_ELIGIBLE_HTTPS_STATUS_URL = "missing_eligible_https_status_url"
+    EXACT_CLAIM_PRESENT = "exact_claim_present"
+    EXACT_CLAIM_ABSENT = "exact_claim_absent"
+    SOURCE_SCRAPE_FAILED = "source_scrape_failed"
+    PROVIDER_REQUEST_FAILED = "provider_request_failed"
+    PROVIDER_RESPONSE_INVALID = "provider_response_invalid"
+
+
+class ContextEvidenceErrorClass(StrEnum):
+    UNAVAILABLE = "ContextDevUnavailableError"
+    PROTOCOL = "ContextDevProtocolError"
+
 
 class ContextEvidenceRequest(CanonicalModel):
     url: NonEmptyStr
@@ -43,6 +72,57 @@ class ContextEvidence(CanonicalModel):
     excerpt: NonEmptyStr | None
     fetched_at: UtcDatetime
     note: NonEmptyStr | None
+    body_bytes: int | None = Field(default=None, ge=0)
+
+
+class ContextEvidenceRecord(CanonicalModel):
+    state: ContextEvidenceState
+    status_url: NonEmptyStr | None
+    excerpt: NonEmptyStr | None
+    observed_at: UtcDatetime
+    diagnostic: ContextEvidenceDiagnostic
+    error_class: ContextEvidenceErrorClass | None
+    body_bytes: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def require_coherent_state(self) -> Self:
+        diagnostics = {
+            ContextEvidenceState.NOT_APPLICABLE: {
+                ContextEvidenceDiagnostic.SERVICE_DID_NOT_FAIL,
+                ContextEvidenceDiagnostic.MISSING_ELIGIBLE_HTTPS_STATUS_URL,
+            },
+            ContextEvidenceState.PRESENT: {ContextEvidenceDiagnostic.EXACT_CLAIM_PRESENT},
+            ContextEvidenceState.ABSENT: {ContextEvidenceDiagnostic.EXACT_CLAIM_ABSENT},
+            ContextEvidenceState.SOURCE_UNREACHABLE: {
+                ContextEvidenceDiagnostic.SOURCE_SCRAPE_FAILED
+            },
+            ContextEvidenceState.PROVIDER_UNAVAILABLE: {
+                ContextEvidenceDiagnostic.PROVIDER_REQUEST_FAILED
+            },
+            ContextEvidenceState.PROTOCOL_ERROR: {
+                ContextEvidenceDiagnostic.PROVIDER_RESPONSE_INVALID
+            },
+        }
+        if self.diagnostic not in diagnostics[self.state]:
+            raise ValueError("diagnostic does not match Context evidence state")
+        if self.state is ContextEvidenceState.NOT_APPLICABLE:
+            if any(
+                value is not None
+                for value in (self.status_url, self.excerpt, self.error_class, self.body_bytes)
+            ):
+                raise ValueError("not-applicable Context evidence cannot contain provider data")
+            return self
+        if self.status_url is None or not _is_https_url(self.status_url):
+            raise ValueError("attempted Context evidence requires an HTTPS status URL")
+        if (self.state is ContextEvidenceState.PRESENT) is (self.excerpt is None):
+            raise ValueError("only present Context evidence requires an excerpt")
+        expected_error = {
+            ContextEvidenceState.PROVIDER_UNAVAILABLE: ContextEvidenceErrorClass.UNAVAILABLE,
+            ContextEvidenceState.PROTOCOL_ERROR: ContextEvidenceErrorClass.PROTOCOL,
+        }.get(self.state)
+        if self.error_class is not expected_error:
+            raise ValueError("error class does not match Context evidence state")
+        return self
 
 
 class ContextEvidencePort(Protocol):
@@ -155,6 +235,7 @@ class ContextDevClient:
                 excerpt=excerpt,
                 fetched_at=self._clock(),
                 note=None,
+                body_bytes=len(response.content),
             )
         if response.status_code in _SOURCE_FAILURE_STATUSES:
             error = parse_contextdev_error(response.content)
@@ -165,9 +246,11 @@ class ContextDevClient:
                 excerpt=None,
                 fetched_at=self._clock(),
                 note=redact_embedded_identifiers(error.message),
+                body_bytes=len(response.content),
             )
         raise ContextDevUnavailableError(
-            f"Context.dev unavailable after HTTP {response.status_code}"
+            f"Context.dev unavailable after HTTP {response.status_code}",
+            body_bytes=len(response.content),
         )
 
     async def aclose(self) -> None:

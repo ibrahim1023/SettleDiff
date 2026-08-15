@@ -11,6 +11,7 @@ import pytest
 from pydantic import JsonValue, SecretStr
 
 from settlediff.contextdev.client import (
+    DEFAULT_MAX_BODY_BYTES,
     MAX_EXCERPT_CHARS,
     ContextDevClient,
     ContextDevProtocolError,
@@ -61,6 +62,7 @@ async def test_documented_markdown_response_returns_exact_evidence() -> None:
     assert "HTTP 503" in evidence.excerpt
     assert evidence.fetched_at == NOW
     assert evidence.note is None
+    assert evidence.body_bytes == len(fixture_bytes("reachable.json"))
 
 
 @pytest.mark.asyncio
@@ -96,6 +98,7 @@ async def test_source_scrape_failure_records_unreachable_evidence() -> None:
     assert evidence.evidence_present is None
     assert evidence.excerpt is None
     assert evidence.note == "synthetic source could not be scraped"
+    assert evidence.body_bytes == len(fixture_bytes("unavailable.json"))
 
 
 @pytest.mark.asyncio
@@ -125,8 +128,10 @@ async def test_malformed_source_error_is_a_protocol_error() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [401, 403, 429, 500])
 async def test_provider_http_failure_is_unavailable(status: int) -> None:
-    with pytest.raises(ContextDevUnavailableError, match=f"HTTP {status}"):
+    with pytest.raises(ContextDevUnavailableError, match=f"HTTP {status}") as raised:
         await client_for(envelope_transport(b"{}", status=status)).verify(REQUEST)
+
+    assert raised.value.body_bytes == 2
 
 
 @pytest.mark.asyncio
@@ -134,8 +139,20 @@ async def test_timeout_is_unavailable() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("synthetic timeout")
 
-    with pytest.raises(ContextDevUnavailableError, match="transport failure"):
+    with pytest.raises(ContextDevUnavailableError, match="transport failure") as raised:
         await client_for(httpx.MockTransport(handler)).verify(REQUEST)
+
+    assert raised.value.body_bytes is None
+
+
+@pytest.mark.asyncio
+async def test_oversized_response_is_a_protocol_error_with_a_byte_count() -> None:
+    body = b"x" * (DEFAULT_MAX_BODY_BYTES + 1)
+
+    with pytest.raises(ContextDevProtocolError, match="size limit") as raised:
+        await client_for(envelope_transport(body)).verify(REQUEST)
+
+    assert raised.value.body_bytes == len(body)
 
 
 @pytest.mark.asyncio
