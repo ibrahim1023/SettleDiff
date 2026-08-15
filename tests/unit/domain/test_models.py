@@ -209,6 +209,26 @@ def test_machine_report_round_trips_through_versioned_json() -> None:
     assert MachineReport.model_validate_json(report.model_dump_json()) == report
 
 
+def test_finding_money_round_trips_as_money_not_generic_json() -> None:
+    finding = Finding(
+        finding_id="finding_budget_001",
+        check_id="budget",
+        severity=Severity.INFO,
+        status=CheckStatus.PASS,
+        expected=Money(amount=Decimal("0.05"), unit="USDC"),
+        observed=Money(amount=Decimal("0.01"), unit="USDC"),
+        message="Execution charge is within budget.",
+        artifact_ids=("artifact_execution_001",),
+        field_paths=("execution.charge",),
+    )
+
+    restored = Finding.model_validate_json(finding.model_dump_json())
+
+    assert restored == finding
+    assert isinstance(restored.expected, Money)
+    assert isinstance(restored.observed, Money)
+
+
 def test_payment_receipt_is_a_strict_versioned_canonical_record() -> None:
     receipt = PaymentReceipt(
         amount=Money(amount=Decimal("0.01"), unit="USDC"),

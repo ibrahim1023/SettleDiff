@@ -27,7 +27,7 @@ def require_utc(value: datetime) -> datetime:
 
 UtcDatetime = Annotated[datetime, AfterValidator(require_utc)]
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-EvidenceValue = JsonValue | Money
+EvidenceValue = Money | JsonValue
 
 
 class Verdict(StrEnum):
