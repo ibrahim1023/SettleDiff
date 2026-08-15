@@ -34,13 +34,22 @@ def test_contextdev_rejects_blank_values() -> None:
             contextdev_api_key=SecretStr("syn-key"),
         )
         settings.contextdev()
-    with pytest.raises(ValueError, match="must not be blank"):
+    with pytest.raises(ValueError, match="incomplete"):
         settings = Settings(
             _env_file=None,  # pyright: ignore[reportCallIssue]
             contextdev_base_url="https://contextdev.example.invalid",
             contextdev_api_key=SecretStr(" "),
         )
         settings.contextdev()
+
+
+def test_blank_template_values_leave_contextdev_disabled() -> None:
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        contextdev_base_url="",
+        contextdev_api_key=SecretStr(""),
+    )
+    assert settings.contextdev() is None
 
 
 def test_contextdev_returns_a_complete_configuration() -> None:

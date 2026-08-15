@@ -68,11 +68,11 @@ class Settings(BaseSettings):
         """Return Context.dev configuration, or None when the integration is off."""
         base_url = self.contextdev_base_url
         api_key = self.contextdev_api_key
-        if base_url is None or not base_url.strip():
-            if api_key is None:
-                return None
-            raise ValueError("Context.dev configuration is incomplete")
-        if api_key is None:
+        has_url = base_url is not None and bool(base_url.strip())
+        has_key = api_key is not None and bool(api_key.get_secret_value().strip())
+        if not has_url and not has_key:
+            return None
+        if not has_url or not has_key or base_url is None or api_key is None:
             raise ValueError("Context.dev configuration is incomplete")
         return ContextDevConfig(base_url=base_url, api_key=api_key)
 
