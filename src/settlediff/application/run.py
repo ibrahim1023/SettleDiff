@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -120,6 +121,27 @@ class PerfloEvidencePort(Protocol):
     async def get_activity(self) -> PerfloEnvelope: ...
 
 
+class TelemetryPort(Protocol):
+    def span(
+        self, name: str, attributes: Mapping[str, object]
+    ) -> AbstractContextManager[object]: ...
+
+    def event(self, name: str, attributes: Mapping[str, object]) -> None: ...
+
+
+class NullTelemetrySpan:
+    def __enter__(self) -> None:
+        pass
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None:
+        del exc_type, exc_value, traceback
+
+
 class LiveEvidenceCollector:
     """Capture provider evidence, then derive a report with deterministic code only."""
 
@@ -234,38 +256,56 @@ class RunInvestigation:
         execute_paid: Callable[[ConsumedPaidAuthorization, PaidExecutionRequest], Awaitable[None]],
         verify: Callable[[], Awaitable[MachineReport]],
         persist_event: Callable[[RunEvent], Awaitable[None]] | None = None,
+        telemetry: TelemetryPort | None = None,
     ) -> None:
         self._execute_paid = execute_paid
         self._verify = verify
         self._persist_event = persist_event
+        self._telemetry = telemetry
 
     async def execute(self, command: LiveRunCommand) -> InvestigationOutcome:
-        timeline = RunTimeline()
-        await self._record(timeline.events[-1])
-        await self._transition(timeline, RunState.AUTHORIZED)
-        authorization = await command.capability.consume(command.request)
-        await self._transition(timeline, RunState.EXECUTING)
-        uncertain = False
-        try:
-            await self._execute_paid(authorization, command.request)
-        except PerfloMutationUncertainError:
-            uncertain = True
-            await self._transition(timeline, RunState.EVIDENCE_RECOVERY)
-        await self._transition(timeline, RunState.VERIFYING)
-        report = await self._verify()
-        await self._transition(timeline, RunState.COMPLETE)
-        return InvestigationOutcome(
-            report=report,
-            events=timeline.events,
-            submission_uncertain=uncertain,
-        )
+        run_id = command.request.run_id
+        with self._span("settlediff.run", {"run_id": run_id, "mode": "live"}):
+            timeline = RunTimeline()
+            await self._record(timeline.events[-1], run_id)
+            await self._transition(timeline, RunState.AUTHORIZED, run_id)
+            authorization = await command.capability.consume(command.request)
+            await self._transition(timeline, RunState.EXECUTING, run_id)
+            uncertain = False
+            try:
+                with self._span(
+                    "settlediff.perflo.execute", {"run_id": run_id, "component": "perflo"}
+                ):
+                    await self._execute_paid(authorization, command.request)
+            except PerfloMutationUncertainError:
+                uncertain = True
+                await self._transition(timeline, RunState.EVIDENCE_RECOVERY, run_id)
+            await self._transition(timeline, RunState.VERIFYING, run_id)
+            with self._span("settlediff.verify", {"run_id": run_id, "component": "domain"}):
+                report = await self._verify()
+            await self._transition(timeline, RunState.COMPLETE, run_id)
+            return InvestigationOutcome(
+                report=report,
+                events=timeline.events,
+                submission_uncertain=uncertain,
+            )
 
-    async def _transition(self, timeline: RunTimeline, state: RunState) -> None:
-        await self._record(timeline.transition(state))
+    async def _transition(self, timeline: RunTimeline, state: RunState, run_id: str) -> None:
+        await self._record(timeline.transition(state), run_id)
 
-    async def _record(self, event: RunEvent) -> None:
+    async def _record(self, event: RunEvent, run_id: str) -> None:
         if self._persist_event is not None:
             await self._persist_event(event)
+        if self._telemetry is not None:
+            self._telemetry.event(
+                f"run.{event.state.value}",
+                {"run_id": run_id, "component": "application", "status": event.state.value},
+            )
+
+    def _span(self, name: str, attributes: Mapping[str, object]) -> AbstractContextManager[object]:
+        if self._telemetry is None:
+            return NullTelemetrySpan()
+        return self._telemetry.span(name, attributes)
 
 
 def _artifact(

@@ -23,6 +23,7 @@ from settlediff.domain.models import MachineReport
 from settlediff.domain.money import Money
 from settlediff.perflo.client import PerfloClient, PerfloClientError
 from settlediff.storage.sqlite import SQLiteReportRepository
+from settlediff.telemetry.setup import configure_telemetry
 
 app = typer.Typer(
     name="settlediff",
@@ -91,10 +92,12 @@ def run(
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error
     try:
-        contextdev_config = Settings().contextdev()
+        settings = Settings()
+        contextdev_config = settings.contextdev()
     except ValueError as error:
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error
+    telemetry = configure_telemetry(settings)
     contextdev = (
         ContextDevClient(
             contextdev_config.base_url,
@@ -131,9 +134,11 @@ def run(
 
         try:
             outcome = asyncio.run(
-                RunInvestigation(collector.execute, lambda: collector.verify(request)).execute(
-                    LiveRunCommand(request=request, capability=capability)
-                )
+                RunInvestigation(
+                    collector.execute,
+                    lambda: collector.verify(request),
+                    telemetry=telemetry,
+                ).execute(LiveRunCommand(request=request, capability=capability))
             )
         except (PerfloClientError, ValueError) as error:
             typer.echo(f"Live investigation failed: {error}", err=True)
@@ -150,6 +155,7 @@ def run(
     finally:
         if contextdev is not None:
             asyncio.run(contextdev.aclose())
+        telemetry.shutdown()
 
 
 @app.command()

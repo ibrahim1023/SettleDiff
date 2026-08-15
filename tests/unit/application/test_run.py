@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -284,6 +285,78 @@ async def test_collector_never_calls_contextdev_for_a_successful_service() -> No
 
     assert contextdev.requests == []
     assert all(artifact.source != "contextdev" for artifact in collector.artifacts)
+
+
+class StubSpan:
+    def __init__(self, names: list[str], name: str) -> None:
+        self._names = names
+        self._name = name
+
+    def __enter__(self) -> None:
+        self._names.append(self._name)
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None:
+        del exc_type, exc_value, traceback
+
+
+class StubTelemetry:
+    def __init__(self) -> None:
+        self.spans: list[str] = []
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    def span(self, name: str, attributes: Mapping[str, object]) -> StubSpan:
+        del attributes
+        return StubSpan(self.spans, name)
+
+    def event(self, name: str, attributes: Mapping[str, object]) -> None:
+        self.events.append((name, dict(attributes)))
+
+
+@pytest.mark.asyncio
+async def test_run_emits_safe_state_and_boundary_telemetry() -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    request = PaidExecutionRequest(
+        run_id=report.run_id,
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+    capability = PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    )
+    telemetry = StubTelemetry()
+
+    async def execute(
+        _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
+    ) -> None:
+        pass
+
+    async def verify() -> MachineReport:
+        return report
+
+    outcome = await RunInvestigation(execute, verify, telemetry=telemetry).execute(
+        LiveRunCommand(request, capability)
+    )
+
+    assert outcome.report is report
+    assert telemetry.spans == [
+        "settlediff.run",
+        "settlediff.perflo.execute",
+        "settlediff.verify",
+    ]
+    assert [name for name, _attributes in telemetry.events] == [
+        "run.preflight",
+        "run.authorized",
+        "run.executing",
+        "run.verifying",
+        "run.complete",
+    ]
+    assert all(attributes["run_id"] == report.run_id for _, attributes in telemetry.events)
 
 
 def _fixture_data(filename: str) -> JsonValue:
