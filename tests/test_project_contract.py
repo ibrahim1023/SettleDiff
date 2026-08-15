@@ -51,6 +51,7 @@ def test_environment_example_contains_only_blank_safe_assignments() -> None:
     parsed = dict(line.split("=", maxsplit=1) for line in assignments)
     assert parsed == {
         "SETTLEDIFF_CONTEXTDEV_API_KEY": "",
+        "SETTLEDIFF_CONTEXTDEV_BASE_URL": "",
         "SETTLEDIFF_DATABASE_PATH": "",
         "SETTLEDIFF_HYPERFUSION_API_KEY": "",
         "SETTLEDIFF_HYPERFUSION_BASE_URL": "",

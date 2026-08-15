@@ -12,14 +12,14 @@ intent → contract → execution → receipt → service outcome → activity r
 
 ## Status
 
-Phases 1 through 11 are implemented offline: the development foundation now includes strict,
-versioned evidence models, exact money semantics, recursive redaction, bounded Perflo envelope
-parsing, deterministic Activity matching, independent verification checks, verdict precedence,
-fully offline sanitized fixture replay, a safe Perflo subprocess boundary, an explicitly authorized
-live-run state machine, SQLite report storage, and a loopback-only debugger UI. Hyperfusion's
-optional PydanticAI provider factory and an opt-in compatibility probe are also in place. The
-owner-authorized provider probe passed on 2026-08-13 with `openai/gpt-oss-120b`: structured
-output, tool calling, and tool-result continuation are compatible with the configured profile.
+The 12-phase MVP is implemented. It includes strict versioned evidence models, exact money
+semantics, recursive redaction, bounded provider parsing, deterministic Activity matching,
+independent verification checks, verdict precedence, fully offline fixture replay, a safe Perflo
+subprocess boundary, an explicitly authorized live-run state machine, SQLite report storage, and a
+loopback-only debugger UI. Optional Context.dev evidence and private-by-default OpenTelemetry are
+also available. Hyperfusion's opt-in compatibility probe passed on 2026-08-13 with
+`openai/gpt-oss-120b`: structured output, tool calling, and tool-result continuation are compatible
+with the configured profile.
 
 - LLM provider: Hyperfusion, through its OpenAI-compatible Chat Completions API.
 - Agent SDK: PydanticAI, one bounded investigator.
@@ -42,7 +42,7 @@ The flagship result is `PAID_FAILURE`: money settled, but the purchased operatio
 
 ## 60-second fixture demo
 
-The first implementation milestone will make this path executable without credentials or spending:
+Run the complete local path without credentials, external requests, or spending:
 
 ```bash
 uv sync --locked --all-groups
@@ -64,6 +64,21 @@ PAID_FAILURE
 For a live call, `settlediff run --url URL --body JSON --budget AMOUNT` inspects provider metadata,
 shows the exact target, canonical body digest, and USDC budget, then requires an interactive yes/no
 authorization. It is never part of the default test suite.
+
+## Optional integrations
+
+Live model use requires `SETTLEDIFF_HYPERFUSION_BASE_URL`,
+`SETTLEDIFF_HYPERFUSION_API_KEY`, and `SETTLEDIFF_HYPERFUSION_MODEL`. Default tests never read
+these credentials or send model requests.
+
+Set both `SETTLEDIFF_CONTEXTDEV_BASE_URL` and `SETTLEDIFF_CONTEXTDEV_API_KEY` to enable the narrow
+Context.dev evidence path. It runs only after a failed purchased service returns an HTTPS
+`status_url`; it records source reachability and exact evidence presence but cannot change findings
+or verdicts.
+
+Set `SETTLEDIFF_OTLP_ENDPOINT` to export OpenTelemetry spans. Export is disabled by default.
+Prompts, request bodies, tool content, credentials, provider payloads, and local run IDs are not
+exported; PydanticAI content capture remains off. Exporter failure cannot change a report.
 
 ## Architecture
 
