@@ -1,8 +1,4 @@
 {
-  "ok": false,
-  "error": {
-    "code": "SOURCE_UNAVAILABLE",
-    "message": "synthetic source did not respond",
-    "recoverable": true
-  }
+  "message": "synthetic source could not be scraped",
+  "error_code": "WEBSITE_ACCESS_ERROR"
 }

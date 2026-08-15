@@ -9,7 +9,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - local user input;
 - Hyperfusion model API;
 - Perflo executable and backend;
-- Context.dev optional evidence service;
+- Context.dev live evidence service;
 - local SQLite/filesystem;
 - browser rendering;
 - optional OpenTelemetry exporter.

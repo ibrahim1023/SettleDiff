@@ -12,7 +12,7 @@ Prove financial semantics, evidence matching, safety gates, and interface contra
 | Property | Financial/check invariants and parser stability | None |
 | Fixture replay | End-to-end deterministic reports from sanitized artifacts | None |
 | Agent loop | Exact tool trajectories, limits, and grounded output | None; `FunctionModel`/`TestModel` |
-| Adapter contract | Parse captured Hyperfusion, Perflo, and Context.dev envelopes | None |
+| Adapter contract | Parse captured Hyperfusion/Perflo envelopes and Context.dev responses | None |
 | Interface integration | Typer and FastAPI against in-memory/fake ports | None |
 | Live compatibility | Hyperfusion tool/structured-output behavior | Hyperfusion only; explicit opt-in |
 | Paid smoke | One tightly budgeted Perflo scenario | Paid; manual explicit opt-in |

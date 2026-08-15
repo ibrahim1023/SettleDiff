@@ -119,7 +119,7 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
         async def get_activity(self) -> PerfloSuccessEnvelope:
             return _envelope(_fixture_data("activity.json"))
 
-    collector = LiveEvidenceCollector(FakePerflo())
+    collector = LiveEvidenceCollector(FakePerflo(), StubContextDev(evidence=CONTEXT_EVIDENCE))
     await collector.preflight(request)
     authorization = await PaidExecutionCapability.issue(
         request, expires_at=datetime.now(UTC) + timedelta(minutes=1)

@@ -29,11 +29,11 @@ class HyperfusionConfig(BaseSettings):
 
 
 class ContextDevConfig(BaseSettings):
-    """Complete configuration required only when Context.dev evidence is requested."""
+    """Complete configuration required for every live investigation."""
 
     model_config = SettingsConfigDict(strict=True, extra="forbid", frozen=True)
 
-    base_url: NonEmpty
+    base_url: NonEmpty = "https://api.context.dev/v1"
     api_key: SecretStr
     timeout_seconds: float = Field(default=10, gt=0, le=60)
 
@@ -60,21 +60,16 @@ class Settings(BaseSettings):
     hyperfusion_model: str | None = None
     hyperfusion_timeout_seconds: float = Field(default=30, gt=0, le=300)
     database_path: str | None = None
-    contextdev_base_url: str | None = None
+    contextdev_base_url: str = "https://api.context.dev/v1"
     contextdev_api_key: SecretStr | None = None
     otlp_endpoint: str | None = None
 
-    def contextdev(self) -> ContextDevConfig | None:
-        """Return Context.dev configuration, or None when the integration is off."""
-        base_url = self.contextdev_base_url
+    def require_contextdev(self) -> ContextDevConfig:
+        """Return the Context.dev configuration required by a live investigation."""
         api_key = self.contextdev_api_key
-        has_url = base_url is not None and bool(base_url.strip())
-        has_key = api_key is not None and bool(api_key.get_secret_value().strip())
-        if not has_url and not has_key:
-            return None
-        if not has_url or not has_key or base_url is None or api_key is None:
-            raise ValueError("Context.dev configuration is incomplete")
-        return ContextDevConfig(base_url=base_url, api_key=api_key)
+        if api_key is None or not api_key.get_secret_value().strip():
+            raise ValueError("Context.dev configuration is required for live investigations")
+        return ContextDevConfig(base_url=self.contextdev_base_url, api_key=api_key)
 
     def require_hyperfusion(self) -> HyperfusionConfig:
         values = (

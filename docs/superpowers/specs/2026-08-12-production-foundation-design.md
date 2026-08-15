@@ -152,7 +152,7 @@ Money-moving errors follow Perflo's no-double-spend rule: uncertain submission t
 
 - Secrets come from environment-backed settings and are never persisted.
 - Subprocess commands use argument arrays, fixed executable resolution, timeouts, and bounded output.
-- URLs are validated before any optional independent fetch; Context.dev remains the only web-evidence adapter in the MVP.
+- URLs are validated before the required eligible live fetch; Context.dev remains the only web-evidence adapter in the MVP.
 - Raw artifacts are redacted before persistence and again before display.
 - Recipient, account, transaction, session, and device identifiers are masked by default.
 - Prompt and tool payload capture is disabled in telemetry by default.
@@ -263,7 +263,7 @@ Implementation files are not created during foundation initialization. Empty sou
 5. Add the bounded PydanticAI investigator and deterministic agent tests.
 6. Add the Typer CLI.
 7. Add SQLite persistence and the local FastAPI/Jinja UI.
-8. Add optional Context.dev evidence verification.
+8. Add required Context.dev evidence verification for live investigations.
 9. Add opt-in live evals and OpenTelemetry export.
 10. Consider ElevenLabs only after core acceptance criteria pass.
 
@@ -274,7 +274,6 @@ The following choices require owner input before their implementation task begin
 - the exact Hyperfusion base URL and model identifier;
 - whether live runs require an interactive confirmation in addition to the explicit CLI budget;
 - local report retention duration and whether raw artifacts should be disabled by default;
-- whether Context.dev is required for the first public demo or remains a follow-up;
 - the initial deployment target after the local-only MVP.
 
 These decisions do not block documentation or deterministic core planning.

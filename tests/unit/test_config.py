@@ -6,59 +6,31 @@ from pydantic import SecretStr
 from settlediff.config import Settings
 
 
-def test_contextdev_is_absent_when_unconfigured() -> None:
-    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
-    assert settings.contextdev() is None
+def offline_settings(**values: object) -> Settings:
+    return Settings(_env_file=None, **values)  # pyright: ignore[reportCallIssue]
 
 
-def test_contextdev_requires_base_url_and_key_together() -> None:
-    with pytest.raises(ValueError, match="incomplete"):
-        settings = Settings(
-            _env_file=None,  # pyright: ignore[reportCallIssue]
-            contextdev_base_url="https://contextdev.example.invalid",
-        )
-        settings.contextdev()
-    with pytest.raises(ValueError, match="incomplete"):
-        settings = Settings(
-            _env_file=None,  # pyright: ignore[reportCallIssue]
-            contextdev_api_key=SecretStr("syn-key"),
-        )
-        settings.contextdev()
+def test_contextdev_configuration_is_required_only_at_the_live_boundary() -> None:
+    settings = offline_settings()
+    assert settings.contextdev_api_key is None
+    with pytest.raises(ValueError, match="required for live investigations"):
+        settings.require_contextdev()
 
 
-def test_contextdev_rejects_blank_values() -> None:
-    with pytest.raises(ValueError, match="incomplete"):
-        settings = Settings(
-            _env_file=None,  # pyright: ignore[reportCallIssue]
-            contextdev_base_url="  ",
-            contextdev_api_key=SecretStr("syn-key"),
-        )
-        settings.contextdev()
-    with pytest.raises(ValueError, match="incomplete"):
-        settings = Settings(
-            _env_file=None,  # pyright: ignore[reportCallIssue]
-            contextdev_base_url="https://contextdev.example.invalid",
-            contextdev_api_key=SecretStr(" "),
-        )
-        settings.contextdev()
+def test_contextdev_rejects_a_blank_key() -> None:
+    with pytest.raises(ValueError, match="required for live investigations"):
+        offline_settings(contextdev_api_key=SecretStr(" ")).require_contextdev()
 
 
-def test_blank_template_values_leave_contextdev_disabled() -> None:
-    settings = Settings(
-        _env_file=None,  # pyright: ignore[reportCallIssue]
-        contextdev_base_url="",
-        contextdev_api_key=SecretStr(""),
-    )
-    assert settings.contextdev() is None
-
-
-def test_contextdev_returns_a_complete_configuration() -> None:
-    settings = Settings(
-        _env_file=None,  # pyright: ignore[reportCallIssue]
-        contextdev_base_url="https://contextdev.example.invalid/v1/evidence",
-        contextdev_api_key=SecretStr("syn-key"),
-    )
-    config = settings.contextdev()
-    assert config is not None
-    assert config.base_url == "https://contextdev.example.invalid/v1/evidence"
+def test_contextdev_uses_the_documented_api_by_default() -> None:
+    config = offline_settings(contextdev_api_key=SecretStr("syn-key")).require_contextdev()
+    assert config.base_url == "https://api.context.dev/v1"
     assert config.api_key.get_secret_value() == "syn-key"
+
+
+def test_contextdev_base_url_can_be_replaced_for_contract_testing() -> None:
+    config = offline_settings(
+        contextdev_base_url="https://contextdev.example.invalid/v1",
+        contextdev_api_key=SecretStr("syn-key"),
+    ).require_contextdev()
+    assert config.base_url == "https://contextdev.example.invalid/v1"

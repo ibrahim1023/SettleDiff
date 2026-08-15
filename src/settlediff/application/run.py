@@ -145,9 +145,7 @@ class NullTelemetrySpan:
 class LiveEvidenceCollector:
     """Capture provider evidence, then derive a report with deterministic code only."""
 
-    def __init__(
-        self, perflo: PerfloEvidencePort, contextdev: ContextEvidencePort | None = None
-    ) -> None:
+    def __init__(self, perflo: PerfloEvidencePort, contextdev: ContextEvidencePort) -> None:
         self._perflo = perflo
         self._contextdev = contextdev
         self._contract: EvidenceArtifact | None = None
@@ -227,8 +225,6 @@ class LiveEvidenceCollector:
 
         A Context.dev failure never changes the run: the evidence is absent instead.
         """
-        if self._contextdev is None:
-            return
         url = eligible_evidence_url(execution)
         if url is None:
             return

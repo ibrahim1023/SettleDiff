@@ -16,8 +16,8 @@ The 12-phase MVP is implemented. It includes strict versioned evidence models, e
 semantics, recursive redaction, bounded provider parsing, deterministic Activity matching,
 independent verification checks, verdict precedence, fully offline fixture replay, a safe Perflo
 subprocess boundary, an explicitly authorized live-run state machine, SQLite report storage, and a
-loopback-only debugger UI. Optional Context.dev evidence and private-by-default OpenTelemetry are
-also available. Hyperfusion's opt-in compatibility probe passed on 2026-08-13 with
+loopback-only debugger UI. Required live Context.dev evidence and private-by-default OpenTelemetry
+are also available. Hyperfusion's opt-in compatibility probe passed on 2026-08-13 with
 `openai/gpt-oss-120b`: structured output, tool calling, and tool-result continuation are compatible
 with the configured profile.
 
@@ -65,16 +65,16 @@ For a live call, `settlediff run --url URL --body JSON --budget AMOUNT` inspects
 shows the exact target, canonical body digest, and USDC budget, then requires an interactive yes/no
 authorization. It is never part of the default test suite.
 
-## Optional integrations
+## Live configuration and telemetry
 
 Live model use requires `SETTLEDIFF_HYPERFUSION_BASE_URL`,
 `SETTLEDIFF_HYPERFUSION_API_KEY`, and `SETTLEDIFF_HYPERFUSION_MODEL`. Default tests never read
 these credentials or send model requests.
 
-Set both `SETTLEDIFF_CONTEXTDEV_BASE_URL` and `SETTLEDIFF_CONTEXTDEV_API_KEY` to enable the narrow
-Context.dev evidence path. It runs only after a failed purchased service returns an HTTPS
-`status_url`; it records source reachability and exact evidence presence but cannot change findings
-or verdicts.
+Every live investigation requires `SETTLEDIFF_CONTEXTDEV_API_KEY`; SettleDiff uses Context.dev's
+documented `https://api.context.dev/v1/web/scrape/markdown` endpoint. The request runs when a failed
+purchased service returns an HTTPS `status_url`. SettleDiff deterministically records source
+reachability and exact evidence presence; Context.dev cannot change findings or verdicts.
 
 Set `SETTLEDIFF_OTLP_ENDPOINT` to export OpenTelemetry spans. Export is disabled by default.
 Prompts, request bodies, tool content, credentials, provider payloads, and local run IDs are not
@@ -115,7 +115,7 @@ Repository instructions are in [AGENTS.md](AGENTS.md). Verification gates are in
 4. Hyperfusion compatibility contract.
 5. Bounded PydanticAI investigator.
 6. CLI, SQLite, and local debugger UI.
-7. Optional Context.dev evidence path.
+7. Required Context.dev evidence path for live investigations.
 8. ElevenLabs only after core acceptance criteria pass.
 
 The detailed task-by-task plan is [SettleDiff MVP Implementation Plan](docs/superpowers/plans/2026-08-12-settlediff-mvp.md).

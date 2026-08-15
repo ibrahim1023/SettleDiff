@@ -681,7 +681,7 @@ git commit -m "feat: persist and render local investigation reports"
 
 ---
 
-### Task 12: Optional Evidence, Telemetry, and Release Gate
+### Task 12: Required Live Evidence, Telemetry, and Release Gate
 
 **Files:**
 - Create: `src/settlediff/contextdev/client.py`
@@ -694,7 +694,7 @@ git commit -m "feat: persist and render local investigation reports"
 - Modify: `.env.example`
 
 **Interfaces:**
-- Produces: optional `ContextEvidencePort`, `configure_telemetry(settings)`, and a complete offline release gate.
+- Produces: required live `ContextEvidencePort`, `configure_telemetry(settings)`, and a complete offline release gate.
 
 - [ ] **Step 1: Write Context.dev adapter contracts**
 
@@ -710,7 +710,7 @@ Run: `uv run pytest tests/contract/test_contextdev.py tests/unit/telemetry -q`.
 
 - [ ] **Step 4: Implement the single evidence path**
 
-Expose Context.dev only when a service result contains an eligible URL and the unresolved configured check requests independent evidence. Do not add semantic fact checking; record reachability and exact evidence presence only.
+Require Context.dev configuration for every live investigation and fetch only when a failed service result contains an eligible HTTPS status URL. Use the documented Markdown scrape API; do not add semantic fact checking. Determine exact evidence presence in deterministic code.
 
 - [ ] **Step 5: Implement telemetry**
 
@@ -722,7 +722,7 @@ Replay every fixture, render CLI JSON/human output, persist/read through SQLite,
 
 - [ ] **Step 7: Update the README to make the 60-second demo truthful**
 
-Remove the planning-stage warning only after the exact documented commands work from a clean checkout. Add configuration for optional live Hyperfusion and Context.dev checks without including secrets or implying that paid smoke tests are routine.
+Remove the planning-stage warning only after the exact documented commands work from a clean checkout. Add configuration for optional live Hyperfusion and required live Context.dev evidence without including secrets or implying that paid smoke tests are routine.
 
 - [ ] **Step 8: Run the complete completion gate**
 

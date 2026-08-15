@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
-from pydantic import JsonValue
+from pydantic import JsonValue, SecretStr
 from typer.testing import CliRunner
 
 from settlediff.application.replay import replay_fixture
@@ -19,6 +19,13 @@ runner = CliRunner()
 def isolated_settings() -> Settings:
     """Settings without the developer's local .env values."""
     return Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+def live_settings() -> Settings:
+    return Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        contextdev_api_key=SecretStr("syn-contextdev-key"),
+    )
 
 
 def test_fixture_replay_requires_no_live_configuration() -> None:
@@ -47,21 +54,18 @@ def test_live_run_rejects_invalid_json_before_any_adapter_call() -> None:
     assert "Invalid live preflight" in result.stderr
 
 
-def test_live_run_rejects_partial_contextdev_configuration(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_live_run_requires_contextdev_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakePerflo:
         def __getattr__(self, name: str) -> object:
-            raise AssertionError(f"Perflo must not be called with partial configuration: {name}")
+            raise AssertionError(f"Perflo must not be called without Context.dev: {name}")
 
     monkeypatch.setattr("settlediff.cli.Settings", isolated_settings)
     monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
-    monkeypatch.setenv("SETTLEDIFF_CONTEXTDEV_BASE_URL", "https://contextdev.example.invalid")
     result = runner.invoke(
         app, ["run", "--url", "https://example.invalid", "--body", "{}", "--budget", "1"]
     )
     assert result.exit_code == 2
-    assert "Context.dev configuration is incomplete" in result.stderr
+    assert "Context.dev configuration is required for live investigations" in result.stderr
 
 
 def test_live_run_decline_does_not_execute_a_paid_call(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -93,7 +97,7 @@ def test_live_run_decline_does_not_execute_a_paid_call(monkeypatch: pytest.Monke
         async def get_activity(self) -> PerfloSuccessEnvelope:
             raise AssertionError("must not read activity when authorization is declined")
 
-    monkeypatch.setattr("settlediff.cli.Settings", isolated_settings)
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
     monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
     result = runner.invoke(
         app,

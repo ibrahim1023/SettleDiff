@@ -1,8 +1,10 @@
 {
-  "ok": false,
-  "error": {
-    "code": "CLAIM_UNSUPPORTED",
-    "message": "synthetic claim cannot be answered from the source",
-    "recoverable": false
+  "success": true,
+  "markdown": "# Synthetic service status\n\nNo service incidents are described on this page.",
+  "contentLength": 82,
+  "url": "https://status.example.invalid/incidents/syn_incident",
+  "metadata": {
+    "sourceUrl": "https://status.example.invalid/incidents/syn_incident",
+    "finalUrl": "https://status.example.invalid/incidents/syn_incident"
   }
 }

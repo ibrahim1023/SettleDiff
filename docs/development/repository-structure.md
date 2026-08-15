@@ -28,7 +28,7 @@ The repository starts documentation-only. Source, tests, fixtures, and configura
 │   ├── agent/                      # PydanticAI model factory, tools, prompt
 │   ├── api/                        # FastAPI routes and dependencies
 │   ├── application/                # run and replay use cases
-│   ├── contextdev/                 # optional independent evidence adapter
+│   ├── contextdev/                 # required live independent evidence adapter
 │   ├── domain/                     # pure models, normalization, checks
 │   ├── perflo/                     # subprocess client and envelope parsers
 │   ├── storage/                    # repositories and SQLite implementation

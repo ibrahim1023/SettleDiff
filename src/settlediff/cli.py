@@ -93,19 +93,15 @@ def run(
         raise typer.Exit(code=2) from error
     try:
         settings = Settings()
-        contextdev_config = settings.contextdev()
+        contextdev_config = settings.require_contextdev()
     except ValueError as error:
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error
     telemetry = configure_telemetry(settings)
-    contextdev = (
-        ContextDevClient(
-            contextdev_config.base_url,
-            contextdev_config.api_key,
-            timeout_seconds=contextdev_config.timeout_seconds,
-        )
-        if contextdev_config is not None
-        else None
+    contextdev = ContextDevClient(
+        contextdev_config.base_url,
+        contextdev_config.api_key,
+        timeout_seconds=contextdev_config.timeout_seconds,
     )
     request = PaidExecutionRequest(
         run_id=f"live_{uuid4().hex}",
@@ -153,8 +149,7 @@ def run(
                 repository.close()
         _render(outcome.report, json_mode=json_mode)
     finally:
-        if contextdev is not None:
-            asyncio.run(contextdev.aclose())
+        asyncio.run(contextdev.aclose())
         telemetry.shutdown()
 
 

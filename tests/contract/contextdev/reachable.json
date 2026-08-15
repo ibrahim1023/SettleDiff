@@ -1,10 +1,10 @@
 {
-  "ok": true,
-  "result": {
-    "url": "https://status.example.invalid/incidents/syn_incident",
-    "reachable": true,
-    "evidence_present": true,
-    "excerpt": "Synthetic status excerpt: syn_service returned HTTP 503 during the syn_window maintenance window.",
-    "fetched_at": "2026-08-13T00:00:00Z"
+  "success": true,
+  "markdown": "# Synthetic service status\n\nThe synthetic service returned HTTP 503 during the maintenance window.",
+  "contentLength": 103,
+  "url": "https://status.example.invalid/incidents/syn_incident",
+  "metadata": {
+    "sourceUrl": "https://status.example.invalid/incidents/syn_incident",
+    "finalUrl": "https://status.example.invalid/incidents/syn_incident"
   }
 }

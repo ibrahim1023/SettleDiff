@@ -1,19 +1,20 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
-from pydantic import SecretStr
+from pydantic import JsonValue, SecretStr
 
 from settlediff.contextdev.client import (
     MAX_EXCERPT_CHARS,
     ContextDevClient,
     ContextDevProtocolError,
     ContextDevUnavailableError,
-    ContextEvidence,
     ContextEvidenceRequest,
     eligible_evidence_url,
 )
@@ -21,10 +22,12 @@ from settlediff.domain.models import ExecutionRecord, SettlementStatus
 from settlediff.domain.money import Money
 
 FIXTURES = Path(__file__).parent / "contextdev"
-ENDPOINT = "https://contextdev.example.invalid/v1/evidence"
+BASE_URL = "https://api.context.dev/v1"
+ENDPOINT = f"{BASE_URL}/web/scrape/markdown"
 REQUEST = ContextEvidenceRequest(
     url="https://status.example.invalid/incidents/syn_incident", claim="HTTP 503"
 )
+NOW = datetime(2026, 8, 13, tzinfo=UTC)
 
 
 def fixture_bytes(name: str) -> bytes:
@@ -39,95 +42,100 @@ def envelope_transport(body: bytes, *, status: int = 200) -> httpx.MockTransport
 
 
 def client_for(transport: httpx.MockTransport) -> ContextDevClient:
-    return ContextDevClient(ENDPOINT, SecretStr("syn-contextdev-key"), transport=transport)
-
-
-@pytest.mark.asyncio
-async def test_reachable_source_returns_bounded_evidence() -> None:
-    evidence = await client_for(envelope_transport(fixture_bytes("reachable.json"))).verify(REQUEST)
-
-    assert evidence == ContextEvidence(
-        url="https://status.example.invalid/incidents/syn_incident",
-        reachable=True,
-        evidence_present=True,
-        excerpt=(
-            "Synthetic status excerpt: syn_service returned HTTP 503 "
-            "during the syn_window maintenance window."
-        ),
-        fetched_at=datetime(2026, 8, 13, tzinfo=UTC),
-        note=None,
+    return ContextDevClient(
+        BASE_URL,
+        SecretStr("syn-contextdev-key"),
+        transport=transport,
+        clock=lambda: NOW,
     )
 
 
 @pytest.mark.asyncio
-async def test_request_sends_url_claim_and_bearer_authorization() -> None:
+async def test_documented_markdown_response_returns_exact_evidence() -> None:
+    evidence = await client_for(envelope_transport(fixture_bytes("reachable.json"))).verify(REQUEST)
+
+    assert evidence.url == REQUEST.url
+    assert evidence.reachable is True
+    assert evidence.evidence_present is True
+    assert evidence.excerpt is not None
+    assert "HTTP 503" in evidence.excerpt
+    assert evidence.fetched_at == NOW
+    assert evidence.note is None
+
+
+@pytest.mark.asyncio
+async def test_request_uses_documented_endpoint_query_and_bearer_authorization() -> None:
     captured: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["authorization"] = request.headers.get("authorization")
-        captured["body"] = request.content.decode()
-        captured["target"] = str(request.url)
+        captured["target"] = f"{request.url.scheme}://{request.url.host}{request.url.path}"
+        captured["params"] = dict(request.url.params)
         return httpx.Response(200, content=fixture_bytes("reachable.json"))
 
     await client_for(httpx.MockTransport(handler)).verify(REQUEST)
 
-    assert captured["authorization"] == "Bearer syn-contextdev-key"
-    assert captured["target"] == ENDPOINT
-    assert captured["body"] == (
-        '{"url":"https://status.example.invalid/incidents/syn_incident","claim":"HTTP 503"}'
-    )
+    assert captured == {
+        "authorization": "Bearer syn-contextdev-key",
+        "target": ENDPOINT,
+        "params": {
+            "url": REQUEST.url,
+            "includeLinks": "false",
+            "useMainContentOnly": "true",
+        },
+    }
 
 
 @pytest.mark.asyncio
-async def test_unavailable_source_is_reachability_evidence_not_a_crash() -> None:
-    evidence = await client_for(envelope_transport(fixture_bytes("unavailable.json"))).verify(
-        REQUEST
-    )
+async def test_source_scrape_failure_records_unreachable_evidence() -> None:
+    evidence = await client_for(
+        envelope_transport(fixture_bytes("unavailable.json"), status=400)
+    ).verify(REQUEST)
 
     assert evidence.reachable is False
     assert evidence.evidence_present is None
     assert evidence.excerpt is None
-    assert evidence.note == "synthetic source did not respond"
+    assert evidence.note == "synthetic source could not be scraped"
 
 
 @pytest.mark.asyncio
-async def test_unsupported_claim_records_absence_of_evidence() -> None:
+async def test_absent_exact_claim_records_no_evidence() -> None:
     evidence = await client_for(envelope_transport(fixture_bytes("unsupported_claim.json"))).verify(
         REQUEST
     )
 
     assert evidence.reachable is True
-    assert evidence.evidence_present is None
-    assert evidence.note == "synthetic claim cannot be answered from the source"
+    assert evidence.evidence_present is False
+    assert evidence.excerpt is None
+    assert evidence.note is None
 
 
 @pytest.mark.asyncio
-async def test_malformed_response_is_a_protocol_error() -> None:
+async def test_malformed_success_response_is_a_protocol_error() -> None:
     with pytest.raises(ContextDevProtocolError, match="valid JSON"):
         await client_for(envelope_transport(fixture_bytes("malformed.stdout"))).verify(REQUEST)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", [500, 503])
-async def test_contextdev_http_failure_means_reachability_unknown(status: int) -> None:
-    with pytest.raises(ContextDevUnavailableError, match="HTTP"):
+async def test_malformed_source_error_is_a_protocol_error() -> None:
+    with pytest.raises(ContextDevProtocolError, match="error response"):
+        await client_for(envelope_transport(b"{}", status=404)).verify(REQUEST)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 429, 500])
+async def test_provider_http_failure_is_unavailable(status: int) -> None:
+    with pytest.raises(ContextDevUnavailableError, match=f"HTTP {status}"):
         await client_for(envelope_transport(b"{}", status=status)).verify(REQUEST)
 
 
 @pytest.mark.asyncio
-async def test_timeout_means_reachability_unknown() -> None:
+async def test_timeout_is_unavailable() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("synthetic timeout")
 
-    with pytest.raises(ContextDevUnavailableError, match="reachability unknown"):
+    with pytest.raises(ContextDevUnavailableError, match="transport failure"):
         await client_for(httpx.MockTransport(handler)).verify(REQUEST)
-
-
-@pytest.mark.asyncio
-async def test_unknown_error_code_is_a_protocol_error() -> None:
-    body = b'{"ok":false,"error":{"code":"FUTURE_CODE","message":"synthetic","recoverable":false}}'
-    with pytest.raises(ContextDevProtocolError, match="FUTURE_CODE"):
-        await client_for(envelope_transport(body)).verify(REQUEST)
 
 
 @pytest.mark.asyncio
@@ -135,7 +143,7 @@ async def test_unknown_error_code_is_a_protocol_error() -> None:
     "url",
     ["http://status.example.invalid/x", "status.example.invalid", "https://"],
 )
-async def test_non_https_urls_are_rejected_before_any_request(url: str) -> None:
+async def test_non_https_evidence_urls_are_rejected_before_request(url: str) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise AssertionError("no request may be sent for an ineligible URL")
 
@@ -146,23 +154,24 @@ async def test_non_https_urls_are_rejected_before_any_request(url: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_oversized_excerpt_is_truncated_to_the_bound() -> None:
-    body = (
-        b'{"ok":true,"result":{"url":"https://status.example.invalid/x","reachable":true,'
-        b'"evidence_present":true,"excerpt":"'
-        + b"a" * (MAX_EXCERPT_CHARS + 10)
-        + b'","fetched_at":"2026-08-13T00:00:00Z"}}'
-    )
+async def test_exact_excerpt_is_bounded() -> None:
+    markdown = "a" * MAX_EXCERPT_CHARS + " HTTP 503 " + "b" * MAX_EXCERPT_CHARS
+    body = json.dumps(
+        {
+            "success": True,
+            "markdown": markdown,
+            "contentLength": len(markdown.encode()),
+            "url": REQUEST.url,
+            "metadata": {"sourceUrl": REQUEST.url, "finalUrl": REQUEST.url},
+        }
+    ).encode()
     evidence = await client_for(envelope_transport(body)).verify(REQUEST)
     assert evidence.excerpt is not None
     assert len(evidence.excerpt) == MAX_EXCERPT_CHARS
+    assert "HTTP 503" in evidence.excerpt
 
 
 def execution_record(*, status: int | None, response_body: object) -> ExecutionRecord:
-    from typing import cast
-
-    from pydantic import JsonValue
-
     return ExecutionRecord(
         vendor_slug="synthetic-search",
         upstream_http_status=status,
