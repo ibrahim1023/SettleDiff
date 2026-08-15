@@ -9,10 +9,16 @@ from typer.testing import CliRunner
 
 from settlediff.application.replay import replay_fixture
 from settlediff.cli import app
+from settlediff.config import Settings
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 from settlediff.storage.sqlite import SQLiteReportRepository
 
 runner = CliRunner()
+
+
+def isolated_settings() -> Settings:
+    """Settings without the developer's local .env values."""
+    return Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
 
 
 def test_fixture_replay_requires_no_live_configuration() -> None:
@@ -39,6 +45,23 @@ def test_live_run_rejects_invalid_json_before_any_adapter_call() -> None:
     )
     assert result.exit_code == 2
     assert "Invalid live preflight" in result.stderr
+
+
+def test_live_run_rejects_partial_contextdev_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePerflo:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError(f"Perflo must not be called with partial configuration: {name}")
+
+    monkeypatch.setattr("settlediff.cli.Settings", isolated_settings)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    monkeypatch.setenv("SETTLEDIFF_CONTEXTDEV_BASE_URL", "https://contextdev.example.invalid")
+    result = runner.invoke(
+        app, ["run", "--url", "https://example.invalid", "--body", "{}", "--budget", "1"]
+    )
+    assert result.exit_code == 2
+    assert "Context.dev configuration is incomplete" in result.stderr
 
 
 def test_live_run_decline_does_not_execute_a_paid_call(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,6 +93,7 @@ def test_live_run_decline_does_not_execute_a_paid_call(monkeypatch: pytest.Monke
         async def get_activity(self) -> PerfloSuccessEnvelope:
             raise AssertionError("must not read activity when authorization is declined")
 
+    monkeypatch.setattr("settlediff.cli.Settings", isolated_settings)
     monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
     result = runner.invoke(
         app,

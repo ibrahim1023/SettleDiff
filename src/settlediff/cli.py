@@ -17,6 +17,8 @@ from settlediff.api.app import create_app
 from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import LiveEvidenceCollector, LiveRunCommand, RunInvestigation
+from settlediff.config import Settings
+from settlediff.contextdev.client import ContextDevClient
 from settlediff.domain.models import MachineReport
 from settlediff.domain.money import Money
 from settlediff.perflo.client import PerfloClient, PerfloClientError
@@ -88,45 +90,66 @@ def run(
     except (json.JSONDecodeError, InvalidOperation, ValueError) as error:
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error
+    try:
+        contextdev_config = Settings().contextdev()
+    except ValueError as error:
+        typer.echo(f"Invalid live preflight: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    contextdev = (
+        ContextDevClient(
+            contextdev_config.base_url,
+            contextdev_config.api_key,
+            timeout_seconds=contextdev_config.timeout_seconds,
+        )
+        if contextdev_config is not None
+        else None
+    )
     request = PaidExecutionRequest(
         run_id=f"live_{uuid4().hex}",
         target=url,
         body=cast(dict[str, JsonValue], parsed_body),
         budget=Money(amount=amount, unit="USDC"),
     )
-    collector = LiveEvidenceCollector(PerfloClient())
+    collector = LiveEvidenceCollector(PerfloClient(), contextdev=contextdev)
     try:
-        asyncio.run(collector.preflight(request))
-    except (PerfloClientError, ValueError) as error:
-        typer.echo(f"Live preflight failed: {error}", err=True)
-        raise typer.Exit(code=2) from error
-
-    capability = PaidExecutionCapability.issue(
-        request, expires_at=datetime.now(UTC) + timedelta(minutes=5)
-    )
-    typer.echo(
-        f"Target: {request.target}\nBody digest: {capability.body_digest}\nBudget: {request.budget}"
-    )
-    if not typer.confirm("Authorize this exact paid request?"):
-        typer.echo("Authorization declined; no paid request was sent.")
-        raise typer.Exit(code=1)
-
-    try:
-        outcome = asyncio.run(
-            RunInvestigation(collector.execute, lambda: collector.verify(request)).execute(
-                LiveRunCommand(request=request, capability=capability)
-            )
-        )
-    except (PerfloClientError, ValueError) as error:
-        typer.echo(f"Live investigation failed: {error}", err=True)
-        raise typer.Exit(code=2) from error
-    if database is not None:
-        repository = SQLiteReportRepository(database)
         try:
-            repository.save(outcome.report, events=outcome.events, artifacts=collector.artifacts)
-        finally:
-            repository.close()
-    _render(outcome.report, json_mode=json_mode)
+            asyncio.run(collector.preflight(request))
+        except (PerfloClientError, ValueError) as error:
+            typer.echo(f"Live preflight failed: {error}", err=True)
+            raise typer.Exit(code=2) from error
+
+        capability = PaidExecutionCapability.issue(
+            request, expires_at=datetime.now(UTC) + timedelta(minutes=5)
+        )
+        typer.echo(
+            "Target: "
+            f"{request.target}\nBody digest: {capability.body_digest}\nBudget: {request.budget}"
+        )
+        if not typer.confirm("Authorize this exact paid request?"):
+            typer.echo("Authorization declined; no paid request was sent.")
+            raise typer.Exit(code=1)
+
+        try:
+            outcome = asyncio.run(
+                RunInvestigation(collector.execute, lambda: collector.verify(request)).execute(
+                    LiveRunCommand(request=request, capability=capability)
+                )
+            )
+        except (PerfloClientError, ValueError) as error:
+            typer.echo(f"Live investigation failed: {error}", err=True)
+            raise typer.Exit(code=2) from error
+        if database is not None:
+            repository = SQLiteReportRepository(database)
+            try:
+                repository.save(
+                    outcome.report, events=outcome.events, artifacts=collector.artifacts
+                )
+            finally:
+                repository.close()
+        _render(outcome.report, json_mode=json_mode)
+    finally:
+        if contextdev is not None:
+            asyncio.run(contextdev.aclose())
 
 
 @app.command()

@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "error": {
+    "code": "SOURCE_UNAVAILABLE",
+    "message": "synthetic source did not respond",
+    "recoverable": true
+  }
+}

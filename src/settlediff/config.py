@@ -28,6 +28,23 @@ class HyperfusionConfig(BaseSettings):
         return value
 
 
+class ContextDevConfig(BaseSettings):
+    """Complete configuration required only when Context.dev evidence is requested."""
+
+    model_config = SettingsConfigDict(strict=True, extra="forbid", frozen=True)
+
+    base_url: NonEmpty
+    api_key: SecretStr
+    timeout_seconds: float = Field(default=10, gt=0, le=60)
+
+    @field_validator("api_key")
+    @classmethod
+    def require_api_key(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("Context.dev API key must not be blank")
+        return value
+
+
 class Settings(BaseSettings):
     """Application settings; live provider fields remain optional offline."""
 
@@ -43,8 +60,21 @@ class Settings(BaseSettings):
     hyperfusion_model: str | None = None
     hyperfusion_timeout_seconds: float = Field(default=30, gt=0, le=300)
     database_path: str | None = None
+    contextdev_base_url: str | None = None
     contextdev_api_key: SecretStr | None = None
     otlp_endpoint: str | None = None
+
+    def contextdev(self) -> ContextDevConfig | None:
+        """Return Context.dev configuration, or None when the integration is off."""
+        base_url = self.contextdev_base_url
+        api_key = self.contextdev_api_key
+        if base_url is None or not base_url.strip():
+            if api_key is None:
+                return None
+            raise ValueError("Context.dev configuration is incomplete")
+        if api_key is None:
+            raise ValueError("Context.dev configuration is incomplete")
+        return ContextDevConfig(base_url=base_url, api_key=api_key)
 
     def require_hyperfusion(self) -> HyperfusionConfig:
         values = (

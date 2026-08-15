@@ -15,9 +15,22 @@ from settlediff.application.auth import (
     PaidExecutionCapability,
     PaidExecutionRequest,
 )
+from settlediff.contextdev.client import (
+    ContextDevProtocolError,
+    ContextDevUnavailableError,
+    ContextEvidencePort,
+    ContextEvidenceRequest,
+    eligible_evidence_url,
+)
 from settlediff.domain.checks import run_checks
 from settlediff.domain.matching import match_activity
-from settlediff.domain.models import ArtifactType, EvidenceArtifact, MachineReport, PurchaseIntent
+from settlediff.domain.models import (
+    ArtifactType,
+    EvidenceArtifact,
+    ExecutionRecord,
+    MachineReport,
+    PurchaseIntent,
+)
 from settlediff.domain.normalize import normalize_activity, normalize_contract, normalize_execution
 from settlediff.domain.verdict import derive_verdict
 from settlediff.perflo.client import PerfloMutationUncertainError
@@ -110,18 +123,28 @@ class PerfloEvidencePort(Protocol):
 class LiveEvidenceCollector:
     """Capture provider evidence, then derive a report with deterministic code only."""
 
-    def __init__(self, perflo: PerfloEvidencePort) -> None:
+    def __init__(
+        self, perflo: PerfloEvidencePort, contextdev: ContextEvidencePort | None = None
+    ) -> None:
         self._perflo = perflo
+        self._contextdev = contextdev
         self._contract: EvidenceArtifact | None = None
         self._schema: EvidenceArtifact | None = None
         self._execution: EvidenceArtifact | None = None
         self._activity: EvidenceArtifact | None = None
+        self._context: EvidenceArtifact | None = None
 
     @property
     def artifacts(self) -> tuple[EvidenceArtifact, ...]:
         return tuple(
             artifact
-            for artifact in (self._contract, self._schema, self._execution, self._activity)
+            for artifact in (
+                self._contract,
+                self._schema,
+                self._execution,
+                self._activity,
+                self._context,
+            )
             if artifact is not None
         )
 
@@ -155,6 +178,7 @@ class LiveEvidenceCollector:
         )
         contract = normalize_contract(self._contract)
         execution = normalize_execution(self._execution)
+        await self._collect_context(request, execution)
         matched = match_activity(execution, normalize_activity(self._activity))
         intent = PurchaseIntent(
             run_id=request.run_id,
@@ -172,6 +196,33 @@ class LiveEvidenceCollector:
             ledger=matched.matched,
             findings=findings,
             verdict=derive_verdict(findings),
+        )
+
+    async def _collect_context(
+        self, request: PaidExecutionRequest, execution: ExecutionRecord
+    ) -> None:
+        """Record independent reachability evidence for a failed service, when configured.
+
+        A Context.dev failure never changes the run: the evidence is absent instead.
+        """
+        if self._contextdev is None:
+            return
+        url = eligible_evidence_url(execution)
+        if url is None:
+            return
+        try:
+            evidence = await self._contextdev.verify(
+                ContextEvidenceRequest(url=url, claim=f"HTTP {execution.upstream_http_status}")
+            )
+        except (ContextDevProtocolError, ContextDevUnavailableError):
+            return
+        self._context = EvidenceArtifact(
+            artifact_id=f"{request.run_id}:contextdev",
+            artifact_type=ArtifactType.CONTEXT_EVIDENCE,
+            source="contextdev",
+            collected_at=datetime.now(UTC),
+            redacted=False,
+            data=cast(JsonValue, evidence.model_dump(mode="json")),
         )
 
 

@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "error": {
+    "code": "CLAIM_UNSUPPORTED",
+    "message": "synthetic claim cannot be answered from the source",
+    "recoverable": false
+  }
+}

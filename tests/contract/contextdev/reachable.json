@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "result": {
+    "url": "https://status.example.invalid/incidents/syn_incident",
+    "reachable": true,
+    "evidence_present": true,
+    "excerpt": "Synthetic status excerpt: syn_service returned HTTP 503 during the syn_window maintenance window.",
+    "fetched_at": "2026-08-13T00:00:00Z"
+  }
+}
