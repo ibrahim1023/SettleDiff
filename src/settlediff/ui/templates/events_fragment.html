@@ -1,0 +1,18 @@
+<div class="timeline-fragment" data-terminal="{{ 'true' if terminal else 'false' }}"{% if not terminal %} hx-get="/runs/{{ run_id }}/events-fragment" hx-trigger="every 10s" hx-swap="outerHTML"{% endif %}>
+  {% if rows %}
+    <ol class="timeline-list">
+      {% for row in rows %}
+        <li class="timeline-row{% if row.current %} is-current{% endif %}"{% if row.current %} data-current="true" aria-current="step"{% endif %}>
+          <span class="timeline-marker" aria-hidden="true"></span>
+          <div>
+            <strong>{{ row.state|replace("_", " ") }}</strong>
+            <time datetime="{{ row.occurred_at.isoformat() }}">{{ row.occurred_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</time>
+          </div>
+          <span class="timeline-duration">{% if row.duration %}{{ row.duration }}{% elif row.current and not terminal %}current{% else %}terminal{% endif %}</span>
+        </li>
+      {% endfor %}
+    </ol>
+  {% else %}
+    <p class="empty-inline">No recorded transitions.</p>
+  {% endif %}
+</div>

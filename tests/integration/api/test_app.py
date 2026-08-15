@@ -13,6 +13,17 @@ from settlediff.domain.models import ArtifactType, EvidenceArtifact
 from settlediff.storage.sqlite import SQLiteReportRepository
 
 
+def test_root_redirects_to_run_records(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    client = TestClient(create_app(repository))
+
+    response = client.get("/", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/runs"
+    repository.close()
+
+
 def test_runs_and_detail_are_persisted_and_escaped(tmp_path: Path) -> None:
     repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
     report = replay_fixture(Path("fixtures/clean-success"))
@@ -75,6 +86,80 @@ def test_all_fixture_reports_render_without_recomputing(tmp_path: Path) -> None:
         assert report.verdict.value in detail.text
         for heading in ("Expected", "Executed", "Recorded"):
             assert f"<th>{heading}</th>" in detail.text
+
+
+def test_runs_support_search_verdict_filter_and_deterministic_sort(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    clean = replay_fixture(Path("fixtures/clean-success"))
+    paid_failure = replay_fixture(Path("fixtures/paid-failure"))
+    repository.save(clean)
+    repository.save(paid_failure)
+    client = TestClient(create_app(repository))
+
+    searched = client.get("/runs", params={"q": "paid failure"})
+    assert searched.status_code == 200
+    assert paid_failure.run_id in searched.text
+    assert clean.run_id not in searched.text
+    assert 'name="q"' in searched.text
+
+    filtered = client.get("/runs", params={"verdict": "PAID_FAILURE"})
+    assert filtered.status_code == 200
+    assert paid_failure.run_id in filtered.text
+    assert clean.run_id not in filtered.text
+    assert 'option value="PAID_FAILURE" selected' in filtered.text
+
+    sorted_response = client.get("/runs", params={"sort": "verdict"})
+    assert sorted_response.status_code == 200
+    assert sorted_response.text.index(paid_failure.run_id) < sorted_response.text.index(
+        clean.run_id
+    )
+    repository.close()
+
+
+def test_evidence_diff_uses_persisted_findings_and_links_citations(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/chain-diff"))
+    repository.save(report)
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}", params={"differences": "1"})
+
+    assert detail.status_code == 200
+    assert 'id="evidence-chain"' in detail.text
+    assert 'data-status="DIFF"' in detail.text
+    assert 'href="#evidence-chain"' in detail.text
+    assert 'id="evidence-price"' not in detail.text
+    assert "Showing persisted non-pass findings only" in detail.text
+    repository.close()
+
+
+def test_event_task_rows_stop_polling_after_terminal_state(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    active = RunTimeline()
+    active.transition(RunState.AUTHORIZED)
+    repository.save(report, events=active.events)
+    client = TestClient(create_app(repository))
+
+    active_fragment = client.get(f"/runs/{report.run_id}/events-fragment")
+    assert active_fragment.status_code == 200
+    assert 'hx-trigger="every 10s"' in active_fragment.text
+    assert 'data-current="true"' in active_fragment.text
+    assert "authorized" in active_fragment.text
+
+    complete = RunTimeline()
+    complete.transition(RunState.AUTHORIZED)
+    complete.transition(RunState.EXECUTING)
+    complete.transition(RunState.VERIFYING)
+    complete.transition(RunState.COMPLETE)
+    repository.save(report, events=complete.events)
+
+    terminal_fragment = client.get(f"/runs/{report.run_id}/events-fragment")
+    assert terminal_fragment.status_code == 200
+    assert 'hx-trigger="every 10s"' not in terminal_fragment.text
+    assert 'data-terminal="true"' in terminal_fragment.text
+    assert "complete" in terminal_fragment.text
+    repository.close()
 
 
 def test_vendored_htmx_checksum_is_recorded() -> None:
