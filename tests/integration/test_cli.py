@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -7,9 +8,11 @@ from fastapi import FastAPI
 from pydantic import JsonValue, SecretStr
 from typer.testing import CliRunner
 
+from settlediff.agent.grounding import fallback_explanation
 from settlediff.application.replay import replay_fixture
 from settlediff.cli import app
 from settlediff.config import Settings
+from settlediff.domain.models import ExplanationRecord, ExplanationSource
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 from settlediff.storage.sqlite import SQLiteReportRepository
 
@@ -68,8 +71,14 @@ def test_live_run_requires_contextdev_configuration(monkeypatch: pytest.MonkeyPa
     assert "Context.dev configuration is required for live investigations" in result.stderr
 
 
-def test_live_run_decline_does_not_execute_a_paid_call(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
+
+    def forbidden_model_factory(_settings: Settings) -> object:
+        calls.append("model")
+        raise AssertionError("model must not be constructed when authorization is declined")
+
+    monkeypatch.setattr("settlediff.cli._build_model_if_configured", forbidden_model_factory)
 
     class FakePerflo:
         async def inspect_service(self, _target: str) -> PerfloSuccessEnvelope:
@@ -107,6 +116,49 @@ def test_live_run_decline_does_not_execute_a_paid_call(monkeypatch: pytest.Monke
     assert result.exit_code == 1
     assert calls == ["check", "schema"]
     assert "Body digest:" in result.stdout
+
+
+def test_show_renders_persisted_explanation_without_recomputing(tmp_path: Path) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    explanation = fallback_explanation(report, set())
+    record = ExplanationRecord(
+        explanation=explanation,
+        source=ExplanationSource.FALLBACK,
+        tool_calls=0,
+    )
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    repository.save(report, explanation=record)
+    repository.close()
+
+    result = runner.invoke(
+        app, ["show", report.run_id, "--database", str(tmp_path / "reports.sqlite3")]
+    )
+
+    assert result.exit_code == 0
+    assert "Explanation (fallback):" in result.stdout
+    assert explanation.summary in result.stdout
+
+
+def test_json_show_renders_persisted_explanation(tmp_path: Path) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    record = ExplanationRecord(
+        explanation=fallback_explanation(report, set()),
+        source=ExplanationSource.FALLBACK,
+        tool_calls=0,
+    )
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    repository.save(report, explanation=record)
+    repository.close()
+
+    result = runner.invoke(
+        app, ["show", report.run_id, "--database", str(tmp_path / "reports.sqlite3"), "--json"]
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["report"]["verdict"] == "VERIFIED"
+    assert payload["explanation"]["source"] == "fallback"
+    assert payload["explanation"]["explanation"]["deterministic_verdict"] == "VERIFIED"
 
 
 def _envelope(result: JsonValue) -> PerfloSuccessEnvelope:

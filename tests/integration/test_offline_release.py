@@ -44,6 +44,12 @@ def test_complete_fixture_path_remains_offline(
         canonical = runner.invoke(app, ["verify-fixture", str(fixture_path), "--json"])
         assert canonical.exit_code == 0, canonical.output
         assert MachineReport.model_validate_json(canonical.stdout) == report
+        persisted = runner.invoke(
+            app, ["show", report.run_id, "--database", str(database), "--json"]
+        )
+        assert persisted.exit_code == 0, persisted.output
+        persisted_report = MachineReport.model_validate_json(persisted.stdout)
+        assert persisted_report == report
 
     expected_reports = tuple(report for _path, report in fixture_reports)
     repository = SQLiteReportRepository(database)

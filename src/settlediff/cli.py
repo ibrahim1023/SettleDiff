@@ -12,14 +12,26 @@ from uuid import uuid4
 import typer
 import uvicorn
 from pydantic import JsonValue, ValidationError
+from pydantic_ai.models import Model
 
+from settlediff.agent.investigator import InvestigationState, investigate
+from settlediff.agent.model import build_hyperfusion_model
+from settlediff.agent.tools import build_investigation_dependencies
 from settlediff.api.app import create_app
 from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
 from settlediff.application.replay import replay_fixture
-from settlediff.application.run import LiveEvidenceCollector, LiveRunCommand, RunInvestigation
+from settlediff.application.run import (
+    LiveEvidenceCollector,
+    LiveRunCommand,
+    RunInvestigation,
+)
 from settlediff.config import Settings
 from settlediff.contextdev.client import ContextDevClient
-from settlediff.domain.models import MachineReport
+from settlediff.domain.models import (
+    ExplanationRecord,
+    ExplanationSource,
+    MachineReport,
+)
 from settlediff.domain.money import Money
 from settlediff.perflo.client import PerfloClient, PerfloClientError
 from settlediff.storage.sqlite import SQLiteReportRepository
@@ -40,13 +52,60 @@ def main() -> None:
     """Investigate agent purchases with deterministic verification."""
 
 
-def _render(report: MachineReport, json_mode: bool) -> None:
+def _render(
+    report: MachineReport, json_mode: bool, explanation: ExplanationRecord | None = None
+) -> None:
     if json_mode:
-        typer.echo(report.model_dump_json())
+        if explanation is None:
+            typer.echo(report.model_dump_json())
+            return
+        payload = {
+            "report": report.model_dump(mode="json"),
+            "explanation": explanation.model_dump(mode="json"),
+        }
+        typer.echo(json.dumps(payload, separators=(",", ":")))
         return
     typer.echo(report.verdict.value)
     for finding in report.findings:
         typer.echo(f"{finding.status}: {finding.message}")
+    if explanation is not None:
+        typer.echo(f"Explanation ({explanation.source.value}): {explanation.explanation.summary}")
+
+
+def _build_model_if_configured(settings: Settings) -> Model | None:
+    """Build the live model only for an authorized live explanation attempt."""
+    if not settings.hyperfusion_model or not settings.hyperfusion_model.strip():
+        return None
+    return build_hyperfusion_model(settings.require_hyperfusion())
+
+
+async def _explain_report(
+    report: MachineReport, artifacts: frozenset[str], model: Model | None
+) -> ExplanationRecord:
+    if model is None:
+        return await _explain_without_model(report, artifacts)
+    result = await investigate(
+        InvestigationState(report=report, artifact_ids=artifacts),
+        build_investigation_dependencies(report, artifacts=()),
+        model,
+    )
+    return ExplanationRecord(
+        explanation=result.explanation,
+        source=ExplanationSource.FALLBACK if result.used_fallback else ExplanationSource.PROVIDER,
+        tool_calls=result.tool_calls,
+    )
+
+
+async def _explain_without_model(
+    report: MachineReport, artifacts: frozenset[str]
+) -> ExplanationRecord:
+    from settlediff.agent.grounding import fallback_explanation
+
+    return ExplanationRecord(
+        explanation=fallback_explanation(report, set(artifacts)),
+        source=ExplanationSource.FALLBACK,
+        tool_calls=0,
+    )
 
 
 @app.command("verify-fixture")
@@ -128,12 +187,19 @@ def run(
             typer.echo("Authorization declined; no paid request was sent.")
             raise typer.Exit(code=1)
 
+        model = _build_model_if_configured(settings)
         try:
             outcome = asyncio.run(
                 RunInvestigation(
                     collector.execute,
                     lambda: collector.verify(request),
                     telemetry=telemetry,
+                    explain=lambda report, artifact_ids: _explain_report(
+                        report, artifact_ids, model
+                    ),
+                    artifact_ids=lambda: frozenset(
+                        artifact.artifact_id for artifact in collector.artifacts
+                    ),
                 ).execute(LiveRunCommand(request=request, capability=capability))
             )
         except (PerfloClientError, ValueError) as error:
@@ -143,11 +209,14 @@ def run(
             repository = SQLiteReportRepository(database)
             try:
                 repository.save(
-                    outcome.report, events=outcome.events, artifacts=collector.artifacts
+                    outcome.report,
+                    events=outcome.events,
+                    artifacts=collector.artifacts,
+                    explanation=outcome.explanation,
                 )
             finally:
                 repository.close()
-        _render(outcome.report, json_mode=json_mode)
+        _render(outcome.report, json_mode=json_mode, explanation=outcome.explanation)
     finally:
         asyncio.run(contextdev.aclose())
         telemetry.shutdown()
@@ -163,12 +232,13 @@ def show(
     repository = SQLiteReportRepository(database)
     try:
         report = repository.get(run_id)
+        explanation = repository.explanation(run_id) if report is not None else None
     finally:
         repository.close()
     if report is None:
         typer.echo(f"Run {run_id} was not found.", err=True)
         raise typer.Exit(code=1)
-    _render(report, json_mode)
+    _render(report, json_mode, explanation)
 
 
 @app.command()
