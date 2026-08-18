@@ -51,6 +51,19 @@ from settlediff.perflo.client import PerfloMutationUncertainError
 from settlediff.perflo.parser import PerfloEnvelope, PerfloSuccessEnvelope
 
 
+class RecoveryState(StrEnum):
+    SUBMITTED = "submitted"
+    NOT_SUBMITTED = "not_submitted"
+    UNRESOLVED = "unresolved"
+
+
+@dataclass(frozen=True)
+class SubmissionRecovery:
+    state: RecoveryState
+    proof_of_non_submission: bool
+    evidence_ids: tuple[str, ...]
+
+
 class RunState(StrEnum):
     PREFLIGHT = "preflight"
     AUTHORIZED = "authorized"
@@ -119,6 +132,7 @@ class LiveRunCommand:
 class InvestigationOutcome:
     report: MachineReport
     explanation: ExplanationRecord
+    recovery: SubmissionRecovery | None
     events: tuple[RunEvent, ...]
     submission_uncertain: bool
 
@@ -135,6 +149,10 @@ class PerfloEvidencePort(Protocol):
     ) -> PerfloEnvelope: ...
 
     async def get_activity(self) -> PerfloEnvelope: ...
+
+    async def get_execution(self) -> PerfloEnvelope: ...
+
+    async def transaction_status(self, transaction_hash: str) -> PerfloEnvelope: ...
 
 
 class TelemetryPort(Protocol):
@@ -171,6 +189,7 @@ class LiveEvidenceCollector:
         self._execution: EvidenceArtifact | None = None
         self._activity: EvidenceArtifact | None = None
         self._context: EvidenceArtifact | None = None
+        self._recovery: EvidenceArtifact | None = None
 
     @property
     def artifacts(self) -> tuple[EvidenceArtifact, ...]:
@@ -182,6 +201,7 @@ class LiveEvidenceCollector:
                 self._execution,
                 self._activity,
                 self._context,
+                self._recovery,
             )
             if artifact is not None
         )
@@ -205,10 +225,43 @@ class LiveEvidenceCollector:
             request.run_id, ArtifactType.EXECUTION, "perflo.fetch", execution_data
         )
 
+    async def recover_submission(
+        self, run_id: str, transaction_hash: str | None
+    ) -> tuple[RecoveryState, tuple[EvidenceArtifact, ...]]:
+        """Use read-only evidence to establish submission without another mutation."""
+        if transaction_hash is not None:
+            status_data = _result_data(await self._perflo.transaction_status(transaction_hash))
+            artifact = _artifact(
+                run_id, ArtifactType.PAYMENT_RECEIPT, "perflo.tx_status", status_data
+            )
+            self._recovery = artifact
+            if isinstance(status_data, dict):
+                status = cast(dict[str, JsonValue], status_data).get("status")
+                if status == "confirmed":
+                    return RecoveryState.SUBMITTED, (artifact,)
+                if status == "failed":
+                    return RecoveryState.NOT_SUBMITTED, (artifact,)
+            return RecoveryState.UNRESOLVED, (artifact,)
+
+        activity_data = _result_data(await self._perflo.get_activity())
+        artifact = _artifact(run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data)
+        self._recovery = artifact
+        records = (
+            cast(dict[str, JsonValue], activity_data).get("records")
+            if isinstance(activity_data, dict)
+            else None
+        )
+        if isinstance(records, list) and records:
+            return RecoveryState.SUBMITTED, (artifact,)
+        return RecoveryState.UNRESOLVED, (artifact,)
+
     async def verify(self, request: PaidExecutionRequest) -> MachineReport:
-        if self._contract is None or self._execution is None:
-            raise RunTransitionError(
-                "live verification requires captured contract and execution evidence"
+        if self._contract is None:
+            raise RunTransitionError("live verification requires captured contract evidence")
+        if self._execution is None:
+            execution_data = _result_data(await self._perflo.get_execution())
+            self._execution = _artifact(
+                request.run_id, ArtifactType.EXECUTION, "perflo.fetch_status", execution_data
             )
         activity_data = _result_data(await self._perflo.get_activity())
         self._activity = _artifact(
@@ -336,6 +389,11 @@ class RunInvestigation:
         explain: Callable[[MachineReport, frozenset[str]], Awaitable[ExplanationRecord]]
         | None = None,
         artifact_ids: Callable[[], frozenset[str]] | None = None,
+        recover: Callable[
+            [str, str | None], Awaitable[tuple[RecoveryState, tuple[EvidenceArtifact, ...]]]
+        ]
+        | None = None,
+        transaction_hash: Callable[[], str | None] | None = None,
     ) -> None:
         self._execute_paid = execute_paid
         self._verify = verify
@@ -343,6 +401,8 @@ class RunInvestigation:
         self._telemetry = telemetry
         self._explain = explain
         self._artifact_ids = artifact_ids
+        self._recover = recover
+        self._transaction_hash = transaction_hash
 
     async def execute(self, command: LiveRunCommand) -> InvestigationOutcome:
         run_id = command.request.run_id
@@ -353,6 +413,7 @@ class RunInvestigation:
             authorization = await command.capability.consume(command.request)
             await self._transition(timeline, RunState.EXECUTING, run_id)
             uncertain = False
+            recovery: SubmissionRecovery | None = None
             try:
                 with self._span(
                     "settlediff.perflo.execute", {"run_id": run_id, "component": "perflo"}
@@ -361,6 +422,7 @@ class RunInvestigation:
             except PerfloMutationUncertainError:
                 uncertain = True
                 await self._transition(timeline, RunState.EVIDENCE_RECOVERY, run_id)
+                recovery = await self._recover_submission(run_id)
             await self._transition(timeline, RunState.VERIFYING, run_id)
             with self._span("settlediff.verify", {"run_id": run_id, "component": "domain"}):
                 report = await self._verify()
@@ -372,6 +434,7 @@ class RunInvestigation:
             return InvestigationOutcome(
                 report=report,
                 explanation=explanation,
+                recovery=recovery,
                 events=timeline.events,
                 submission_uncertain=uncertain,
             )
@@ -392,6 +455,21 @@ class RunInvestigation:
         if self._telemetry is None:
             return NullTelemetrySpan()
         return self._telemetry.span(name, attributes)
+
+    async def _recover_submission(self, run_id: str) -> SubmissionRecovery | None:
+        if self._recover is None:
+            return SubmissionRecovery(
+                state=RecoveryState.UNRESOLVED,
+                proof_of_non_submission=False,
+                evidence_ids=(),
+            )
+        transaction_hash = self._transaction_hash() if self._transaction_hash is not None else None
+        state, artifacts = await self._recover(run_id, transaction_hash)
+        return SubmissionRecovery(
+            state=RecoveryState(state),
+            proof_of_non_submission=RecoveryState(state) is RecoveryState.NOT_SUBMITTED,
+            evidence_ids=tuple(artifact.artifact_id for artifact in artifacts),
+        )
 
     async def _explain_report(self, report: MachineReport) -> ExplanationRecord:
         artifact_ids: frozenset[str] = (

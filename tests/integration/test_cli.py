@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 from fastapi import FastAPI
@@ -10,9 +12,16 @@ from typer.testing import CliRunner
 
 from settlediff.agent.grounding import fallback_explanation
 from settlediff.application.replay import replay_fixture
+from settlediff.application.run import LiveEvidenceCollector
 from settlediff.cli import app
 from settlediff.config import Settings
-from settlediff.domain.models import ExplanationRecord, ExplanationSource
+from settlediff.contextdev.client import ContextEvidencePort
+from settlediff.domain.models import (
+    ArtifactType,
+    EvidenceArtifact,
+    ExplanationRecord,
+    ExplanationSource,
+)
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 from settlediff.storage.sqlite import SQLiteReportRepository
 
@@ -116,6 +125,116 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
     assert result.exit_code == 1
     assert calls == ["check", "schema"]
     assert "Body digest:" in result.stdout
+
+
+def test_transaction_handle_comes_only_from_captured_execution_evidence() -> None:
+    artifact = EvidenceArtifact(
+        artifact_id="run:execution",
+        artifact_type=ArtifactType.EXECUTION,
+        source="perflo.fetch",
+        collected_at=datetime.now(UTC),
+        redacted=False,
+        data={"transaction_hash": "syn_hash_recovered"},
+    )
+
+    class FakePerflo:
+        async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
+            del target
+            raise AssertionError
+
+        async def get_schema(self, slug: str) -> PerfloSuccessEnvelope:
+            del slug
+            raise AssertionError
+
+        async def execute(self, authorization: object, request: object) -> PerfloSuccessEnvelope:
+            del authorization, request
+            raise AssertionError
+
+        async def get_activity(self) -> PerfloSuccessEnvelope:
+            raise AssertionError
+
+        async def get_execution(self) -> PerfloSuccessEnvelope:
+            raise AssertionError
+
+        async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
+            del transaction_hash
+            raise AssertionError
+
+    class FakeContextDev:
+        async def verify(self, _request: object) -> object:
+            raise AssertionError
+
+    collector = LiveEvidenceCollector(FakePerflo(), cast(ContextEvidencePort, FakeContextDev()))
+    collector._execution = artifact  # pyright: ignore[reportPrivateUsage]
+
+    from settlediff.cli import _transaction_handle  # pyright: ignore[reportPrivateUsage]
+
+    assert _transaction_handle(collector) == "syn_hash_recovered"
+
+
+def test_run_reports_unresolved_submission_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class FakePerflo:
+        async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
+            del target
+            calls.append("check")
+            return _envelope(
+                {
+                    "vendor_slug": "synthetic-search",
+                    "url": "https://example.invalid/search",
+                    "price": {"amount": "0.01", "unit": "USDC"},
+                    "asset": "USDC",
+                    "protocol": "mpp",
+                    "chain": "tempo",
+                    "request_schema": {},
+                }
+            )
+
+        async def get_schema(self, slug: str) -> PerfloSuccessEnvelope:
+            del slug
+            calls.append("schema")
+            return _envelope({"request_schema": {}})
+
+        async def execute(self, authorization: object, request: object) -> PerfloSuccessEnvelope:
+            del authorization, request
+            calls.append("fetch")
+            from pathlib import Path as FixturePath
+
+            from settlediff.perflo.client import PerfloMutationUncertainError
+
+            self._execution = json.loads(
+                (FixturePath("fixtures/clean-success") / "execution.json").read_text()
+            )
+            raise PerfloMutationUncertainError("synthetic timeout")
+
+        async def get_execution(self) -> PerfloSuccessEnvelope:
+            return _envelope(self._execution)
+
+        async def get_activity(self) -> PerfloSuccessEnvelope:
+            calls.append("activity")
+            from pathlib import Path as FixturePath
+
+            return _envelope(
+                json.loads((FixturePath("fixtures/clean-success") / "activity.json").read_text())
+            )
+
+        async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
+            del transaction_hash
+            raise AssertionError("no transaction handle exists after the timeout")
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    result = runner.invoke(
+        app,
+        ["run", "--url", "https://example.invalid/search", "--body", "{}", "--budget", "0.01"],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0
+    assert calls == ["check", "schema", "fetch", "activity", "activity"]
+    assert "Submission: unresolved" in result.stdout
+    assert "proof of non-submission: no" in result.stdout
 
 
 def test_show_renders_persisted_explanation_without_recomputing(tmp_path: Path) -> None:

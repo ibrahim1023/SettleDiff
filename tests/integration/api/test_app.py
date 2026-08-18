@@ -165,6 +165,30 @@ def test_evidence_diff_uses_persisted_findings_and_links_citations(tmp_path: Pat
     repository.close()
 
 
+def test_run_detail_renders_persisted_recovery_evidence(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    artifact = EvidenceArtifact(
+        artifact_id=f"{report.run_id}:recovery",
+        artifact_type=ArtifactType.ACTIVITY,
+        source="perflo.activity",
+        collected_at=datetime(2026, 8, 18, tzinfo=UTC),
+        redacted=True,
+        data={"records": []},
+    )
+    repository.save(report, artifacts=(artifact,))
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert "Submission recovery" in detail.text
+    assert "Unresolved" in detail.text
+    assert "No proof of non-submission" in detail.text
+    assert "activity history" in detail.text
+    repository.close()
+
+
 def test_run_detail_renders_provider_explanation(tmp_path: Path) -> None:
     repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
     report = replay_fixture(Path("fixtures/clean-success"))

@@ -18,6 +18,8 @@ from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
     LiveEvidenceCollector,
     LiveRunCommand,
+    PerfloEvidencePort,
+    RecoveryState,
     RunEvent,
     RunInvestigation,
     RunState,
@@ -28,11 +30,13 @@ from settlediff.contextdev.client import (
     ContextDevProtocolError,
     ContextDevUnavailableError,
     ContextEvidence,
+    ContextEvidencePort,
     ContextEvidenceRequest,
     ContextEvidenceState,
 )
 from settlediff.domain.models import (
     ArtifactType,
+    EvidenceArtifact,
     ExplanationRecord,
     ExplanationSource,
     InvestigationExplanation,
@@ -105,6 +109,193 @@ async def test_uncertain_execution_verifies_without_a_second_paid_attempt() -> N
 
 
 @pytest.mark.asyncio
+async def test_uncertain_submission_without_handle_remains_unresolved() -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    request = PaidExecutionRequest(
+        run_id=report.run_id,
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+    capability = PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    )
+    mutations = 0
+
+    async def execute(
+        _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
+    ) -> None:
+        nonlocal mutations
+        mutations += 1
+        raise PerfloMutationUncertainError("synthetic timeout")
+
+    async def verify() -> MachineReport:
+        return report
+
+    async def recover(
+        run_id: str, _transaction_hash: str | None
+    ) -> tuple[RecoveryState, tuple[EvidenceArtifact, ...]]:
+        assert run_id == request.run_id
+        return (
+            RecoveryState.UNRESOLVED,
+            (
+                EvidenceArtifact(
+                    artifact_id=f"{request.run_id}:recovery",
+                    artifact_type=ArtifactType.ACTIVITY,
+                    source="perflo.activity",
+                    collected_at=datetime.now(UTC),
+                    redacted=False,
+                    data={"records": 0},
+                ),
+            ),
+        )
+
+    outcome = await RunInvestigation(execute, verify, recover=recover).execute(
+        LiveRunCommand(request, capability)
+    )
+
+    assert mutations == 1
+    assert outcome.submission_uncertain
+    assert outcome.recovery is not None
+    assert outcome.recovery.state is RecoveryState.UNRESOLVED
+    assert outcome.recovery.proof_of_non_submission is False
+    assert outcome.events[-1].state is RunState.COMPLETE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "non_submission"),
+    [
+        (RecoveryState.SUBMITTED, False),
+        (RecoveryState.NOT_SUBMITTED, True),
+        (RecoveryState.UNRESOLVED, False),
+    ],
+)
+async def test_recovery_state_distinguishes_submission_evidence(
+    state: RecoveryState, non_submission: bool
+) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    request = PaidExecutionRequest(
+        run_id=report.run_id,
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+    capability = PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    )
+    mutations = 0
+    recovery_hashes: list[str | None] = []
+
+    async def execute(
+        _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
+    ) -> None:
+        nonlocal mutations
+        mutations += 1
+        raise PerfloMutationUncertainError("synthetic malformed response")
+
+    async def verify() -> MachineReport:
+        return report
+
+    async def recover(
+        run_id: str, transaction_hash: str | None
+    ) -> tuple[RecoveryState, tuple[EvidenceArtifact, ...]]:
+        assert run_id == request.run_id
+        recovery_hashes.append(transaction_hash)
+        return (
+            state,
+            (
+                EvidenceArtifact(
+                    artifact_id=f"{request.run_id}:recovery",
+                    artifact_type=ArtifactType.PAYMENT_RECEIPT,
+                    source="perflo.tx_status",
+                    collected_at=datetime.now(UTC),
+                    redacted=False,
+                    data={"status": state.value},
+                ),
+            ),
+        )
+
+    outcome = await RunInvestigation(
+        execute, verify, recover=recover, transaction_hash=lambda: "syn_hash_uncertain"
+    ).execute(LiveRunCommand(request, capability))
+
+    assert mutations == 1
+    assert recovery_hashes == ["syn_hash_uncertain"]
+    assert outcome.recovery is not None
+    assert outcome.recovery.state is state
+    assert outcome.recovery.proof_of_non_submission is non_submission
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_payload", "expected"),
+    [
+        ({"status": "confirmed", "transaction_hash": "syn_hash"}, RecoveryState.SUBMITTED),
+        ({"status": "failed", "transaction_hash": "syn_hash"}, RecoveryState.NOT_SUBMITTED),
+        ({"status": "pending", "transaction_hash": "syn_hash"}, RecoveryState.UNRESOLVED),
+    ],
+)
+async def test_collector_recovery_uses_transaction_status_without_a_second_mutation(
+    status_payload: JsonValue, expected: RecoveryState
+) -> None:
+    class FakePerflo:
+        async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
+            assert transaction_hash == "syn_hash_uncertain"
+            return _envelope(status_payload)
+
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            raise AssertionError("recovery must not invoke paid execution")
+
+    collector = LiveEvidenceCollector(
+        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+    )
+    state, artifacts = await collector.recover_submission("syn_run_uncertain", "syn_hash_uncertain")
+
+    assert state is expected
+    assert len(artifacts) == 1
+    assert artifacts[0].source == "perflo.tx_status"
+    assert collector.artifacts[-1] is artifacts[0]
+
+
+@pytest.mark.asyncio
+async def test_collector_recovery_uses_activity_history_without_a_handle() -> None:
+    class FakePerflo:
+        async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
+            raise AssertionError("no transaction handle is available")
+
+        async def get_activity(self) -> PerfloSuccessEnvelope:
+            return _envelope({"records": [{"transaction_hash": "syn_hash_uncertain"}]})
+
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            raise AssertionError("recovery must not invoke paid execution")
+
+    collector = LiveEvidenceCollector(
+        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+    )
+    state, artifacts = await collector.recover_submission("syn_run_uncertain", None)
+
+    assert state is RecoveryState.SUBMITTED
+    assert len(artifacts) == 1
+    assert artifacts[0].source == "perflo.activity"
+
+
+@pytest.mark.asyncio
+async def test_collector_empty_activity_history_does_not_prove_non_submission() -> None:
+    class FakePerflo:
+        async def get_activity(self) -> PerfloSuccessEnvelope:
+            return _envelope({"records": []})
+
+    collector = LiveEvidenceCollector(
+        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+    )
+    state, artifacts = await collector.recover_submission("syn_run_uncertain", None)
+
+    assert state is RecoveryState.UNRESOLVED
+    assert len(artifacts) == 1
+
+
+@pytest.mark.asyncio
 async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
@@ -131,6 +322,14 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
             return _envelope(_fixture_data("activity.json"))
+
+        async def get_execution(self) -> PerfloSuccessEnvelope:
+            raise AssertionError("execution status is not used for a certain submission")
+
+        async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
+            raise AssertionError(
+                f"transaction status is not used for a certain submission: {transaction_hash}"
+            )
 
     collector = LiveEvidenceCollector(FakePerflo(), StubContextDev(evidence=CONTEXT_EVIDENCE))
     await collector.preflight(request)
@@ -215,6 +414,14 @@ def failing_collector(
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
             return _envelope(_fixture_data("activity.json"))
+
+        async def get_execution(self) -> PerfloSuccessEnvelope:
+            raise AssertionError("execution status is not used for a certain submission")
+
+        async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
+            raise AssertionError(
+                f"transaction status is not used for a certain submission: {transaction_hash}"
+            )
 
     return LiveEvidenceCollector(FakePerflo(), contextdev=contextdev)
 
@@ -358,6 +565,14 @@ async def test_collector_never_calls_contextdev_for_a_successful_service() -> No
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
             return _envelope(_fixture_data("activity.json"))
+
+        async def get_execution(self) -> PerfloSuccessEnvelope:
+            raise AssertionError("execution status is not used for a certain submission")
+
+        async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
+            raise AssertionError(
+                f"transaction status is not used for a certain submission: {transaction_hash}"
+            )
 
     collector = LiveEvidenceCollector(FakePerflo(), contextdev=contextdev)
     request = PaidExecutionRequest(

@@ -24,6 +24,7 @@ from settlediff.application.run import (
     LiveEvidenceCollector,
     LiveRunCommand,
     RunInvestigation,
+    SubmissionRecovery,
 )
 from settlediff.config import Settings
 from settlediff.contextdev.client import ContextDevClient
@@ -53,7 +54,10 @@ def main() -> None:
 
 
 def _render(
-    report: MachineReport, json_mode: bool, explanation: ExplanationRecord | None = None
+    report: MachineReport,
+    json_mode: bool,
+    explanation: ExplanationRecord | None = None,
+    recovery: SubmissionRecovery | None = None,
 ) -> None:
     if json_mode:
         if explanation is None:
@@ -70,6 +74,10 @@ def _render(
         typer.echo(f"{finding.status}: {finding.message}")
     if explanation is not None:
         typer.echo(f"Explanation ({explanation.source.value}): {explanation.explanation.summary}")
+    if recovery is not None:
+        typer.echo(f"Submission: {recovery.state.value}")
+        proof = "yes" if recovery.proof_of_non_submission else "no"
+        typer.echo(f"proof of non-submission: {proof}")
 
 
 def _build_model_if_configured(settings: Settings) -> Model | None:
@@ -106,6 +114,15 @@ async def _explain_without_model(
         source=ExplanationSource.FALLBACK,
         tool_calls=0,
     )
+
+
+def _transaction_handle(collector: LiveEvidenceCollector) -> str | None:
+    """Return a transaction handle only from captured execution evidence."""
+    for artifact in reversed(collector.artifacts):
+        if artifact.artifact_type.value == "execution" and isinstance(artifact.data, dict):
+            value = artifact.data.get("transaction_hash")
+            return value if isinstance(value, str) and value.strip() else None
+    return None
 
 
 @app.command("verify-fixture")
@@ -200,6 +217,8 @@ def run(
                     artifact_ids=lambda: frozenset(
                         artifact.artifact_id for artifact in collector.artifacts
                     ),
+                    recover=collector.recover_submission,
+                    transaction_hash=lambda: _transaction_handle(collector),
                 ).execute(LiveRunCommand(request=request, capability=capability))
             )
         except (PerfloClientError, ValueError) as error:
@@ -216,7 +235,12 @@ def run(
                 )
             finally:
                 repository.close()
-        _render(outcome.report, json_mode=json_mode, explanation=outcome.explanation)
+        _render(
+            outcome.report,
+            json_mode=json_mode,
+            explanation=outcome.explanation,
+            recovery=outcome.recovery,
+        )
     finally:
         asyncio.run(contextdev.aclose())
         telemetry.shutdown()

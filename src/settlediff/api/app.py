@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from settlediff.application.run import RunEvent, RunState
-from settlediff.domain.models import CheckStatus, MachineReport, Verdict
+from settlediff.domain.models import CheckStatus, EvidenceArtifact, MachineReport, Verdict
 from settlediff.domain.money import Money
 from settlediff.domain.redaction import mask_identifier
 from settlediff.storage.sqlite import SQLiteReportRepository
@@ -131,6 +131,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
             evidence_anchors=evidence_anchors,
             finding_anchors=finding_anchors,
             artifact_links=artifact_links,
+            recovery_artifact=_recovery_artifact(repository.artifacts(run_id)),
         )
 
     app.get("/runs/{run_id}", response_class=HTMLResponse)(run_detail)
@@ -177,6 +178,15 @@ def _latest_state(events: tuple[RunEvent, ...]) -> str:
 
 def _artifact_anchor(artifact_id: str) -> str:
     return artifact_id.replace(":", "-")
+
+
+def _recovery_artifact(
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> EvidenceArtifact | None:
+    for artifact in artifacts:
+        if artifact.artifact_id.endswith(":recovery"):
+            return artifact
+    return None
 
 
 def _evidence_rows(report: MachineReport) -> tuple[EvidenceRow, ...]:

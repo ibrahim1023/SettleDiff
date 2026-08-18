@@ -138,6 +138,32 @@
       </div>
     {% endif %}
   </section>
+  {% if recovery_artifact %}
+    <section class="panel recovery-panel" aria-labelledby="recovery-heading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Payment certainty</p>
+          <h2 id="recovery-heading">Submission recovery</h2>
+        </div>
+        <span class="state-chip">{% if recovery_artifact.artifact_type.value == "payment_receipt" %}transaction status{% else %}activity history{% endif %}</span>
+      </div>
+      {% if recovery_artifact.artifact_type.value == "payment_receipt" and recovery_artifact.data is mapping %}
+        {% set recovery_status = recovery_artifact.data.get("status") %}
+        {% if recovery_status == "confirmed" %}
+          <p><strong>Submitted.</strong> Read-only transaction status confirmed the payment.</p>
+        {% elif recovery_status == "failed" %}
+          <p><strong>Not submitted.</strong> Read-only transaction status proves the payment was not submitted.</p>
+        {% else %}
+          <p><strong>Unresolved.</strong> The transaction status did not establish submission.</p>
+        {% endif %}
+      {% elif recovery_artifact.data is mapping and recovery_artifact.data.get("records") %}
+        <p><strong>Submitted.</strong> Read-only Activity history contains a matching record.</p>
+      {% else %}
+        <p><strong>Unresolved.</strong> No proof of non-submission. Do not retry the paid command until the operator verifies the account state.</p>
+      {% endif %}
+      <p class="citation-row"><a href="/runs/{{ report.run_id }}/artifacts#{{ recovery_artifact.artifact_id|replace(":", "-") }}">{{ recovery_artifact.artifact_id }}</a></p>
+    </section>
+  {% endif %}
   <section class="panel" aria-labelledby="timeline-heading">
     <div class="section-heading"><div><p class="eyebrow">Audit trail</p><h2 id="timeline-heading">Run transitions</h2></div><p>Active runs refresh every 10 seconds.</p></div>
     <div class="timeline-loading" hx-get="/runs/{{ report.run_id }}/events-fragment" hx-trigger="load" hx-swap="outerHTML" aria-live="polite">
