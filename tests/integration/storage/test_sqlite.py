@@ -10,7 +10,13 @@ import pytest
 
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import RunState, RunTimeline
-from settlediff.domain.models import ArtifactType, EvidenceArtifact
+from settlediff.domain.models import (
+    ArtifactType,
+    EvidenceArtifact,
+    ExplanationRecord,
+    ExplanationSource,
+    InvestigationExplanation,
+)
 from settlediff.domain.redaction import redact_report
 from settlediff.storage.sqlite import SQLiteReportRepository
 
@@ -106,3 +112,136 @@ def test_artifacts_are_redacted_before_insert_and_migrations_are_idempotent(tmp_
     assert stored.redacted
     assert data["authorization"] == "[REDACTED]"
     SQLiteReportRepository(tmp_path / "reports.sqlite3").close()
+
+
+def test_explanation_round_trips_strict_json_with_only_narrative_identifiers_redacted(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/clean-success"))
+    summary_email = "operator@example.com"
+    summary_transaction = "0x0123456789abcdef0123456789abcdef"
+    next_step_identifier = "abcdef0123456789abcdef0123456789"
+    explanation = ExplanationRecord(
+        explanation=InvestigationExplanation(
+            run_id=report.run_id,
+            summary=f"Ask {summary_email} about transaction {summary_transaction}.",
+            evidence_used=("artifact:0xfedcba9876543210fedcba9876543210",),
+            finding_ids=tuple(finding.finding_id for finding in report.findings),
+            deterministic_verdict=report.verdict,
+            recommended_next_step=f"Review account {next_step_identifier}.",
+        ),
+        source=ExplanationSource.PROVIDER,
+        tool_calls=2,
+    )
+    before = explanation.model_dump_json()
+    repository = SQLiteReportRepository(database)
+
+    repository.save(report, explanation=explanation)
+
+    loaded = repository.explanation(report.run_id)
+    assert loaded is not None
+    assert loaded.explanation.run_id == explanation.explanation.run_id
+    assert loaded.explanation.deterministic_verdict is explanation.explanation.deterministic_verdict
+    assert loaded.explanation.finding_ids == explanation.explanation.finding_ids
+    assert loaded.explanation.evidence_used == explanation.explanation.evidence_used
+    assert loaded.source is ExplanationSource.PROVIDER
+    assert loaded.tool_calls == 2
+    assert loaded.explanation.summary == "Ask o***@example.com about transaction 0x0123…cdef."
+    assert loaded.explanation.recommended_next_step == "Review account abcd…6789."
+    with closing(sqlite3.connect(database)) as connection:
+        stored_json = cast(
+            str,
+            connection.execute(
+                "SELECT explanation_json FROM explanations WHERE run_id = ?", (report.run_id,)
+            ).fetchone()[0],
+        )
+    assert summary_email not in stored_json
+    assert summary_transaction not in stored_json
+    assert next_step_identifier not in stored_json
+    assert explanation.model_dump_json() == before
+    repository.close()
+
+
+def test_replacing_report_without_explanation_removes_stale_row_and_delete_cascades(
+    tmp_path: Path,
+) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    explanation = ExplanationRecord(
+        explanation=InvestigationExplanation(
+            run_id=report.run_id,
+            summary="Deterministic verification completed.",
+            evidence_used=(),
+            finding_ids=tuple(finding.finding_id for finding in report.findings),
+            deterministic_verdict=report.verdict,
+            recommended_next_step=None,
+        ),
+        source=ExplanationSource.FALLBACK,
+        tool_calls=0,
+    )
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+
+    repository.save(report, explanation=explanation)
+    repository.save(report)
+    assert repository.explanation(report.run_id) is None
+
+    repository.save(report, explanation=explanation)
+    assert repository.delete(report.run_id)
+    assert repository.explanation(report.run_id) is None
+    repository.close()
+
+
+def test_explanation_failure_rolls_back_report_events_and_artifacts(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/clean-success"))
+    assert report.execution is not None
+    timeline = RunTimeline()
+    timeline.transition(RunState.AUTHORIZED)
+    artifact = EvidenceArtifact(
+        artifact_id="artifact:original",
+        artifact_type=ArtifactType.SERVICE_RESPONSE,
+        source="test",
+        collected_at=datetime(2026, 8, 13, tzinfo=UTC),
+        redacted=False,
+        data={"result": "original"},
+    )
+    explanation = ExplanationRecord(
+        explanation=InvestigationExplanation(
+            run_id=report.run_id,
+            summary="Original explanation.",
+            evidence_used=(artifact.artifact_id,),
+            finding_ids=tuple(finding.finding_id for finding in report.findings),
+            deterministic_verdict=report.verdict,
+            recommended_next_step=None,
+        ),
+        source=ExplanationSource.FALLBACK,
+        tool_calls=0,
+    )
+    repository = SQLiteReportRepository(database)
+    repository.save(report, events=timeline.events, artifacts=(artifact,), explanation=explanation)
+    replacement = report.model_copy(
+        update={
+            "execution": report.execution.model_copy(
+                update={"response_body": {"result": "replacement"}}
+            )
+        }
+    )
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER reject_explanations
+            BEFORE INSERT ON explanations
+            BEGIN
+                SELECT RAISE(ABORT, 'synthetic explanation failure');
+            END
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="synthetic explanation failure"):
+        repository.save(replacement, explanation=explanation)
+
+    assert repository.get(report.run_id) == redact_report(report)
+    assert repository.events(report.run_id) == timeline.events
+    assert repository.artifacts(report.run_id) == (artifact.model_copy(update={"redacted": True}),)
+    assert repository.explanation(report.run_id) == explanation
+    repository.close()

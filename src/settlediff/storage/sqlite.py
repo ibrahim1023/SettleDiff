@@ -8,8 +8,23 @@ from threading import RLock
 from typing import cast
 
 from settlediff.application.run import RunEvent
-from settlediff.domain.models import EvidenceArtifact, MachineReport
-from settlediff.domain.redaction import redact_artifact, redact_report
+from settlediff.domain.models import EvidenceArtifact, ExplanationRecord, MachineReport
+from settlediff.domain.redaction import redact_artifact, redact_embedded_identifiers, redact_report
+
+
+def _redact_explanation(record: ExplanationRecord) -> ExplanationRecord:
+    explanation = record.explanation
+    redacted_explanation = explanation.model_copy(
+        update={
+            "summary": redact_embedded_identifiers(explanation.summary),
+            "recommended_next_step": (
+                redact_embedded_identifiers(explanation.recommended_next_step)
+                if explanation.recommended_next_step is not None
+                else None
+            ),
+        }
+    )
+    return record.model_copy(update={"explanation": redacted_explanation})
 
 
 class SQLiteReportRepository:
@@ -44,8 +59,12 @@ class SQLiteReportRepository:
         *,
         events: tuple[RunEvent, ...] = (),
         artifacts: tuple[EvidenceArtifact, ...] = (),
+        explanation: ExplanationRecord | None = None,
     ) -> None:
         persisted_report = redact_report(report)
+        persisted_explanation = (
+            _redact_explanation(explanation) if explanation is not None else None
+        )
         with self._lock, self._connection:
             self._connection.execute(
                 "INSERT OR REPLACE INTO reports(run_id, report_json) VALUES (?, ?)",
@@ -53,6 +72,7 @@ class SQLiteReportRepository:
             )
             self._connection.execute("DELETE FROM run_events WHERE run_id = ?", (report.run_id,))
             self._connection.execute("DELETE FROM artifacts WHERE run_id = ?", (report.run_id,))
+            self._connection.execute("DELETE FROM explanations WHERE run_id = ?", (report.run_id,))
             self._connection.executemany(
                 "INSERT INTO run_events(run_id, position, event_json) VALUES (?, ?, ?)",
                 (
@@ -71,6 +91,11 @@ class SQLiteReportRepository:
                     for artifact in artifacts
                 ),
             )
+            if persisted_explanation is not None:
+                self._connection.execute(
+                    "INSERT INTO explanations(run_id, explanation_json) VALUES (?, ?)",
+                    (report.run_id, persisted_explanation.model_dump_json()),
+                )
 
     def get(self, run_id: str) -> MachineReport | None:
         with self._lock:
@@ -105,6 +130,13 @@ class SQLiteReportRepository:
                 (run_id,),
             ).fetchall()
         return tuple(EvidenceArtifact.model_validate_json(cast(str, row[0])) for row in rows)
+
+    def explanation(self, run_id: str) -> ExplanationRecord | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT explanation_json FROM explanations WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        return ExplanationRecord.model_validate_json(row[0]) if row else None
 
     def close(self) -> None:
         with self._lock:
