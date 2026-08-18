@@ -73,6 +73,71 @@
       {% endfor %}
     </ol>
   </section>
+  <section class="panel explanation-panel" aria-labelledby="explanation-heading">
+    <div class="section-heading explanation-heading">
+      <div>
+        <p class="eyebrow">Persisted narrative</p>
+        <h2 id="explanation-heading">Grounded explanation</h2>
+      </div>
+      {% if explanation_record %}
+        <p class="explanation-provenance">
+          <span>Provenance</span>
+          <span class="explanation-source explanation-source-{{ explanation_record.source.value }}">{{ explanation_record.source.value|upper }}</span>
+        </p>
+      {% endif %}
+    </div>
+    {% if explanation_record %}
+      {% set explanation = explanation_record.explanation %}
+      <div class="explanation-content">
+        <div>
+          <h3>Summary</h3>
+          <p class="explanation-summary">{{ explanation.summary }}</p>
+        </div>
+        {% if explanation.recommended_next_step %}
+          <div>
+            <h3>Recommended next step</h3>
+            <p>{{ explanation.recommended_next_step }}</p>
+          </div>
+        {% endif %}
+        <p class="tool-call-count">{{ explanation_record.tool_calls }} tool call{% if explanation_record.tool_calls != 1 %}s{% endif %}</p>
+        <div class="explanation-citations" aria-label="Explanation citations">
+          <div>
+            <h3>Cited findings</h3>
+            <div class="citation-row">
+              {% for finding_id in explanation.finding_ids %}
+                {% if finding_anchors.get(finding_id) %}
+                  <a class="citation-chip" href="#{{ finding_anchors[finding_id] }}">{{ finding_id }}</a>
+                {% else %}
+                  <span class="citation-chip">{{ finding_id }}</span>
+                {% endif %}
+              {% else %}
+                <span class="citation-empty">None cited</span>
+              {% endfor %}
+            </div>
+          </div>
+          <div>
+            <h3>Evidence IDs</h3>
+            <div class="citation-row">
+              {% for evidence_id in explanation.evidence_used %}
+                {% if artifact_links.get(evidence_id) %}
+                  <a class="citation-chip" href="{{ artifact_links[evidence_id] }}">{{ evidence_id }}</a>
+                {% else %}
+                  <span class="citation-chip">{{ evidence_id }}</span>
+                {% endif %}
+              {% else %}
+                <span class="citation-empty">None cited</span>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+    {% else %}
+      <div class="explanation-empty">
+        <p><strong>No persisted explanation</strong></p>
+        <p>The deterministic findings and verdict remain available as the authoritative record.</p>
+      </div>
+    {% endif %}
+  </section>
   <section class="panel" aria-labelledby="timeline-heading">
     <div class="section-heading"><div><p class="eyebrow">Audit trail</p><h2 id="timeline-heading">Run transitions</h2></div><p>Active runs refresh every 10 seconds.</p></div>
     <div class="timeline-loading" hx-get="/runs/{{ report.run_id }}/events-fragment" hx-trigger="load" hx-swap="outerHTML" aria-live="polite">

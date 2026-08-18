@@ -3,14 +3,46 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from hashlib import sha384
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from settlediff.api.app import create_app
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import RunState, RunTimeline
-from settlediff.domain.models import ArtifactType, EvidenceArtifact
+from settlediff.domain.models import (
+    ArtifactType,
+    EvidenceArtifact,
+    ExplanationRecord,
+    ExplanationSource,
+    InvestigationExplanation,
+    MachineReport,
+)
 from settlediff.storage.sqlite import SQLiteReportRepository
+
+
+def explanation_record(
+    report: MachineReport,
+    *,
+    source: ExplanationSource = ExplanationSource.PROVIDER,
+    summary: str = "The persisted evidence supports the deterministic verdict.",
+    evidence_used: tuple[str, ...] = ("artifact:explanation",),
+    finding_ids: tuple[str, ...] | None = None,
+    recommended_next_step: str | None = "Review the cited settlement record.",
+    tool_calls: int = 2,
+) -> ExplanationRecord:
+    return ExplanationRecord(
+        explanation=InvestigationExplanation(
+            run_id=report.run_id,
+            summary=summary,
+            evidence_used=evidence_used,
+            finding_ids=finding_ids or (report.findings[0].finding_id,),
+            deterministic_verdict=report.verdict,
+            recommended_next_step=recommended_next_step,
+        ),
+        source=source,
+        tool_calls=tool_calls,
+    )
 
 
 def test_root_redirects_to_run_records(tmp_path: Path) -> None:
@@ -133,6 +165,146 @@ def test_evidence_diff_uses_persisted_findings_and_links_citations(tmp_path: Pat
     repository.close()
 
 
+def test_run_detail_renders_provider_explanation(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    record = explanation_record(report)
+    repository.save(report, explanation=record)
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert "Grounded explanation" in detail.text
+    assert 'class="explanation-source explanation-source-provider">PROVIDER</span>' in detail.text
+    assert record.explanation.summary in detail.text
+    assert record.explanation.recommended_next_step is not None
+    assert record.explanation.recommended_next_step in detail.text
+    assert "2 tool calls" in detail.text
+    repository.close()
+
+
+def test_run_detail_renders_fallback_explanation_provenance(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    record = explanation_record(
+        report,
+        source=ExplanationSource.FALLBACK,
+        summary="Deterministic fallback retained the recorded verdict.",
+        recommended_next_step=None,
+        tool_calls=0,
+    )
+    repository.save(report, explanation=record)
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert 'class="explanation-source explanation-source-fallback">FALLBACK</span>' in detail.text
+    assert record.explanation.summary in detail.text
+    assert "Recommended next step" not in detail.text
+    assert "0 tool calls" in detail.text
+    repository.close()
+
+
+def test_run_detail_renders_missing_explanation_state(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository.save(report)
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert "Grounded explanation" in detail.text
+    assert "No persisted explanation" in detail.text
+    assert "PROVIDER" not in detail.text
+    assert "FALLBACK" not in detail.text
+    repository.close()
+
+
+def test_run_detail_escapes_provider_explanation_content(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    record = explanation_record(
+        report,
+        summary='<script>alert("summary")</script>',
+        evidence_used=("<img src=x onerror=alert(1)>",),
+        finding_ids=("<script>finding</script>",),
+        recommended_next_step='<a href="https://example.invalid">continue</a>',
+    )
+    repository.save(report, explanation=record)
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert '<script>alert("summary")</script>' not in detail.text
+    assert "&lt;script&gt;alert(&#34;summary&#34;)&lt;/script&gt;" in detail.text
+    assert "<img src=x onerror=alert(1)>" not in detail.text
+    assert "&lt;img src=x onerror=alert(1)&gt;" in detail.text
+    assert '<a href="https://example.invalid">continue</a>' not in detail.text
+    assert "&lt;a href=&#34;https://example.invalid&#34;&gt;continue&lt;/a&gt;" in detail.text
+    repository.close()
+
+
+def test_run_detail_links_findings_and_only_mapped_evidence_citations(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/chain-diff"))
+    artifact = EvidenceArtifact(
+        artifact_id="artifact:linked",
+        artifact_type=ArtifactType.CONTEXT_EVIDENCE,
+        source="test",
+        collected_at=datetime(2026, 8, 13, tzinfo=UTC),
+        redacted=True,
+        data={"status": "persisted"},
+    )
+    finding = report.findings[0]
+    record = explanation_record(
+        report,
+        evidence_used=(artifact.artifact_id, "artifact:missing"),
+        finding_ids=(finding.finding_id,),
+    )
+    repository.save(report, artifacts=(artifact,), explanation=record)
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert (
+        f'<a class="citation-chip" href="#finding-{finding.check_id}">{finding.finding_id}</a>'
+        in detail.text
+    )
+    assert (
+        f'<a class="citation-chip" href="/runs/{report.run_id}/artifacts#artifact-linked">'
+        f"{artifact.artifact_id}</a>"
+    ) in detail.text
+    assert '<span class="citation-chip">artifact:missing</span>' in detail.text
+    assert 'href="#artifact:missing"' not in detail.text
+    repository.close()
+
+
+def test_run_detail_loads_persisted_explanation_without_recomputation(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    record = explanation_record(report)
+    repository.save(report, explanation=record)
+    client = TestClient(create_app(repository))
+
+    with (
+        patch.object(repository, "explanation", wraps=repository.explanation) as load,
+        patch("settlediff.domain.checks.run_checks") as run_checks,
+        patch("settlediff.agent.investigator.investigate") as investigate,
+    ):
+        detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    load.assert_called_once_with(report.run_id)
+    run_checks.assert_not_called()
+    investigate.assert_not_called()
+    repository.close()
+
+
 def test_event_task_rows_stop_polling_after_terminal_state(tmp_path: Path) -> None:
     repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
     report = replay_fixture(Path("fixtures/clean-success"))
@@ -151,6 +323,7 @@ def test_event_task_rows_stop_polling_after_terminal_state(tmp_path: Path) -> No
     complete.transition(RunState.AUTHORIZED)
     complete.transition(RunState.EXECUTING)
     complete.transition(RunState.VERIFYING)
+    complete.transition(RunState.EXPLAINING)
     complete.transition(RunState.COMPLETE)
     repository.save(report, events=complete.events)
 

@@ -108,12 +108,29 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
         rows = _evidence_rows(report)
         if differences:
             rows = tuple(row for row in rows if row.status is not CheckStatus.PASS)
+        explanation = repository.explanation(run_id)
         evidence_anchors = {row.check_id: f"evidence-{row.check_id}" for row in rows}
+        finding_anchors = {
+            finding.finding_id: f"finding-{finding.check_id}" for finding in report.findings
+        }
+        artifact_links = (
+            {
+                artifact.artifact_id: (
+                    f"/runs/{report.run_id}/artifacts#{_artifact_anchor(artifact.artifact_id)}"
+                )
+                for artifact in repository.artifacts(run_id)
+            }
+            if explanation is not None
+            else {}
+        )
         return templates.get_template("run_detail.html").render(
             report=report,
             rows=rows,
             differences=differences,
+            explanation_record=explanation,
             evidence_anchors=evidence_anchors,
+            finding_anchors=finding_anchors,
+            artifact_links=artifact_links,
         )
 
     app.get("/runs/{run_id}", response_class=HTMLResponse)(run_detail)
@@ -142,7 +159,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
         if repository.get(run_id) is None:
             raise HTTPException(status_code=404, detail="run not found")
         payloads = "".join(
-            f'<details id="{escape(artifact.artifact_id.replace(":", "-"), quote=True)}">'
+            f'<details id="{escape(_artifact_anchor(artifact.artifact_id), quote=True)}">'
             f"<summary>{escape(artifact.artifact_id)}</summary>"
             f"<pre>{escape(artifact.model_dump_json())}</pre></details>"
             for artifact in repository.artifacts(run_id)
@@ -156,6 +173,10 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
 
 def _latest_state(events: tuple[RunEvent, ...]) -> str:
     return events[-1].state.value if events else "no timeline"
+
+
+def _artifact_anchor(artifact_id: str) -> str:
+    return artifact_id.replace(":", "-")
 
 
 def _evidence_rows(report: MachineReport) -> tuple[EvidenceRow, ...]:
