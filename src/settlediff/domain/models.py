@@ -53,6 +53,11 @@ class Severity(StrEnum):
     HIGH = "high"
 
 
+class ExplanationSource(StrEnum):
+    PROVIDER = "provider"
+    FALLBACK = "fallback"
+
+
 class ArtifactType(StrEnum):
     SERVICE_CONTRACT = "service_contract"
     EXECUTION = "execution"
@@ -200,3 +205,10 @@ class InvestigationExplanation(CanonicalModel):
     finding_ids: tuple[NonEmptyStr, ...]
     deterministic_verdict: Verdict
     recommended_next_step: NonEmptyStr | None
+
+
+class ExplanationRecord(CanonicalModel):
+    schema_version: int = Field(default=1, ge=1)
+    explanation: InvestigationExplanation
+    source: ExplanationSource
+    tool_calls: int = Field(ge=0)

@@ -31,7 +31,14 @@ from settlediff.contextdev.client import (
     ContextEvidenceRequest,
     ContextEvidenceState,
 )
-from settlediff.domain.models import ArtifactType, MachineReport, Verdict
+from settlediff.domain.models import (
+    ArtifactType,
+    ExplanationRecord,
+    ExplanationSource,
+    InvestigationExplanation,
+    MachineReport,
+    Verdict,
+)
 from settlediff.domain.money import Money
 from settlediff.perflo.client import PerfloMutationUncertainError
 from settlediff.perflo.parser import PerfloSuccessEnvelope
@@ -43,10 +50,12 @@ def test_uncertain_execution_enters_evidence_only_recovery() -> None:
     timeline.transition(RunState.EXECUTING)
     timeline.transition(RunState.EVIDENCE_RECOVERY)
     timeline.transition(RunState.VERIFYING)
+    timeline.transition(RunState.EXPLAINING)
     timeline.transition(RunState.COMPLETE)
-    assert [event.state for event in timeline.events][-3:] == [
+    assert [event.state for event in timeline.events][-4:] == [
         RunState.EVIDENCE_RECOVERY,
         RunState.VERIFYING,
+        RunState.EXPLAINING,
         RunState.COMPLETE,
     ]
 
@@ -90,6 +99,8 @@ async def test_uncertain_execution_verifies_without_a_second_paid_attempt() -> N
     assert attempts == 1
     assert outcome.submission_uncertain
     assert outcome.events[-1].state is RunState.COMPLETE
+    assert outcome.explanation.source is ExplanationSource.FALLBACK
+    assert outcome.explanation.explanation.deterministic_verdict is report.verdict
     assert persisted == [event.state for event in outcome.events]
 
 
@@ -458,6 +469,118 @@ async def test_machine_report_bytes_do_not_depend_on_context_result(
     assert len(set(report_bytes)) == 1
 
 
+@pytest.mark.asyncio
+async def test_run_explains_only_after_machine_report_is_complete() -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    report_before = report.model_dump_json()
+    request = PaidExecutionRequest(
+        run_id=report.run_id,
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+    capability = PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    )
+    artifact_ids = frozenset({"artifact:contract", "artifact:activity"})
+    calls: list[str] = []
+
+    async def execute(
+        _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
+    ) -> None:
+        calls.append("execute")
+
+    async def verify() -> MachineReport:
+        calls.append("verify")
+        return report
+
+    async def explain(
+        received_report: MachineReport, received_artifact_ids: frozenset[str]
+    ) -> ExplanationRecord:
+        calls.append("explain")
+        assert received_report is report
+        assert received_artifact_ids == artifact_ids
+        return ExplanationRecord(
+            explanation=InvestigationExplanation(
+                run_id=report.run_id,
+                summary="The deterministic checks verified the synthetic purchase.",
+                evidence_used=("artifact:contract",),
+                finding_ids=(report.findings[0].finding_id,),
+                deterministic_verdict=report.verdict,
+                recommended_next_step=None,
+            ),
+            source=ExplanationSource.PROVIDER,
+            tool_calls=1,
+        )
+
+    outcome = await RunInvestigation(
+        execute,
+        verify,
+        explain=explain,
+        artifact_ids=lambda: artifact_ids,
+    ).execute(LiveRunCommand(request, capability))
+
+    assert calls == ["execute", "verify", "explain"]
+    assert report.model_dump_json() == report_before
+    assert outcome.report is report
+    assert outcome.explanation.source is ExplanationSource.PROVIDER
+    assert outcome.explanation.tool_calls == 1
+    assert RunState.EXPLAINING in [event.state for event in outcome.events]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["raise", "contradict"])
+async def test_explanation_failure_returns_grounded_fallback(failure: str) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    request = PaidExecutionRequest(
+        run_id=report.run_id,
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+    capability = PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    )
+
+    async def execute(
+        _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
+    ) -> None:
+        pass
+
+    async def verify() -> MachineReport:
+        return report
+
+    async def explain(
+        _received_report: MachineReport, _artifact_ids: frozenset[str]
+    ) -> ExplanationRecord:
+        if failure == "raise":
+            raise RuntimeError("synthetic provider failure")
+        return ExplanationRecord(
+            explanation=InvestigationExplanation(
+                run_id=report.run_id,
+                summary="Contradictory provider output.",
+                evidence_used=(),
+                finding_ids=(),
+                deterministic_verdict=Verdict.PAID_FAILURE,
+                recommended_next_step=None,
+            ),
+            source=ExplanationSource.PROVIDER,
+            tool_calls=1,
+        )
+
+    outcome = await RunInvestigation(execute, verify, explain=explain).execute(
+        LiveRunCommand(request, capability)
+    )
+
+    assert outcome.report is report
+    assert outcome.explanation.source is ExplanationSource.FALLBACK
+    assert outcome.explanation.tool_calls == 0
+    assert outcome.explanation.explanation.deterministic_verdict is report.verdict
+    assert outcome.explanation.explanation.finding_ids == tuple(
+        finding.finding_id for finding in report.findings
+    )
+
+
 class StubSpan:
     def __init__(self, names: list[str], name: str) -> None:
         self._names = names
@@ -523,12 +646,14 @@ async def test_run_emits_safe_state_and_boundary_telemetry() -> None:
         "settlediff.run",
         "settlediff.perflo.execute",
         "settlediff.verify",
+        "settlediff.agent.explain",
     ]
     assert [name for name, _attributes in telemetry.events] == [
         "run.preflight",
         "run.authorized",
         "run.executing",
         "run.verifying",
+        "run.explaining",
         "run.complete",
     ]
     assert all(attributes["run_id"] == report.run_id for _, attributes in telemetry.events)

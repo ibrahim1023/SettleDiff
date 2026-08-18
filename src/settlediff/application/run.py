@@ -12,6 +12,11 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
+from settlediff.agent.grounding import (
+    ExplanationGroundingError,
+    fallback_explanation,
+    validate_explanation,
+)
 from settlediff.application.auth import (
     ConsumedPaidAuthorization,
     PaidExecutionCapability,
@@ -34,6 +39,8 @@ from settlediff.domain.models import (
     ArtifactType,
     EvidenceArtifact,
     ExecutionRecord,
+    ExplanationRecord,
+    ExplanationSource,
     MachineReport,
     PurchaseIntent,
 )
@@ -50,6 +57,7 @@ class RunState(StrEnum):
     EXECUTING = "executing"
     EVIDENCE_RECOVERY = "evidence_recovery"
     VERIFYING = "verifying"
+    EXPLAINING = "explaining"
     COMPLETE = "complete"
     REFUSED = "refused"
     FAILED = "failed"
@@ -71,7 +79,8 @@ _ALLOWED: dict[RunState, set[RunState]] = {
     RunState.AUTHORIZED: {RunState.EXECUTING, RunState.REFUSED},
     RunState.EXECUTING: {RunState.VERIFYING, RunState.EVIDENCE_RECOVERY, RunState.FAILED},
     RunState.EVIDENCE_RECOVERY: {RunState.VERIFYING, RunState.FAILED},
-    RunState.VERIFYING: {RunState.COMPLETE, RunState.FAILED},
+    RunState.VERIFYING: {RunState.EXPLAINING, RunState.FAILED},
+    RunState.EXPLAINING: {RunState.COMPLETE, RunState.FAILED},
     RunState.COMPLETE: set(),
     RunState.REFUSED: set(),
     RunState.FAILED: set(),
@@ -109,6 +118,7 @@ class LiveRunCommand:
 @dataclass(frozen=True)
 class InvestigationOutcome:
     report: MachineReport
+    explanation: ExplanationRecord
     events: tuple[RunEvent, ...]
     submission_uncertain: bool
 
@@ -323,11 +333,16 @@ class RunInvestigation:
         verify: Callable[[], Awaitable[MachineReport]],
         persist_event: Callable[[RunEvent], Awaitable[None]] | None = None,
         telemetry: TelemetryPort | None = None,
+        explain: Callable[[MachineReport, frozenset[str]], Awaitable[ExplanationRecord]]
+        | None = None,
+        artifact_ids: Callable[[], frozenset[str]] | None = None,
     ) -> None:
         self._execute_paid = execute_paid
         self._verify = verify
         self._persist_event = persist_event
         self._telemetry = telemetry
+        self._explain = explain
+        self._artifact_ids = artifact_ids
 
     async def execute(self, command: LiveRunCommand) -> InvestigationOutcome:
         run_id = command.request.run_id
@@ -350,9 +365,13 @@ class RunInvestigation:
             with self._span("settlediff.verify", {"run_id": run_id, "component": "domain"}):
                 report = await self._verify()
             self._record_metrics(report)
+            await self._transition(timeline, RunState.EXPLAINING, run_id)
+            with self._span("settlediff.agent.explain", {"run_id": run_id, "component": "agent"}):
+                explanation = await self._explain_report(report)
             await self._transition(timeline, RunState.COMPLETE, run_id)
             return InvestigationOutcome(
                 report=report,
+                explanation=explanation,
                 events=timeline.events,
                 submission_uncertain=uncertain,
             )
@@ -373,6 +392,24 @@ class RunInvestigation:
         if self._telemetry is None:
             return NullTelemetrySpan()
         return self._telemetry.span(name, attributes)
+
+    async def _explain_report(self, report: MachineReport) -> ExplanationRecord:
+        artifact_ids: frozenset[str] = (
+            self._artifact_ids() if self._artifact_ids is not None else frozenset()
+        )
+        fallback = ExplanationRecord(
+            explanation=fallback_explanation(report, set(artifact_ids)),
+            source=ExplanationSource.FALLBACK,
+            tool_calls=0,
+        )
+        if self._explain is None:
+            return fallback
+        try:
+            record = await self._explain(report, artifact_ids)
+            explanation = validate_explanation(record.explanation, report, set(artifact_ids))
+        except (ExplanationGroundingError, RuntimeError, TimeoutError, ValueError):
+            return fallback
+        return record.model_copy(update={"explanation": explanation})
 
     def _record_metrics(self, report: MachineReport) -> None:
         if self._telemetry is None:

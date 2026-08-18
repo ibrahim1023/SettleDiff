@@ -32,6 +32,19 @@ class InvestigationState:
     artifact_ids: frozenset[str]
 
 
+def build_investigation_prompt(report: MachineReport) -> str:
+    """Describe immutable findings without sending raw evidence or identifiers."""
+    findings = "\n".join(
+        f"- {finding.finding_id} [{finding.status.value}] {finding.message}"
+        for finding in report.findings
+    )
+    return (
+        f"Explain deterministic verdict={report.verdict.value} for run={report.run_id}.\n"
+        f"Immutable findings:\n{findings}\n"
+        "Use evidence tools only when needed and cite only returned artifact IDs."
+    )
+
+
 def build_investigator(model: Model) -> Agent[InvestigationDependencies, InvestigationResult]:
     """Build a constant, evidence-only tool set; it has no payment or verdict tool."""
     agent = Agent(
@@ -73,9 +86,7 @@ async def investigate(
 ) -> InvestigationResult:
     """Run with fixed request/tool/token limits and a deterministic fallback."""
     agent = build_investigator(model)
-    prompt = (
-        f"Explain deterministic verdict {state.report.verdict.value} for run {state.report.run_id}."
-    )
+    prompt = build_investigation_prompt(state.report)
     try:
         async with asyncio.timeout(timeout_seconds):
             response = await agent.run(

@@ -12,6 +12,8 @@ from settlediff.domain.models import (
     EvidenceArtifact,
     ExecutionRecord,
     ExpectedContract,
+    ExplanationRecord,
+    ExplanationSource,
     Finding,
     InvestigationExplanation,
     LedgerRecord,
@@ -207,6 +209,28 @@ def test_machine_report_round_trips_through_versioned_json() -> None:
     report = machine_report_fixture()
 
     assert MachineReport.model_validate_json(report.model_dump_json()) == report
+
+
+def test_explanation_record_round_trips_with_explicit_provenance() -> None:
+    explanation = InvestigationExplanation(
+        run_id="run_syn_001",
+        summary="Deterministic verification produced a warning.",
+        evidence_used=("artifact_execution_001",),
+        finding_ids=("finding_chain_001",),
+        deterministic_verdict=Verdict.VERIFIED_WITH_WARNINGS,
+        recommended_next_step=None,
+    )
+    record = ExplanationRecord(
+        explanation=explanation,
+        source=ExplanationSource.PROVIDER,
+        tool_calls=2,
+    )
+
+    restored = ExplanationRecord.model_validate_json(record.model_dump_json())
+
+    assert restored == record
+    assert restored.source is ExplanationSource.PROVIDER
+    assert restored.tool_calls == 2
 
 
 def test_finding_money_round_trips_as_money_not_generic_json() -> None:
