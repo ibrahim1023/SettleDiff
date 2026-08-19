@@ -11,6 +11,7 @@ import pytest
 from settlediff.agent.grounding import fallback_explanation
 from settlediff.application.bundle import (
     BundleError,
+    CompatibilityMetadata,
     EvidenceBundle,
     export_bundle,
     load_bundle,
@@ -78,6 +79,14 @@ def test_export_load_verify_round_trip(tmp_path: Path) -> None:
     assert loaded == exported
     assert loaded.events == (event,)
     assert loaded.explanation == explanation
+    assert loaded.compatibility == CompatibilityMetadata(
+        settlediff_version="0.1.0",
+        report_schema_version=1,
+        database_schema_version=3,
+        contextdev_api_path="/web/scrape/markdown",
+        hyperfusion_model=None,
+        perflo_cli_version=None,
+    )
     assert all(artifact.redacted for artifact in loaded.artifacts)
     assert verify_bundle(loaded) == report
     repository.close()
@@ -149,6 +158,14 @@ def test_verify_rejects_unredacted_artifact() -> None:
         explanation=None,
         events=(),
         artifacts=(artifact,),
+        compatibility=CompatibilityMetadata(
+            settlediff_version="0.1.0",
+            report_schema_version=1,
+            database_schema_version=3,
+            contextdev_api_path="/web/scrape/markdown",
+            hyperfusion_model=None,
+            perflo_cli_version=None,
+        ),
         integrity="0" * 64,
     )
 

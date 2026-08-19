@@ -7,8 +7,9 @@ from collections.abc import Mapping
 from hashlib import sha256
 from typing import Annotated, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
+from settlediff import __version__
 from settlediff.application.run import RunEvent
 from settlediff.domain.models import EvidenceArtifact, ExplanationRecord, MachineReport, NonEmptyStr
 from settlediff.domain.redaction import redact_artifact
@@ -21,6 +22,17 @@ class BundleError(ValueError):
     """A bundle could not be exported, loaded, or deterministically verified."""
 
 
+class CompatibilityMetadata(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    settlediff_version: NonEmptyStr
+    report_schema_version: int = Field(ge=1)
+    database_schema_version: int = Field(ge=1)
+    contextdev_api_path: NonEmptyStr
+    hyperfusion_model: NonEmptyStr | None
+    perflo_cli_version: NonEmptyStr | None
+
+
 class EvidenceBundle(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
@@ -30,6 +42,7 @@ class EvidenceBundle(BaseModel):
     explanation: ExplanationRecord | None
     events: tuple[RunEvent, ...]
     artifacts: tuple[EvidenceArtifact, ...]
+    compatibility: CompatibilityMetadata
     integrity: Sha256Digest
 
 
@@ -76,6 +89,14 @@ def export_bundle(repository: BundleRepository, run_id: str) -> EvidenceBundle:
         explanation=repository.explanation(run_id),
         events=repository.events(run_id),
         artifacts=artifacts,
+        compatibility=CompatibilityMetadata(
+            settlediff_version=__version__,
+            report_schema_version=report.schema_version,
+            database_schema_version=3,
+            contextdev_api_path="/web/scrape/markdown",
+            hyperfusion_model=None,
+            perflo_cli_version=None,
+        ),
         integrity="0" * 64,
     )
     return bundle.model_copy(update={"integrity": _digest(bundle)})
@@ -87,6 +108,8 @@ def verify_bundle(bundle: EvidenceBundle) -> MachineReport:
         raise BundleError("bundle integrity digest does not match its payload")
 
     report = bundle.report
+    if bundle.compatibility.report_schema_version != report.schema_version:
+        raise BundleError("bundle compatibility metadata does not match report schema")
     if bundle.run_id != report.run_id or report.run_id != report.intent.run_id:
         raise BundleError("bundle, report, and intent run IDs do not match")
     if any(not artifact.redacted for artifact in bundle.artifacts):
