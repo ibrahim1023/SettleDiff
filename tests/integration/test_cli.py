@@ -274,6 +274,7 @@ def test_show_renders_persisted_explanation_without_recomputing(tmp_path: Path) 
     assert result.exit_code == 0
     assert "Explanation (fallback):" in result.stdout
     assert explanation.summary in result.stdout
+    assert "Usage: requests=0, tool_calls=0, input_tokens=0, output_tokens=0" in result.stdout
 
 
 def test_json_show_renders_persisted_explanation(tmp_path: Path) -> None:

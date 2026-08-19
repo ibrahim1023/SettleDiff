@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}SettleDiff diagnostics{% endblock %}
+{% block content %}
+  <p class="eyebrow">Local compatibility</p>
+  <h1>SettleDiff {{ version }}</h1>
+  <p>Safe contract metadata for this installed application. Unknown live-provider values remain explicit.</p>
+  <section class="panel">
+    <h2>Schema versions</h2>
+    <dl class="context-metadata">
+      <div><dt>Report schema</dt><dd>{{ report_schema }}</dd></div>
+      <div><dt>Database schema</dt><dd>{{ database_schema }}</dd></div>
+      <div><dt>Bundle schema</dt><dd>{{ bundle_schema }}</dd></div>
+    </dl>
+  </section>
+  <section class="panel">
+    <h2>External contracts</h2>
+    <dl class="context-metadata">
+      <div><dt>Context.dev API path</dt><dd>{{ contextdev_api_path }}</dd></div>
+      <div><dt>Hyperfusion model</dt><dd>{{ hyperfusion_model }}</dd></div>
+      <div><dt>Perflo CLI version</dt><dd>{{ perflo_version }}</dd></div>
+    </dl>
+  </section>
+{% endblock %}

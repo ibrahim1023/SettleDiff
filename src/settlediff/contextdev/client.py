@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, model_v
 from settlediff.domain.models import CanonicalModel, ExecutionRecord, NonEmptyStr, UtcDatetime
 from settlediff.domain.redaction import redact_embedded_identifiers
 
+CONTEXTDEV_API_PATH = "/web/scrape/markdown"
 DEFAULT_MAX_BODY_BYTES = 1_048_576
 MAX_EXCERPT_CHARS = 2_000
 _SOURCE_FAILURE_STATUSES = frozenset({400, 404, 408, 413, 415})
@@ -208,7 +209,7 @@ class ContextDevClient:
     ) -> None:
         if not _is_https_url(base_url):
             raise ValueError("Context.dev base URL must be an absolute HTTPS URL")
-        self._endpoint = f"{base_url.rstrip('/')}/web/scrape/markdown"
+        self._endpoint = f"{base_url.rstrip('/')}{CONTEXTDEV_API_PATH}"
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._client = httpx.AsyncClient(
             transport=transport,

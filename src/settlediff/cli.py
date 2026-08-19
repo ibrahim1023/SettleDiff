@@ -109,6 +109,13 @@ def _render(
         typer.echo(f"{finding.status}: {finding.message}")
     if explanation is not None:
         typer.echo(f"Explanation ({explanation.source.value}): {explanation.explanation.summary}")
+        typer.echo(
+            "Usage: "
+            f"requests={explanation.model_requests}, "
+            f"tool_calls={explanation.tool_calls}, "
+            f"input_tokens={explanation.input_tokens}, "
+            f"output_tokens={explanation.output_tokens}"
+        )
     if recovery is not None:
         typer.echo(f"Submission: {recovery.state.value}")
         proof = "yes" if recovery.proof_of_non_submission else "no"

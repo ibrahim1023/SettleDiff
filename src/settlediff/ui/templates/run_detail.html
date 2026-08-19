@@ -99,7 +99,18 @@
             <p>{{ explanation.recommended_next_step }}</p>
           </div>
         {% endif %}
-        <p class="tool-call-count">{{ explanation_record.tool_calls }} tool call{% if explanation_record.tool_calls != 1 %}s{% endif %}</p>
+        <dl class="usage-metadata">
+          <div><dt>Model requests</dt><dd>{{ explanation_record.model_requests }}</dd></div>
+          <div><dt>Tool calls</dt><dd>{{ explanation_record.tool_calls }}</dd></div>
+          <div><dt>Input tokens</dt><dd>{{ explanation_record.input_tokens }}</dd></div>
+          <div><dt>Output tokens</dt><dd>{{ explanation_record.output_tokens }}</dd></div>
+        </dl>
+        {% if explanation_record.rejected_output %}
+          <details class="rejected-output">
+            <summary>Rejected provider output diagnostic</summary>
+            <pre>{{ explanation_record.rejected_output }}</pre>
+          </details>
+        {% endif %}
         <div class="explanation-citations" aria-label="Explanation citations">
           <div>
             <h3>Cited findings</h3>

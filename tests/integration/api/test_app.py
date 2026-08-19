@@ -45,6 +45,22 @@ def explanation_record(
     )
 
 
+def test_diagnostics_show_safe_contract_versions(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    client = TestClient(create_app(repository))
+
+    response = client.get("/diagnostics")
+
+    assert response.status_code == 200
+    assert "SettleDiff 0.1.0" in response.text
+    assert "Report schema" in response.text and ">1<" in response.text
+    assert "Database schema" in response.text and ">3<" in response.text
+    assert "Bundle schema" in response.text and ">2<" in response.text
+    assert "/web/scrape/markdown" in response.text
+    assert "Not recorded" in response.text
+    repository.close()
+
+
 def test_root_redirects_to_run_records(tmp_path: Path) -> None:
     repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
     client = TestClient(create_app(repository))
@@ -284,7 +300,10 @@ def test_run_detail_renders_provider_explanation(tmp_path: Path) -> None:
     assert record.explanation.summary in detail.text
     assert record.explanation.recommended_next_step is not None
     assert record.explanation.recommended_next_step in detail.text
-    assert "2 tool calls" in detail.text
+    assert "Model requests" in detail.text
+    assert "Tool calls" in detail.text
+    assert "Input tokens" in detail.text
+    assert "Output tokens" in detail.text
     repository.close()
 
 
@@ -307,7 +326,8 @@ def test_run_detail_renders_fallback_explanation_provenance(tmp_path: Path) -> N
     assert 'class="explanation-source explanation-source-fallback">FALLBACK</span>' in detail.text
     assert record.explanation.summary in detail.text
     assert "Recommended next step" not in detail.text
-    assert "0 tool calls" in detail.text
+    assert "Tool calls" in detail.text
+    assert "<dd>0</dd>" in detail.text
     repository.close()
 
 
