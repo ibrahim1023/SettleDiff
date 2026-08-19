@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
+from ipaddress import ip_address
 from typing import Annotated
+from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, StringConstraints, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -63,6 +66,33 @@ class Settings(BaseSettings):
     contextdev_base_url: str = "https://api.context.dev/v1"
     contextdev_api_key: SecretStr | None = None
     otlp_endpoint: str | None = None
+
+    @field_validator("otlp_endpoint")
+    @classmethod
+    def validate_otlp_endpoint(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return value
+        try:
+            parsed = urlparse(value)
+            host = parsed.hostname
+        except ValueError as error:
+            raise ValueError("OTLP endpoint must be an eligible HTTP(S) URL") from error
+        if (
+            host is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("OTLP endpoint must not contain credentials, query, or fragment")
+        if parsed.scheme == "https":
+            return value
+        loopback = host.casefold() == "localhost"
+        with suppress(ValueError):
+            loopback = loopback or ip_address(host).is_loopback
+        if parsed.scheme != "http" or not loopback:
+            raise ValueError("OTLP endpoint requires HTTPS unless it is loopback HTTP")
+        return value
 
     def require_contextdev(self) -> ContextDevConfig:
         """Return the Context.dev configuration required by a live investigation."""
