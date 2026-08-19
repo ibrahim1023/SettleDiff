@@ -201,7 +201,7 @@ def test_load_rejects_unknown_schema_version(tmp_path: Path) -> None:
     report = replay_fixture(FIXTURES / "clean-success")
     repository.save(report)
     payload = _json(export_bundle(repository, report.run_id))
-    payload["schema_version"] = 2
+    payload["schema_version"] = 1
 
     with pytest.raises(BundleError, match="bundle"):
         load_bundle(json.dumps(payload).encode())

@@ -36,7 +36,7 @@ class CompatibilityMetadata(BaseModel):
 class EvidenceBundle(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     run_id: NonEmptyStr
     report: MachineReport
     explanation: ExplanationRecord | None
