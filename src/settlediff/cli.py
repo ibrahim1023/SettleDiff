@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -279,6 +280,85 @@ def show(
         typer.echo(f"Run {run_id} was not found.", err=True)
         raise typer.Exit(code=1)
     _render(report, json_mode, explanation)
+
+
+_DURATION = re.compile(r"([0-9]+)([dhm])")
+
+
+def _parse_duration(value: str) -> timedelta:
+    """Parse a strict retention duration like 30d, 12h, or 45m."""
+    match = _DURATION.fullmatch(value)
+    if match is None:
+        raise typer.BadParameter(
+            "duration must be a whole number followed by d, h, or m (e.g. 30d)"
+        )
+    amount = int(match.group(1))
+    if amount == 0:
+        raise typer.BadParameter("duration must be greater than zero")
+    unit = match.group(2)
+    if unit == "d":
+        return timedelta(days=amount)
+    if unit == "h":
+        return timedelta(hours=amount)
+    return timedelta(minutes=amount)
+
+
+@app.command("delete")
+def delete_run(
+    run_id: str,
+    database: Path = DATABASE_OPTION,
+    yes: bool = typer.Option(False, "--yes", help="Skip the interactive confirmation."),
+) -> None:
+    """Delete one persisted run after an explicit confirmation."""
+    repository = SQLiteReportRepository(database)
+    try:
+        report = repository.get(run_id)
+        if report is None:
+            typer.echo(f"Run {run_id} was not found.", err=True)
+            raise typer.Exit(code=1)
+        if not yes:
+            typer.echo(f"Run: {report.run_id}")
+            typer.echo(f"Verdict: {report.verdict.value}")
+            typer.echo(f"Created: {report.intent.created_at.isoformat()}")
+            if not typer.confirm(f"Delete run {report.run_id}?"):
+                typer.echo("Deletion cancelled; nothing was deleted.")
+                raise typer.Exit(code=1)
+        repository.delete(report.run_id)
+    finally:
+        repository.close()
+    typer.echo(f"Deleted run {run_id}.")
+
+
+@app.command()
+def purge(
+    database: Path = DATABASE_OPTION,
+    older_than: str = typer.Option(
+        ..., "--older-than", help="Retention cutoff as a strict duration like 30d, 12h, or 45m."
+    ),
+    apply: bool = typer.Option(False, "--apply", help="Delete instead of only listing runs."),
+) -> None:
+    """Delete persisted runs older than a retention cutoff; dry-run by default."""
+    cutoff = datetime.now(UTC) - _parse_duration(older_than)
+    repository = SQLiteReportRepository(database)
+    try:
+        stale = sorted(
+            (report for report in repository.list() if report.intent.created_at < cutoff),
+            key=lambda report: (report.intent.created_at, report.run_id),
+        )
+        if apply:
+            for report in stale:
+                repository.delete(report.run_id)
+    finally:
+        repository.close()
+    if not stale:
+        typer.echo(f"No runs older than {older_than}; nothing to delete.")
+        return
+    for report in stale:
+        typer.echo(f"{report.run_id} {report.verdict.value}")
+    if not apply:
+        typer.echo(f"Dry run: {len(stale)} run(s) would be deleted; pass --apply to delete them.")
+    else:
+        typer.echo(f"Purged {len(stale)} run(s).")
 
 
 @app.command()

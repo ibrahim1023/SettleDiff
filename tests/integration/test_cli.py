@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -12,7 +13,7 @@ from typer.testing import CliRunner
 
 from settlediff.agent.grounding import fallback_explanation
 from settlediff.application.replay import replay_fixture
-from settlediff.application.run import LiveEvidenceCollector
+from settlediff.application.run import LiveEvidenceCollector, RunEvent, RunState
 from settlediff.cli import app
 from settlediff.config import Settings
 from settlediff.contextdev.client import ContextEvidencePort
@@ -309,6 +310,157 @@ def test_show_renders_persisted_report(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0
     assert "VERIFIED" in result.stdout
+
+
+def _persisted_fixture_report(tmp_path: Path) -> tuple[Path, str]:
+    """Persist the clean-success fixture (created 2026-08-12) and return (database, run_id)."""
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(database)
+    repository.save(report)
+    repository.close()
+    return database, report.run_id
+
+
+def _read_report(database: Path, run_id: str) -> object:
+    repository = SQLiteReportRepository(database)
+    try:
+        return repository.get(run_id)
+    finally:
+        repository.close()
+
+
+def test_delete_shows_run_details_and_cancels_without_deleting(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+
+    result = runner.invoke(app, ["delete", run_id, "--database", str(database)], input="n\n")
+
+    assert result.exit_code == 1
+    assert run_id in result.stdout
+    assert "VERIFIED" in result.stdout
+    assert "2026-08-12" in result.stdout
+    assert _read_report(database, run_id) is not None
+
+
+def test_delete_confirmed_removes_the_run(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+
+    result = runner.invoke(app, ["delete", run_id, "--database", str(database)], input="y\n")
+
+    assert result.exit_code == 0
+    assert _read_report(database, run_id) is None
+
+
+def test_delete_yes_skips_confirmation(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+
+    result = runner.invoke(app, ["delete", run_id, "--database", str(database), "--yes"])
+
+    assert result.exit_code == 0
+    assert _read_report(database, run_id) is None
+
+
+def test_delete_missing_run_exits_1(tmp_path: Path) -> None:
+    database, _run_id = _persisted_fixture_report(tmp_path)
+
+    result = runner.invoke(app, ["delete", "syn_run_missing", "--database", str(database), "--yes"])
+
+    assert result.exit_code == 1
+    assert "syn_run_missing" in result.stderr
+    assert "not found" in result.stderr
+
+
+def test_delete_cascades_events_artifacts_and_explanations(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/clean-success"))
+    artifact = EvidenceArtifact(
+        artifact_id=f"{report.run_id}:execution",
+        artifact_type=ArtifactType.EXECUTION,
+        source="fixture",
+        collected_at=datetime(2026, 8, 12, tzinfo=UTC),
+        redacted=True,
+        data={"transaction_hash": "syn_hash_cascade"},
+    )
+    events = (
+        RunEvent(state=RunState.PREFLIGHT, occurred_at=datetime(2026, 8, 12, tzinfo=UTC)),
+        RunEvent(state=RunState.COMPLETE, occurred_at=datetime(2026, 8, 12, tzinfo=UTC)),
+    )
+    record = ExplanationRecord(
+        explanation=fallback_explanation(report, {artifact.artifact_id}),
+        source=ExplanationSource.FALLBACK,
+        tool_calls=0,
+    )
+    repository = SQLiteReportRepository(database)
+    repository.save(report, events=events, artifacts=(artifact,), explanation=record)
+    repository.close()
+
+    result = runner.invoke(app, ["delete", report.run_id, "--database", str(database), "--yes"])
+    assert result.exit_code == 0
+
+    connection = sqlite3.connect(database)
+    try:
+        for table in ("reports", "run_events", "artifacts", "explanations"):
+            row = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            assert row is not None and row[0] == 0, f"{table} still holds deleted run data"
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("duration", ["later", "30", "1w", "0d", "0h", "-5d", "12H", "1.5d", ""])
+def test_purge_rejects_invalid_durations_before_any_deletion(tmp_path: Path, duration: str) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+
+    result = runner.invoke(
+        app, ["purge", "--database", str(database), "--older-than", duration, "--apply"]
+    )
+
+    assert result.exit_code == 2
+    assert _read_report(database, run_id) is not None
+
+
+def test_purge_dry_run_lists_runs_without_deleting(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+
+    result = runner.invoke(app, ["purge", "--database", str(database), "--older-than", "1d"])
+
+    assert result.exit_code == 0
+    assert run_id in result.stdout
+    assert "VERIFIED" in result.stdout
+    assert _read_report(database, run_id) is not None
+
+
+def test_purge_apply_deletes_only_runs_older_than_the_cutoff(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+    recent = replay_fixture(Path("fixtures/clean-success")).model_copy(
+        update={
+            "run_id": "syn_run_recent",
+            "intent": replay_fixture(Path("fixtures/clean-success")).intent.model_copy(
+                update={"run_id": "syn_run_recent", "created_at": datetime.now(UTC)}
+            ),
+        }
+    )
+    repository = SQLiteReportRepository(database)
+    repository.save(recent)
+    repository.close()
+
+    result = runner.invoke(
+        app, ["purge", "--database", str(database), "--older-than", "1d", "--apply"]
+    )
+
+    assert result.exit_code == 0
+    assert run_id in result.stdout
+    assert "syn_run_recent" not in result.stdout
+    assert _read_report(database, run_id) is None
+    assert _read_report(database, "syn_run_recent") is not None
+
+
+def test_purge_empty_result_is_a_clear_no_op(tmp_path: Path) -> None:
+    database, _run_id = _persisted_fixture_report(tmp_path)
+
+    result = runner.invoke(app, ["purge", "--database", str(database), "--older-than", "10000d"])
+
+    assert result.exit_code == 0
+    assert "no runs" in result.stdout.lower() or "nothing" in result.stdout.lower()
 
 
 def test_serve_is_loopback_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
