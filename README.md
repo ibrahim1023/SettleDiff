@@ -12,15 +12,14 @@ intent → contract → execution → receipt → service outcome → activity r
 
 ## Status
 
-The current package version is **0.1.0**. The project license remains unresolved, so SettleDiff
-must not be published or otherwise released publicly.
+The current package version is **0.1.0** and the project is available under the [MIT License](LICENSE).
 
 The 12-phase MVP is implemented. It includes strict versioned evidence models, exact money
 semantics, recursive redaction, bounded provider parsing, deterministic Activity matching,
 independent verification checks, verdict precedence, fully offline fixture replay, a safe Perflo
 subprocess boundary, an explicitly authorized live-run state machine, SQLite report storage, and a
 loopback-only debugger UI. Required live Context.dev evidence and private-by-default OpenTelemetry
-are also available. Hyperfusion's opt-in compatibility probe passed on 2026-08-13 with
+are also available. Hyperfusion's opt-in compatibility probe was revalidated on 2026-08-19 with
 `openai/gpt-oss-120b`: structured output, tool calling, and tool-result continuation are compatible
 with the configured profile.
 
@@ -52,8 +51,7 @@ uv tool install dist/settlediff-0.1.0-py3-none-any.whl
 settlediff --version
 ```
 
-The version command prints `settlediff 0.1.0`. Do not upload the wheel to a package index or make a
-public release while the project license remains unresolved.
+The version command prints `settlediff 0.1.0`. Build and inspect release artifacts locally before selecting any public distribution channel.
 
 ## 60-second fixture demo
 

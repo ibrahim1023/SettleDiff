@@ -69,6 +69,8 @@ def test_python_and_package_contract() -> None:
     config = load_project_config()
     project = object_mapping(config["project"])
     assert project["requires-python"] == ">=3.12,<3.14"
+    assert project["license"] == "MIT"
+    assert (ROOT / "LICENSE").read_text().startswith("MIT License")
     assert object_mapping(project["scripts"]) == {"settlediff": "settlediff.cli:app"}
     assert __version__ == project["version"] == version("settlediff")
 
