@@ -115,6 +115,12 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
         async def get_activity(self) -> PerfloSuccessEnvelope:
             raise AssertionError("must not read activity when authorization is declined")
 
+        async def get_execution(self) -> PerfloSuccessEnvelope:
+            raise AssertionError("must not read execution when authorization is declined")
+
+        async def transaction_status(self, _hash: str) -> PerfloSuccessEnvelope:
+            raise AssertionError("must not read transaction status when authorization is declined")
+
     monkeypatch.setattr("settlediff.cli.Settings", live_settings)
     monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
     result = runner.invoke(
@@ -125,6 +131,9 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
     assert result.exit_code == 1
     assert calls == ["check", "schema"]
     assert "Body digest:" in result.stdout
+    assert "Investigation budget:" in result.stdout
+    assert "Context.dev calls: 1" in result.stdout
+    assert "model requests: 1" in result.stdout
 
 
 def test_transaction_handle_comes_only_from_captured_execution_evidence() -> None:

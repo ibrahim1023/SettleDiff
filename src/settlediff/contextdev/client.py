@@ -43,6 +43,7 @@ class ContextEvidenceState(StrEnum):
     SOURCE_UNREACHABLE = "SOURCE_UNREACHABLE"
     PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
     PROTOCOL_ERROR = "PROTOCOL_ERROR"
+    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
 
 
 class ContextEvidenceDiagnostic(StrEnum):
@@ -53,6 +54,7 @@ class ContextEvidenceDiagnostic(StrEnum):
     SOURCE_SCRAPE_FAILED = "source_scrape_failed"
     PROVIDER_REQUEST_FAILED = "provider_request_failed"
     PROVIDER_RESPONSE_INVALID = "provider_response_invalid"
+    BUDGET_EXHAUSTED = "budget_exhausted"
 
 
 class ContextEvidenceErrorClass(StrEnum):
@@ -102,6 +104,7 @@ class ContextEvidenceRecord(CanonicalModel):
             ContextEvidenceState.PROTOCOL_ERROR: {
                 ContextEvidenceDiagnostic.PROVIDER_RESPONSE_INVALID
             },
+            ContextEvidenceState.BUDGET_EXHAUSTED: {ContextEvidenceDiagnostic.BUDGET_EXHAUSTED},
         }
         if self.diagnostic not in diagnostics[self.state]:
             raise ValueError("diagnostic does not match Context evidence state")

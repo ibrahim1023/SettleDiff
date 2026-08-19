@@ -14,6 +14,7 @@ from settlediff.application.auth import (
     PaidExecutionCapability,
     PaidExecutionRequest,
 )
+from settlediff.application.budget import InvestigationBudgetState
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
     LiveEvidenceCollector,
@@ -395,7 +396,10 @@ FAILED_EXECUTION: JsonValue = {
 
 
 def failing_collector(
-    contextdev: StubContextDev, *, execution: JsonValue = FAILED_EXECUTION
+    contextdev: StubContextDev,
+    *,
+    execution: JsonValue = FAILED_EXECUTION,
+    budget: InvestigationBudgetState | None = None,
 ) -> LiveEvidenceCollector:
     class FakePerflo:
         async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
@@ -423,7 +427,7 @@ def failing_collector(
                 f"transaction status is not used for a certain submission: {transaction_hash}"
             )
 
-    return LiveEvidenceCollector(FakePerflo(), contextdev=contextdev)
+    return LiveEvidenceCollector(FakePerflo(), contextdev=contextdev, budget=budget)
 
 
 async def run_failing_collector(collector: LiveEvidenceCollector) -> MachineReport:
@@ -794,6 +798,135 @@ async def test_explanation_failure_returns_grounded_fallback(failure: str) -> No
     assert outcome.explanation.explanation.finding_ids == tuple(
         finding.finding_id for finding in report.findings
     )
+
+
+@pytest.mark.asyncio
+async def test_context_budget_exhaustion_records_an_explicit_evidence_state() -> None:
+    from settlediff.application.budget import InvestigationBudget, InvestigationBudgetState
+
+    budget = InvestigationBudgetState(
+        InvestigationBudget.issue(
+            "syn_run_context",
+            contextdev_calls=0,
+            model_requests=1,
+            tool_calls=6,
+            input_tokens=8_000,
+            output_tokens=1_000,
+        )
+    )
+    contextdev = StubContextDev(evidence=CONTEXT_EVIDENCE)
+    collector = failing_collector(contextdev, budget=budget)
+
+    report = await run_failing_collector(collector)
+
+    assert report.verdict is Verdict.PAID_FAILURE
+    assert contextdev.requests == []
+    artifact = next(a for a in collector.artifacts if a.source == "contextdev")
+    assert isinstance(artifact.data, dict)
+    assert artifact.data["state"] == ContextEvidenceState.BUDGET_EXHAUSTED
+    assert artifact.data["diagnostic"] == "budget_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_exhausted_model_budget_returns_fallback_without_calling_the_model() -> None:
+    from settlediff.application.budget import InvestigationBudget, InvestigationBudgetState
+
+    report = replay_fixture(Path("fixtures/clean-success"))
+    request = PaidExecutionRequest(
+        run_id=report.run_id,
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+    capability = PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    )
+    budget = InvestigationBudgetState(
+        InvestigationBudget.issue(
+            request.run_id,
+            contextdev_calls=1,
+            model_requests=0,
+            tool_calls=6,
+            input_tokens=8_000,
+            output_tokens=1_000,
+        )
+    )
+    calls: list[str] = []
+
+    async def execute(
+        _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
+    ) -> None:
+        pass
+
+    async def verify() -> MachineReport:
+        return report
+
+    async def explain(_report: MachineReport, _artifact_ids: frozenset[str]) -> ExplanationRecord:
+        calls.append("explain")
+        raise AssertionError("model must not be called when its budget is exhausted")
+
+    outcome = await RunInvestigation(execute, verify, explain=explain, budget=budget).execute(
+        LiveRunCommand(request, capability)
+    )
+
+    assert calls == []
+    assert outcome.explanation.source is ExplanationSource.FALLBACK
+    assert budget.remaining().model_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_tool_calls_are_accounted_against_the_budget() -> None:
+    from settlediff.application.budget import InvestigationBudget, InvestigationBudgetState
+
+    report = replay_fixture(Path("fixtures/clean-success"))
+    request = PaidExecutionRequest(
+        run_id=report.run_id,
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+    capability = PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    )
+    budget = InvestigationBudgetState(
+        InvestigationBudget.issue(
+            request.run_id,
+            contextdev_calls=1,
+            model_requests=1,
+            tool_calls=1,
+            input_tokens=8_000,
+            output_tokens=1_000,
+        )
+    )
+
+    async def execute(
+        _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
+    ) -> None:
+        pass
+
+    async def verify() -> MachineReport:
+        return report
+
+    async def explain(_report: MachineReport, _artifact_ids: frozenset[str]) -> ExplanationRecord:
+        return ExplanationRecord(
+            explanation=InvestigationExplanation(
+                run_id=report.run_id,
+                summary="Provider explanation with three tool calls.",
+                evidence_used=(),
+                finding_ids=(report.findings[0].finding_id,),
+                deterministic_verdict=report.verdict,
+                recommended_next_step=None,
+            ),
+            source=ExplanationSource.PROVIDER,
+            tool_calls=3,
+        )
+
+    outcome = await RunInvestigation(execute, verify, explain=explain, budget=budget).execute(
+        LiveRunCommand(request, capability)
+    )
+
+    assert outcome.explanation.source is ExplanationSource.FALLBACK
+    assert budget.remaining().tool_calls == 0
 
 
 class StubSpan:

@@ -22,6 +22,10 @@ from settlediff.application.auth import (
     PaidExecutionCapability,
     PaidExecutionRequest,
 )
+from settlediff.application.budget import (
+    InvestigationBudgetExceeded,
+    InvestigationBudgetState,
+)
 from settlediff.contextdev.client import (
     ContextDevProtocolError,
     ContextDevUnavailableError,
@@ -181,9 +185,15 @@ class NullTelemetrySpan:
 class LiveEvidenceCollector:
     """Capture provider evidence, then derive a report with deterministic code only."""
 
-    def __init__(self, perflo: PerfloEvidencePort, contextdev: ContextEvidencePort) -> None:
+    def __init__(
+        self,
+        perflo: PerfloEvidencePort,
+        contextdev: ContextEvidencePort,
+        budget: InvestigationBudgetState | None = None,
+    ) -> None:
         self._perflo = perflo
         self._contextdev = contextdev
+        self._budget = budget
         self._contract: EvidenceArtifact | None = None
         self._schema: EvidenceArtifact | None = None
         self._execution: EvidenceArtifact | None = None
@@ -319,6 +329,23 @@ class LiveEvidenceCollector:
             return
 
         safe_url = _safe_status_url(url)
+        if self._budget is not None:
+            try:
+                await self._budget.consume_contextdev_call(run_id=request.run_id)
+            except InvestigationBudgetExceeded:
+                self._record_context(
+                    request.run_id,
+                    ContextEvidenceRecord(
+                        state=ContextEvidenceState.BUDGET_EXHAUSTED,
+                        status_url=safe_url,
+                        excerpt=None,
+                        observed_at=datetime.now(UTC),
+                        diagnostic=ContextEvidenceDiagnostic.BUDGET_EXHAUSTED,
+                        error_class=None,
+                        body_bytes=None,
+                    ),
+                )
+                return
         try:
             evidence = await self._contextdev.verify(
                 ContextEvidenceRequest(url=url, claim=f"HTTP {execution.upstream_http_status}")
@@ -389,6 +416,7 @@ class RunInvestigation:
         explain: Callable[[MachineReport, frozenset[str]], Awaitable[ExplanationRecord]]
         | None = None,
         artifact_ids: Callable[[], frozenset[str]] | None = None,
+        budget: InvestigationBudgetState | None = None,
         recover: Callable[
             [str, str | None], Awaitable[tuple[RecoveryState, tuple[EvidenceArtifact, ...]]]
         ]
@@ -403,6 +431,7 @@ class RunInvestigation:
         self._artifact_ids = artifact_ids
         self._recover = recover
         self._transaction_hash = transaction_hash
+        self._budget = budget
 
     async def execute(self, command: LiveRunCommand) -> InvestigationOutcome:
         run_id = command.request.run_id
@@ -482,9 +511,17 @@ class RunInvestigation:
         )
         if self._explain is None:
             return fallback
+        if self._budget is not None:
+            try:
+                await self._budget.consume_model_request(run_id=report.run_id)
+            except InvestigationBudgetExceeded:
+                return fallback
         try:
             record = await self._explain(report, artifact_ids)
             explanation = validate_explanation(record.explanation, report, set(artifact_ids))
+            if self._budget is not None:
+                for _ in range(record.tool_calls):
+                    await self._budget.consume_tool_call(run_id=report.run_id)
         except (ExplanationGroundingError, RuntimeError, TimeoutError, ValueError):
             return fallback
         return record.model_copy(update={"explanation": explanation})

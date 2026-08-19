@@ -19,6 +19,7 @@ from settlediff.agent.model import build_hyperfusion_model
 from settlediff.agent.tools import build_investigation_dependencies
 from settlediff.api.app import create_app
 from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
+from settlediff.application.budget import InvestigationBudget, InvestigationBudgetState
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
     LiveEvidenceCollector,
@@ -185,7 +186,17 @@ def run(
         body=cast(dict[str, JsonValue], parsed_body),
         budget=Money(amount=amount, unit="USDC"),
     )
-    collector = LiveEvidenceCollector(PerfloClient(), contextdev=contextdev)
+    budget_state = InvestigationBudgetState(
+        InvestigationBudget.issue(
+            request.run_id,
+            contextdev_calls=1,
+            model_requests=1,
+            tool_calls=6,
+            input_tokens=8_000,
+            output_tokens=1_000,
+        )
+    )
+    collector = LiveEvidenceCollector(PerfloClient(), contextdev=contextdev, budget=budget_state)
     try:
         try:
             asyncio.run(collector.preflight(request))
@@ -199,6 +210,10 @@ def run(
         typer.echo(
             "Target: "
             f"{request.target}\nBody digest: {capability.body_digest}\nBudget: {request.budget}"
+        )
+        typer.echo(
+            "Investigation budget: Context.dev calls: 1, model requests: 1, "
+            "tool calls: 6, input tokens: 8000, output tokens: 1000"
         )
         if not typer.confirm("Authorize this exact paid request?"):
             typer.echo("Authorization declined; no paid request was sent.")
@@ -217,6 +232,7 @@ def run(
                     artifact_ids=lambda: frozenset(
                         artifact.artifact_id for artifact in collector.artifacts
                     ),
+                    budget=budget_state,
                     recover=collector.recover_submission,
                     transaction_hash=lambda: _transaction_handle(collector),
                 ).execute(LiveRunCommand(request=request, capability=capability))
