@@ -439,6 +439,41 @@ def test_event_task_rows_stop_polling_after_terminal_state(tmp_path: Path) -> No
     repository.close()
 
 
+def test_delete_confirmation_requires_valid_csrf_and_cascades(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository.save(report)
+    client = TestClient(create_app(repository))
+
+    confirmation = client.get(f"/runs/{report.run_id}/delete")
+    assert confirmation.status_code == 200
+    assert "Delete local report" in confirmation.text
+    assert report.run_id in confirmation.text
+    token_marker = 'name="csrf_token" value="'
+    token_start = confirmation.text.index(token_marker) + len(token_marker)
+    token = confirmation.text[token_start : confirmation.text.index('"', token_start)]
+
+    rejected = client.post(
+        f"/runs/{report.run_id}/delete",
+        content="csrf_token=wrong",
+        headers={"content-type": "application/x-www-form-urlencoded"},
+        follow_redirects=False,
+    )
+    assert rejected.status_code == 403
+    assert repository.get(report.run_id) is not None
+
+    deleted = client.post(
+        f"/runs/{report.run_id}/delete",
+        content=f"csrf_token={token}",
+        headers={"content-type": "application/x-www-form-urlencoded"},
+        follow_redirects=False,
+    )
+    assert deleted.status_code == 303
+    assert deleted.headers["location"] == "/runs"
+    assert repository.get(report.run_id) is None
+    repository.close()
+
+
 def test_vendored_htmx_checksum_is_recorded() -> None:
     static = Path("src/settlediff/ui/static")
     expected = (

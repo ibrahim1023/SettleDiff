@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from urllib.parse import parse_qs
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -35,6 +37,7 @@ _TERMINAL_STATES = frozenset({RunState.COMPLETE, RunState.REFUSED, RunState.FAIL
 
 def create_app(repository: SQLiteReportRepository) -> FastAPI:
     app = FastAPI(title="SettleDiff", docs_url=None, redoc_url=None)
+    csrf_token = secrets.token_urlsafe(32)
     templates = Environment(
         loader=FileSystemLoader(Path(__file__).parents[1] / "ui" / "templates"),
         autoescape=select_autoescape(["html"]),
@@ -51,6 +54,13 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.set_cookie(
+            "settlediff_csrf",
+            csrf_token,
+            httponly=True,
+            samesite="strict",
+            path="/",
+        )
         return response
 
     app.middleware("http")(security_headers)
@@ -162,6 +172,34 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
         )
 
     app.get("/runs/{run_id}/events-fragment", response_class=HTMLResponse)(event_fragment)
+
+    def confirm_delete(run_id: str) -> str:
+        report = repository.get(run_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return templates.get_template("delete_run.html").render(
+            report=report,
+            csrf_token=csrf_token,
+        )
+
+    app.get("/runs/{run_id}/delete", response_class=HTMLResponse)(confirm_delete)
+
+    async def delete_run(run_id: str, request: Request) -> RedirectResponse:
+        report = repository.get(run_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        body = (await request.body()).decode("utf-8", errors="strict")
+        submitted = parse_qs(body).get("csrf_token", [""])[0]
+        cookie = request.cookies.get("settlediff_csrf", "")
+        if not (
+            secrets.compare_digest(submitted, csrf_token)
+            and secrets.compare_digest(cookie, csrf_token)
+        ):
+            raise HTTPException(status_code=403, detail="invalid CSRF token")
+        repository.delete(run_id)
+        return RedirectResponse("/runs", status_code=303)
+
+    app.post("/runs/{run_id}/delete", response_class=RedirectResponse)(delete_run)
 
     def run_artifacts(run_id: str) -> str:
         report = repository.get(run_id)

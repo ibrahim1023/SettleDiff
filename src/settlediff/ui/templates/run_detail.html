@@ -194,5 +194,8 @@
       <p>Loading recorded transitions…</p>
     </div>
   </section>
-  <p class="artifact-link"><a href="/runs/{{ report.run_id }}/artifacts">View redacted evidence artifacts <span aria-hidden="true">→</span></a></p>
+  <div class="run-actions">
+    <p class="artifact-link"><a href="/runs/{{ report.run_id }}/artifacts">View redacted evidence artifacts <span aria-hidden="true">→</span></a></p>
+    <a class="delete-link" href="/runs/{{ report.run_id }}/delete">Delete local report</a>
+  </div>
 {% endblock %}

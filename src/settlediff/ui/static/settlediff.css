@@ -116,8 +116,13 @@ tr:last-child > * { border-bottom: 0; }
 .timeline-row strong { text-transform: capitalize; }
 .timeline-row time { margin-top: .15rem; color: var(--muted); font: .72rem ui-monospace, SFMono-Regular, monospace; }
 .timeline-duration { align-self: center; color: var(--muted); font: .7rem ui-monospace, SFMono-Regular, monospace; }
-.artifact-link { margin: 1.5rem .25rem; color: #c9c6ff; }
+.run-actions { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin: 1.5rem .25rem; }
+.artifact-link { margin: 0; color: #c9c6ff; }
 .artifact-link a { text-underline-offset: .3rem; }
+.delete-link { color: var(--failure); text-underline-offset: .3rem; }
+.delete-panel { max-width: 48rem; }
+.delete-form { display: flex; gap: .7rem; align-items: center; margin-top: 1.25rem; }
+.danger-action { min-height: 2.65rem; border: 1px solid #a95757; border-radius: .5rem; padding: .55rem .8rem; color: #ffe2e2; background: #6a292f; font: inherit; font-weight: 750; cursor: pointer; }
 .empty-state { padding: 1.4rem; border: 1px dashed var(--border-strong); border-radius: .8rem; color: var(--muted); background: var(--surface); }
 .empty-state h2 { color: var(--text); }
 .empty-state code { display: block; width: fit-content; max-width: 100%; overflow-x: auto; padding: .65rem; border-radius: .45rem; color: #d9dcdf; background: #101215; white-space: pre; }
