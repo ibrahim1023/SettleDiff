@@ -5,6 +5,21 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <link rel="stylesheet" href="/static/settlediff.css">
     <script src="/static/htmx.min.js" defer></script>
+    <script>
+      document.addEventListener("click", (event) => {
+        const copy = event.target.closest("[data-copy-artifact]");
+        if (copy) {
+          const target = document.querySelector(`[data-artifact-json="${copy.dataset.copyArtifact}"]`);
+          if (target && navigator.clipboard) navigator.clipboard.writeText(target.textContent || "");
+        }
+        const wrap = event.target.closest("[data-wrap-artifact]");
+        if (wrap) {
+          const target = document.querySelector(`[data-artifact-json="${wrap.dataset.wrapArtifact}"]`);
+          const enabled = target && target.classList.toggle("wrap-json");
+          if (enabled !== null) wrap.setAttribute("aria-pressed", String(Boolean(enabled)));
+        }
+      });
+    </script>
     <title>{% block title %}SettleDiff{% endblock %}</title>
   </head>
   <body>

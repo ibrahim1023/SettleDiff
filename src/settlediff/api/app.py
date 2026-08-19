@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from html import escape
 from pathlib import Path
 from typing import Literal
 
@@ -132,6 +132,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
             finding_anchors=finding_anchors,
             artifact_links=artifact_links,
             recovery_artifact=_recovery_artifact(repository.artifacts(run_id)),
+            context_artifact=_context_artifact(repository.artifacts(run_id)),
         )
 
     app.get("/runs/{run_id}", response_class=HTMLResponse)(run_detail)
@@ -157,15 +158,13 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
     app.get("/runs/{run_id}/events-fragment", response_class=HTMLResponse)(event_fragment)
 
     def run_artifacts(run_id: str) -> str:
-        if repository.get(run_id) is None:
+        report = repository.get(run_id)
+        if report is None:
             raise HTTPException(status_code=404, detail="run not found")
-        payloads = "".join(
-            f'<details id="{escape(_artifact_anchor(artifact.artifact_id), quote=True)}">'
-            f"<summary>{escape(artifact.artifact_id)}</summary>"
-            f"<pre>{escape(artifact.model_dump_json())}</pre></details>"
-            for artifact in repository.artifacts(run_id)
+        return templates.get_template("artifacts.html").render(
+            report=report,
+            groups=_artifact_groups(repository.artifacts(run_id)),
         )
-        return f"<main><h1>Artifacts</h1>{payloads}</main>"
 
     app.get("/runs/{run_id}/artifacts", response_class=HTMLResponse)(run_artifacts)
 
@@ -187,6 +186,38 @@ def _recovery_artifact(
         if artifact.artifact_id.endswith(":recovery"):
             return artifact
     return None
+
+
+def _context_artifact(
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> EvidenceArtifact | None:
+    for artifact in artifacts:
+        if artifact.source == "contextdev":
+            return artifact
+    return None
+
+
+def _artifact_groups(
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> tuple[dict[str, object], ...]:
+    grouped: dict[str, list[EvidenceArtifact]] = {}
+    for artifact in artifacts:
+        grouped.setdefault(artifact.source, []).append(artifact)
+    return tuple(
+        {
+            "source": source,
+            "label": source.replace(".", " ").replace("_", " ").title(),
+            "artifacts": tuple(
+                {
+                    "artifact": artifact,
+                    "anchor": _artifact_anchor(artifact.artifact_id),
+                    "payload": json.dumps(artifact.model_dump(mode="json"), indent=2),
+                }
+                for artifact in sorted(group, key=lambda item: item.artifact_id)
+            ),
+        }
+        for source, group in sorted(grouped.items())
+    )
 
 
 def _evidence_rows(report: MachineReport) -> tuple[EvidenceRow, ...]:

@@ -122,6 +122,22 @@ tr:last-child > * { border-bottom: 0; }
 .empty-state h2 { color: var(--text); }
 .empty-state code { display: block; width: fit-content; max-width: 100%; overflow-x: auto; padding: .65rem; border-radius: .45rem; color: #d9dcdf; background: #101215; white-space: pre; }
 .empty-inline { margin: 0; color: var(--muted); }
+.context-metadata { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; margin: 0; }
+.context-metadata div { padding: .7rem; border: 1px solid var(--border); border-radius: .55rem; background: #15181c; }
+.context-metadata dt { color: var(--muted); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; }
+.context-metadata dd { margin: .25rem 0 0; color: var(--text); overflow-wrap: anywhere; }
+.context-excerpt { margin: 1rem 0 0; padding: .8rem .9rem; border-left: 4px solid #7772ef; color: #d9dbe0; background: #15181c; }
+.artifact-list { display: grid; gap: .8rem; }
+.artifact-card { border: 1px solid var(--border); border-radius: .7rem; background: #15181c; }
+.artifact-card summary { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: .9rem; cursor: pointer; list-style: none; }
+.artifact-card summary::-webkit-details-marker { display: none; }
+.artifact-card summary strong, .artifact-card summary small { display: block; }
+.artifact-card summary small { margin-top: .25rem; color: var(--muted); font: .7rem ui-monospace, SFMono-Regular, monospace; }
+.artifact-card[open] summary { border-bottom: 1px solid var(--border); }
+.artifact-actions { display: flex; gap: .5rem; padding: .7rem .9rem 0; }
+.artifact-actions button { min-height: 2rem; border: 1px solid var(--border-strong); border-radius: .45rem; padding: .3rem .55rem; color: #d6d3ff; background: transparent; cursor: pointer; font: .72rem ui-monospace, SFMono-Regular, monospace; }
+.artifact-json { max-height: 30rem; margin: .7rem .9rem .9rem; padding: .9rem; overflow: auto; border: 1px solid var(--border); border-radius: .55rem; background: #101215; color: #dce1e6; font: .74rem/1.55 ui-monospace, SFMono-Regular, monospace; white-space: pre; }
+.artifact-json.wrap-json { white-space: pre-wrap; }
 @media (max-width: 52rem) {
   .run-filters { grid-template-columns: 1fr 1fr; }
   .search-field { grid-column: 1 / -1; }

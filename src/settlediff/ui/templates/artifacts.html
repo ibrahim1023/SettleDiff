@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}SettleDiff {{ report.run_id }} artifacts{% endblock %}
+{% block content %}
+  <p class="breadcrumb"><a href="/runs">Investigation runs</a><span aria-hidden="true">/</span><a href="/runs/{{ report.run_id }}">{{ report.run_id }}</a><span aria-hidden="true">/</span><span>Artifacts</span></p>
+  <section class="run-hero">
+    <div>
+      <p class="eyebrow">Persisted evidence</p>
+      <h1>Evidence artifacts</h1>
+      <p class="run-id">{{ report.run_id }}</p>
+    </div>
+    <span class="verdict verdict-{{ report.verdict.value|lower }}">{{ report.verdict.value }}</span>
+  </section>
+  {% if groups %}
+    {% for group in groups %}
+      <section class="panel artifact-group" aria-labelledby="group-{{ loop.index }}">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">{{ group.source }}</p>
+            <h2 id="group-{{ loop.index }}">{{ group.label }}</h2>
+          </div>
+          <p>{{ group.artifacts|length }} artifact{% if group.artifacts|length != 1 %}s{% endif %}</p>
+        </div>
+        <div class="artifact-list">
+          {% for artifact in group.artifacts %}
+            <details class="artifact-card" id="{{ artifact.anchor }}">
+              <summary>
+                <span>
+                  <strong>{{ artifact.artifact.artifact_id }}</strong>
+                  <small>{{ artifact.artifact.schema_version }} · {{ artifact.artifact.collected_at.strftime("%Y-%m-%d %H:%M:%S UTC") }} · {% if artifact.artifact.redacted %}Redacted{% else %}Not redacted{% endif %}</small>
+                </span>
+                <span class="state-chip">{{ artifact.artifact.artifact_type.value|replace("_", " ") }}</span>
+              </summary>
+              <div class="artifact-actions">
+                <button type="button" class="copy-artifact" data-copy-artifact="{{ artifact.anchor }}">Copy redacted JSON</button>
+                <button type="button" class="wrap-artifact" data-wrap-artifact="{{ artifact.anchor }}" aria-pressed="false">Wrap text</button>
+              </div>
+              <pre class="artifact-json" data-artifact-json="{{ artifact.anchor }}">{{ artifact.payload }}</pre>
+            </details>
+          {% endfor %}
+        </div>
+      </section>
+    {% endfor %}
+  {% else %}
+    <section class="empty-state">
+      <h2>No evidence artifacts</h2>
+      <p>The persisted report has no stored evidence artifacts.</p>
+    </section>
+  {% endif %}
+{% endblock %}

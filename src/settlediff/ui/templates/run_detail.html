@@ -138,6 +138,30 @@
       </div>
     {% endif %}
   </section>
+  {% if context_artifact %}
+    <section class="panel context-panel" aria-labelledby="context-heading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Independent evidence</p>
+          <h2 id="context-heading">Context evidence</h2>
+        </div>
+        <span class="state-chip">{{ context_artifact.data.get("state", "unknown") if context_artifact.data is mapping else "unknown" }}</span>
+      </div>
+      {% if context_artifact.data is mapping %}
+        {% set context_data = context_artifact.data %}
+        <dl class="context-metadata">
+          <div><dt>Diagnostic</dt><dd>{{ context_data.get("diagnostic", "unknown")|replace("_", " ")|title }}</dd></div>
+          <div><dt>Status URL</dt><dd>{{ context_data.get("status_url") or "Not eligible" }}</dd></div>
+          <div><dt>Collected</dt><dd>{{ context_data.get("observed_at") or context_artifact.collected_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd></div>
+          <div><dt>Response</dt><dd>{% if context_data.get("body_bytes") is not none %}{{ context_data.get("body_bytes") }} bytes{% else %}Unknown{% endif %}</dd></div>
+        </dl>
+        {% if context_data.get("excerpt") %}
+          <blockquote class="context-excerpt">{{ context_data["excerpt"] }}</blockquote>
+        {% endif %}
+      {% endif %}
+      <p class="citation-row"><a href="/runs/{{ report.run_id }}/artifacts#{{ context_artifact.artifact_id|replace(":", "-") }}">View persisted Context evidence</a></p>
+    </section>
+  {% endif %}
   {% if recovery_artifact %}
     <section class="panel recovery-panel" aria-labelledby="recovery-heading">
       <div class="section-heading">

@@ -165,6 +165,71 @@ def test_evidence_diff_uses_persisted_findings_and_links_citations(tmp_path: Pat
     repository.close()
 
 
+def test_run_detail_renders_context_evidence_and_links_artifacts(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    context = EvidenceArtifact(
+        artifact_id=f"{report.run_id}:contextdev",
+        artifact_type=ArtifactType.CONTEXT_EVIDENCE,
+        source="contextdev",
+        collected_at=datetime(2026, 8, 18, tzinfo=UTC),
+        redacted=True,
+        data={
+            "state": "PRESENT",
+            "status_url": "https://status.example.invalid/outage",
+            "diagnostic": "exact_claim_present",
+            "observed_at": "2026-08-18T00:00:00Z",
+            "error_class": None,
+            "body_bytes": 812,
+            "excerpt": "Synthetic status evidence",
+        },
+    )
+    repository.save(report, artifacts=(context,))
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert "Context evidence" in detail.text
+    assert "PRESENT" in detail.text
+    assert "Exact Claim Present" in detail.text
+    assert "https://status.example.invalid/outage" in detail.text
+    assert "812 bytes" in detail.text
+    assert "Synthetic status evidence" in detail.text
+    assert (
+        f"/runs/{report.run_id}/artifacts#{context.artifact_id.replace(':', '-')}"
+    ) in detail.text
+    repository.close()
+
+
+def test_artifact_viewer_groups_redacted_artifacts_and_links_metadata(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    artifact = EvidenceArtifact(
+        artifact_id=f"{report.run_id}:contextdev",
+        artifact_type=ArtifactType.CONTEXT_EVIDENCE,
+        source="contextdev",
+        collected_at=datetime(2026, 8, 18, tzinfo=UTC),
+        redacted=True,
+        data={"note": "synthetic"},
+    )
+    repository.save(report, artifacts=(artifact,))
+    client = TestClient(create_app(repository))
+
+    page = client.get(f"/runs/{report.run_id}/artifacts")
+
+    assert page.status_code == 200
+    assert "Evidence artifacts" in page.text
+    assert "contextdev" in page.text
+    assert "context evidence" in page.text
+    assert "Redacted" in page.text
+    assert "2026-08-18" in page.text
+    assert 'id="syn_run_clean-contextdev"' in page.text
+    assert "<pre" in page.text
+    assert "&#34;note&#34;" in page.text
+    repository.close()
+
+
 def test_run_detail_renders_persisted_recovery_evidence(tmp_path: Path) -> None:
     repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
     report = replay_fixture(Path("fixtures/clean-success"))
