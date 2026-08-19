@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
 import tomllib
+from importlib.metadata import version
 from pathlib import Path
 from typing import cast
 
@@ -60,12 +62,15 @@ def test_environment_example_contains_only_blank_safe_assignments() -> None:
 
 
 def test_python_and_package_contract() -> None:
+    from settlediff import __version__
+
     assert (ROOT / ".python-version").read_text() == "3.12\n"
 
     config = load_project_config()
     project = object_mapping(config["project"])
     assert project["requires-python"] == ">=3.12,<3.14"
     assert object_mapping(project["scripts"]) == {"settlediff": "settlediff.cli:app"}
+    assert __version__ == project["version"] == version("settlediff")
 
     dependencies = string_list(project["dependencies"])
     for dependency in (
@@ -103,8 +108,24 @@ def test_development_and_pytest_contract() -> None:
     assert pytest_config["addopts"] == "--strict-config --strict-markers"
     markers = "\n".join(string_list(pytest_config["markers"]))
     assert "live_hyperfusion" in markers
+    assert "live_contextdev" in markers
     assert "paid" in markers
     assert "offline" in markers
+
+
+def test_live_contextdev_contract_skips_without_explicit_opt_in() -> None:
+    environment = os.environ.copy()
+    environment.pop("SETTLEDIFF_LIVE_CONTEXTDEV", None)
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/contract/test_contextdev_live.py", "-q"],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 skipped" in result.stdout
 
 
 def test_console_entry_point_loads() -> None:

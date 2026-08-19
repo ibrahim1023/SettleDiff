@@ -54,6 +54,7 @@ testpaths = ["tests"]
 markers = [
   "offline: deterministic test that must not use external services",
   "live_hyperfusion: opt-in live Hyperfusion compatibility test",
+  "live_contextdev: opt-in live Context.dev contract that consumes one credit",
   "paid: opt-in paid Perflo smoke test requiring explicit authorization",
 ]
 

@@ -12,6 +12,9 @@ intent → contract → execution → receipt → service outcome → activity r
 
 ## Status
 
+The current package version is **0.1.0**. The project license remains unresolved, so SettleDiff
+must not be published or otherwise released publicly.
+
 The 12-phase MVP is implemented. It includes strict versioned evidence models, exact money
 semantics, recursive redaction, bounded provider parsing, deterministic Activity matching,
 independent verification checks, verdict precedence, fully offline fixture replay, a safe Perflo
@@ -39,6 +42,18 @@ The local product specification is intentionally excluded from Git. The approved
 - insufficient evidence that makes a run unverifiable.
 
 The flagship result is `PAID_FAILURE`: money settled, but the purchased operation failed.
+
+## Install from a local wheel
+
+After building locally, install the versioned wheel without publishing it:
+
+```bash
+uv tool install dist/settlediff-0.1.0-py3-none-any.whl
+settlediff --version
+```
+
+The version command prints `settlediff 0.1.0`. Do not upload the wheel to a package index or make a
+public release while the project license remains unresolved.
 
 ## 60-second fixture demo
 
@@ -75,6 +90,17 @@ Every live investigation requires `SETTLEDIFF_CONTEXTDEV_API_KEY`; SettleDiff us
 documented `https://api.context.dev/v1/web/scrape/markdown` endpoint. The request runs when a failed
 purchased service returns an HTTPS `status_url`. SettleDiff deterministically records source
 reachability and exact evidence presence; Context.dev cannot change findings or verdicts.
+
+The live Context.dev contract is skipped by default. An owner must export a valid
+`SETTLEDIFF_CONTEXTDEV_API_KEY` and supply both `SETTLEDIFF_LIVE_CONTEXTDEV_URL` and
+`SETTLEDIFF_LIVE_CONTEXTDEV_CLAIM`, then explicitly open the gate:
+
+```bash
+SETTLEDIFF_LIVE_CONTEXTDEV=1 uv run pytest tests/contract/test_contextdev_live.py -m live_contextdev -q
+```
+
+That test makes exactly one `ContextDevClient.verify` call and **consumes one Context.dev credit**.
+Do not run it as part of offline verification or without the owner's authorization and inputs.
 
 Set `SETTLEDIFF_OTLP_ENDPOINT` to export OpenTelemetry spans. Export is disabled by default.
 Prompts, request bodies, tool content, credentials, provider payloads, and local run IDs are not

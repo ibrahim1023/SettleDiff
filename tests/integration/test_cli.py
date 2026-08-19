@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from pydantic import JsonValue, SecretStr
 from typer.testing import CliRunner
 
+from settlediff import __version__
 from settlediff.agent.grounding import fallback_explanation
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import LiveEvidenceCollector, RunEvent, RunState
@@ -39,6 +40,13 @@ def live_settings() -> Settings:
         _env_file=None,  # pyright: ignore[reportCallIssue]
         contextdev_api_key=SecretStr("syn-contextdev-key"),
     )
+
+
+def test_version_option_reports_package_version_without_running_a_command() -> None:
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.stdout == f"settlediff {__version__}\n"
 
 
 def test_fixture_replay_requires_no_live_configuration() -> None:

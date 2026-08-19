@@ -15,6 +15,7 @@ import uvicorn
 from pydantic import JsonValue, ValidationError
 from pydantic_ai.models import Model
 
+from settlediff import __version__
 from settlediff.agent.investigator import InvestigationState, investigate
 from settlediff.agent.model import build_hyperfusion_model
 from settlediff.agent.tools import build_investigation_dependencies
@@ -59,8 +60,23 @@ BUNDLE_OUTPUT_OPTION = typer.Option(..., "--output")
 BUNDLE_FORCE_OPTION = typer.Option(False, "--force", help="Replace an existing output file.")
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"settlediff {__version__}")
+        raise typer.Exit
+
+
+VERSION_OPTION = typer.Option(
+    False,
+    "--version",
+    callback=_version_callback,
+    is_eager=True,
+    help="Show the installed SettleDiff version and exit.",
+)
+
+
 @app.callback()
-def main() -> None:
+def main(_version: bool = VERSION_OPTION) -> None:
     """Investigate agent purchases with deterministic verification."""
 
 
@@ -112,6 +128,11 @@ async def _explain_report(
         explanation=result.explanation,
         source=ExplanationSource.FALLBACK if result.used_fallback else ExplanationSource.PROVIDER,
         tool_calls=result.tool_calls,
+        model_requests=result.model_requests,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        model_cost=result.model_cost,
+        rejected_output=result.rejected_output,
     )
 
 
@@ -206,7 +227,9 @@ def run(
             output_tokens=1_000,
         )
     )
-    collector = LiveEvidenceCollector(PerfloClient(), contextdev=contextdev, budget=budget_state)
+    collector = LiveEvidenceCollector(
+        PerfloClient(), contextdev=contextdev, budget=budget_state, telemetry=telemetry
+    )
     try:
         try:
             asyncio.run(collector.preflight(request))
