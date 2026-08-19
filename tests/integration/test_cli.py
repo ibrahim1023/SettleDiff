@@ -463,6 +463,65 @@ def test_purge_empty_result_is_a_clear_no_op(tmp_path: Path) -> None:
     assert "no runs" in result.stdout.lower() or "nothing" in result.stdout.lower()
 
 
+def test_export_and_verify_bundle_round_trip(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    output = tmp_path / "run.bundle.json"
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(database)
+    repository.save(report)
+    repository.close()
+
+    exported = runner.invoke(
+        app,
+        ["export", report.run_id, "--database", str(database), "--output", str(output)],
+    )
+    verified = runner.invoke(app, ["verify-bundle", str(output)])
+
+    assert exported.exit_code == 0
+    assert output.is_file()
+    assert report.run_id in exported.stdout
+    assert verified.exit_code == 0
+    assert "VERIFIED" in verified.stdout
+    assert report.run_id in verified.stdout
+
+
+def test_export_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+    output = tmp_path / "run.bundle.json"
+    output.write_text("existing")
+
+    result = runner.invoke(
+        app,
+        ["export", run_id, "--database", str(database), "--output", str(output)],
+    )
+
+    assert result.exit_code == 2
+    assert output.read_text() == "existing"
+
+
+def test_export_missing_run_and_tampered_bundle_fail_cleanly(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+    output = tmp_path / "run.bundle.json"
+    missing = runner.invoke(
+        app,
+        ["export", "syn_missing", "--database", str(database), "--output", str(output)],
+    )
+    assert missing.exit_code == 1
+
+    exported = runner.invoke(
+        app,
+        ["export", run_id, "--database", str(database), "--output", str(output)],
+    )
+    assert exported.exit_code == 0
+    payload = json.loads(output.read_text())
+    payload["integrity"] = "0" * 64
+    output.write_text(json.dumps(payload))
+
+    verified = runner.invoke(app, ["verify-bundle", str(output)])
+    assert verified.exit_code == 2
+    assert "integrity" in verified.stderr.lower()
+
+
 def test_serve_is_loopback_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 

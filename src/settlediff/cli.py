@@ -21,6 +21,13 @@ from settlediff.agent.tools import build_investigation_dependencies
 from settlediff.api.app import create_app
 from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
 from settlediff.application.budget import InvestigationBudget, InvestigationBudgetState
+from settlediff.application.bundle import (
+    BundleError,
+    export_bundle,
+    load_bundle,
+    serialize_bundle,
+    verify_bundle,
+)
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
     LiveEvidenceCollector,
@@ -48,6 +55,8 @@ app = typer.Typer(
 DATABASE_OPTION = typer.Option(..., "--database", exists=True, readable=True)
 JSON_OPTION = typer.Option(False, "--json")
 OPTIONAL_DATABASE_OPTION = typer.Option(None, "--database")
+BUNDLE_OUTPUT_OPTION = typer.Option(..., "--output")
+BUNDLE_FORCE_OPTION = typer.Option(False, "--force", help="Replace an existing output file.")
 
 
 @app.callback()
@@ -359,6 +368,46 @@ def purge(
         typer.echo(f"Dry run: {len(stale)} run(s) would be deleted; pass --apply to delete them.")
     else:
         typer.echo(f"Purged {len(stale)} run(s).")
+
+
+@app.command("export")
+def export_run(
+    run_id: str,
+    database: Path = DATABASE_OPTION,
+    output: Path = BUNDLE_OUTPUT_OPTION,
+    force: bool = BUNDLE_FORCE_OPTION,
+) -> None:
+    """Export one persisted run as a versioned redacted evidence bundle."""
+    if output.exists() and not force:
+        typer.echo(f"Output {output} already exists; pass --force to replace it.", err=True)
+        raise typer.Exit(code=2)
+    repository = SQLiteReportRepository(database)
+    try:
+        try:
+            bundle = export_bundle(repository, run_id)
+        except BundleError as error:
+            typer.echo(str(error), err=True)
+            raise typer.Exit(code=1) from error
+    finally:
+        repository.close()
+    try:
+        output.write_bytes(serialize_bundle(bundle))
+    except OSError as error:
+        typer.echo(f"Could not write bundle: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    typer.echo(f"Exported run {run_id} to {output}.")
+
+
+@app.command("verify-bundle")
+def verify_evidence_bundle(path: Path) -> None:
+    """Verify one bundle's schema, digest, redaction, and report consistency."""
+    try:
+        bundle = load_bundle(path.read_bytes())
+        report = verify_bundle(bundle)
+    except (BundleError, OSError) as error:
+        typer.echo(f"Bundle verification failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    typer.echo(f"Verified bundle {bundle.run_id}: {report.verdict.value}")
 
 
 @app.command()
