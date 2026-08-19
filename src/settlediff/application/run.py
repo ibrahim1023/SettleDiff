@@ -38,7 +38,7 @@ from settlediff.contextdev.client import (
     eligible_evidence_url,
 )
 from settlediff.domain.checks import run_checks
-from settlediff.domain.matching import match_activity
+from settlediff.domain.matching import MatchResult, MatchStatus, match_activity
 from settlediff.domain.models import (
     ArtifactType,
     EvidenceArtifact,
@@ -168,6 +168,8 @@ class TelemetryPort(Protocol):
 
     def counter(self, name: str, attributes: Mapping[str, object]) -> None: ...
 
+    def histogram(self, name: str, value: object, attributes: Mapping[str, object]) -> None: ...
+
 
 class NullTelemetrySpan:
     def __enter__(self) -> None:
@@ -190,10 +192,12 @@ class LiveEvidenceCollector:
         perflo: PerfloEvidencePort,
         contextdev: ContextEvidencePort,
         budget: InvestigationBudgetState | None = None,
+        telemetry: TelemetryPort | None = None,
     ) -> None:
         self._perflo = perflo
         self._contextdev = contextdev
         self._budget = budget
+        self._telemetry = telemetry
         self._contract: EvidenceArtifact | None = None
         self._schema: EvidenceArtifact | None = None
         self._execution: EvidenceArtifact | None = None
@@ -217,12 +221,18 @@ class LiveEvidenceCollector:
         )
 
     async def preflight(self, request: PaidExecutionRequest) -> None:
-        contract_data = _result_data(await self._perflo.inspect_service(request.target))
+        with self._span(
+            "settlediff.perflo.inspect", {"run_id": request.run_id, "component": "perflo"}
+        ):
+            contract_data = _result_data(await self._perflo.inspect_service(request.target))
         self._contract = _artifact(
             request.run_id, ArtifactType.SERVICE_CONTRACT, "perflo.check", contract_data
         )
         contract = normalize_contract(self._contract)
-        schema_data = _result_data(await self._perflo.get_schema(contract.vendor_slug))
+        with self._span(
+            "settlediff.perflo.schema", {"run_id": request.run_id, "component": "perflo"}
+        ):
+            schema_data = _result_data(await self._perflo.get_schema(contract.vendor_slug))
         self._schema = _artifact(
             request.run_id, ArtifactType.CONTEXT_EVIDENCE, "perflo.schema", schema_data
         )
@@ -240,7 +250,11 @@ class LiveEvidenceCollector:
     ) -> tuple[RecoveryState, tuple[EvidenceArtifact, ...]]:
         """Use read-only evidence to establish submission without another mutation."""
         if transaction_hash is not None:
-            status_data = _result_data(await self._perflo.transaction_status(transaction_hash))
+            with self._span(
+                "settlediff.perflo.transaction_status",
+                {"run_id": run_id, "component": "perflo"},
+            ):
+                status_data = _result_data(await self._perflo.transaction_status(transaction_hash))
             artifact = _artifact(
                 run_id, ArtifactType.PAYMENT_RECEIPT, "perflo.tx_status", status_data
             )
@@ -253,7 +267,8 @@ class LiveEvidenceCollector:
                     return RecoveryState.NOT_SUBMITTED, (artifact,)
             return RecoveryState.UNRESOLVED, (artifact,)
 
-        activity_data = _result_data(await self._perflo.get_activity())
+        with self._span("settlediff.perflo.activity", {"run_id": run_id, "component": "perflo"}):
+            activity_data = _result_data(await self._perflo.get_activity())
         artifact = _artifact(run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data)
         self._recovery = artifact
         records = (
@@ -269,17 +284,28 @@ class LiveEvidenceCollector:
         if self._contract is None:
             raise RunTransitionError("live verification requires captured contract evidence")
         if self._execution is None:
-            execution_data = _result_data(await self._perflo.get_execution())
+            with self._span(
+                "settlediff.perflo.execution_status",
+                {"run_id": request.run_id, "component": "perflo"},
+            ):
+                execution_data = _result_data(await self._perflo.get_execution())
             self._execution = _artifact(
                 request.run_id, ArtifactType.EXECUTION, "perflo.fetch_status", execution_data
             )
-        activity_data = _result_data(await self._perflo.get_activity())
+        with self._span(
+            "settlediff.perflo.activity", {"run_id": request.run_id, "component": "perflo"}
+        ):
+            activity_data = _result_data(await self._perflo.get_activity())
         self._activity = _artifact(
             request.run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data
         )
         contract = normalize_contract(self._contract)
         execution = normalize_execution(self._execution)
-        matched = match_activity(execution, normalize_activity(self._activity))
+        with self._span(
+            "settlediff.match_activity", {"run_id": request.run_id, "component": "matching"}
+        ):
+            matched = match_activity(execution, normalize_activity(self._activity))
+        self._record_match_metrics(matched)
         intent = PurchaseIntent(
             run_id=request.run_id,
             task=f"Paid request to {request.target}",
@@ -333,6 +359,9 @@ class LiveEvidenceCollector:
             try:
                 await self._budget.consume_contextdev_call(run_id=request.run_id)
             except InvestigationBudgetExceeded:
+                self._record_counter(
+                    "settlediff.limit_exceeded", {"limit_type": "contextdev_calls"}
+                )
                 self._record_context(
                     request.run_id,
                     ContextEvidenceRecord(
@@ -347,10 +376,15 @@ class LiveEvidenceCollector:
                 )
                 return
         try:
-            evidence = await self._contextdev.verify(
-                ContextEvidenceRequest(url=url, claim=f"HTTP {execution.upstream_http_status}")
-            )
+            with self._span(
+                "settlediff.contextdev.verify",
+                {"run_id": request.run_id, "component": "contextdev"},
+            ):
+                evidence = await self._contextdev.verify(
+                    ContextEvidenceRequest(url=url, claim=f"HTTP {execution.upstream_http_status}")
+                )
         except ContextDevProtocolError as error:
+            self._record_provider_error("contextdev", "ContextDevProtocolError")
             record = ContextEvidenceRecord(
                 state=ContextEvidenceState.PROTOCOL_ERROR,
                 status_url=safe_url,
@@ -361,6 +395,7 @@ class LiveEvidenceCollector:
                 body_bytes=error.body_bytes,
             )
         except ContextDevUnavailableError as error:
+            self._record_provider_error("contextdev", "ContextDevUnavailableError")
             record = ContextEvidenceRecord(
                 state=ContextEvidenceState.PROVIDER_UNAVAILABLE,
                 status_url=safe_url,
@@ -390,6 +425,37 @@ class LiveEvidenceCollector:
                 body_bytes=evidence.body_bytes,
             )
         self._record_context(request.run_id, record)
+
+    def _span(self, name: str, attributes: Mapping[str, object]) -> AbstractContextManager[object]:
+        if self._telemetry is None:
+            return NullTelemetrySpan()
+        return self._telemetry.span(name, attributes)
+
+    def _record_counter(self, name: str, attributes: Mapping[str, object]) -> None:
+        if self._telemetry is not None:
+            with suppress(Exception):
+                self._telemetry.counter(name, attributes)
+
+    def _record_provider_error(self, provider: str, error_class: str) -> None:
+        self._record_counter(
+            "settlediff.provider_errors",
+            {"provider": provider, "error_class": error_class},
+        )
+
+    def _record_match_metrics(self, match: MatchResult) -> None:
+        if self._telemetry is None:
+            return
+        with suppress(Exception):
+            self._telemetry.histogram(
+                "settlediff.activity_candidate_count",
+                len(match.candidate_ids),
+                {"matcher_strategy": match.strategy.value},
+            )
+            if match.status is MatchStatus.AMBIGUOUS:
+                self._telemetry.counter(
+                    "settlediff.ambiguous_matches",
+                    {"matcher_strategy": match.strategy.value},
+                )
 
     def _record_context(self, run_id: str, record: ContextEvidenceRecord) -> None:
         self._context = redact_artifact(
@@ -439,7 +505,10 @@ class RunInvestigation:
             timeline = RunTimeline()
             await self._record(timeline.events[-1], run_id)
             await self._transition(timeline, RunState.AUTHORIZED, run_id)
-            authorization = await command.capability.consume(command.request)
+            with self._span(
+                "settlediff.authorize", {"run_id": run_id, "component": "authorization"}
+            ):
+                authorization = await command.capability.consume(command.request)
             await self._transition(timeline, RunState.EXECUTING, run_id)
             uncertain = False
             recovery: SubmissionRecovery | None = None
@@ -459,6 +528,7 @@ class RunInvestigation:
             await self._transition(timeline, RunState.EXPLAINING, run_id)
             with self._span("settlediff.agent.explain", {"run_id": run_id, "component": "agent"}):
                 explanation = await self._explain_report(report)
+            self._record_explanation_metrics(explanation)
             await self._transition(timeline, RunState.COMPLETE, run_id)
             return InvestigationOutcome(
                 report=report,
@@ -515,15 +585,49 @@ class RunInvestigation:
             try:
                 await self._budget.consume_model_request(run_id=report.run_id)
             except InvestigationBudgetExceeded:
+                self._record_limit_metric("model_requests")
                 return fallback
+        record: ExplanationRecord | None = None
         try:
             record = await self._explain(report, artifact_ids)
             explanation = validate_explanation(record.explanation, report, set(artifact_ids))
             if self._budget is not None:
-                for _ in range(record.tool_calls):
-                    await self._budget.consume_tool_call(run_id=report.run_id)
+                try:
+                    for _ in range(max(0, record.model_requests - 1)):
+                        await self._budget.consume_model_request(run_id=report.run_id)
+                except InvestigationBudgetExceeded:
+                    self._record_limit_metric("model_requests")
+                    raise
+                try:
+                    for _ in range(record.tool_calls):
+                        await self._budget.consume_tool_call(run_id=report.run_id)
+                except InvestigationBudgetExceeded:
+                    self._record_limit_metric("tool_calls")
+                    raise
+                try:
+                    await self._budget.consume_tokens(
+                        record.input_tokens,
+                        record.output_tokens,
+                        run_id=report.run_id,
+                    )
+                except InvestigationBudgetExceeded as error:
+                    limit_type = (
+                        "output_tokens" if "output_tokens" in str(error) else "input_tokens"
+                    )
+                    self._record_limit_metric(limit_type)
+                    raise
         except (ExplanationGroundingError, RuntimeError, TimeoutError, ValueError):
-            return fallback
+            if record is None:
+                return fallback
+            return fallback.model_copy(
+                update={
+                    "model_requests": record.model_requests,
+                    "input_tokens": record.input_tokens,
+                    "output_tokens": record.output_tokens,
+                    "model_cost": record.model_cost,
+                    "rejected_output": record.rejected_output,
+                }
+            )
         return record.model_copy(update={"explanation": explanation})
 
     def _record_metrics(self, report: MachineReport) -> None:
@@ -537,6 +641,42 @@ class RunInvestigation:
                 self._telemetry.counter(
                     "settlediff.checks",
                     {"check_name": finding.check_id, "check_status": finding.status.value},
+                )
+
+    def _record_limit_metric(self, limit_type: str) -> None:
+        if self._telemetry is not None:
+            with suppress(Exception):
+                self._telemetry.counter("settlediff.limit_exceeded", {"limit_type": limit_type})
+
+    def _record_explanation_metrics(self, record: ExplanationRecord) -> None:
+        if self._telemetry is None:
+            return
+        with suppress(Exception):
+            self._telemetry.histogram(
+                "settlediff.model_requests",
+                record.model_requests,
+                {"provider": "hyperfusion"},
+            )
+            self._telemetry.histogram(
+                "settlediff.tool_calls",
+                record.tool_calls,
+                {"provider": "hyperfusion"},
+            )
+            self._telemetry.histogram(
+                "settlediff.input_tokens",
+                record.input_tokens,
+                {"provider": "hyperfusion"},
+            )
+            self._telemetry.histogram(
+                "settlediff.output_tokens",
+                record.output_tokens,
+                {"provider": "hyperfusion"},
+            )
+            if record.model_cost is not None:
+                self._telemetry.histogram(
+                    "settlediff.model_cost",
+                    record.model_cost,
+                    {"provider": "hyperfusion"},
                 )
 
 

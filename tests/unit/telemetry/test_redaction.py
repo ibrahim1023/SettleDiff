@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import io
+import logging
 from collections.abc import Sequence
 from contextlib import suppress
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
@@ -167,6 +169,169 @@ def test_metric_contract_fails_closed(name: str, attributes: dict[str, object]) 
 
     assert reader.get_metrics_data() is None
     telemetry.shutdown()
+
+
+def test_remaining_bounded_metrics_export_useful_values() -> None:
+    reader = InMemoryMetricReader()
+    telemetry = configure_telemetry(
+        configured_settings(), metric_reader=reader, log_stream=io.StringIO()
+    )
+
+    telemetry.provider_errors("contextdev", "ContextDevProtocolError")
+    telemetry.parse_errors("activity")
+    telemetry.ambiguous_matches("transaction_id")
+    telemetry.limit_exceeded("input_tokens")
+    telemetry.prohibited_action_blocked("uncertain_submission_retry")
+    telemetry.component_duration(12.5, "perflo")
+    telemetry.model_requests(2, "hyperfusion")
+    telemetry.tool_calls(3, "hyperfusion")
+    telemetry.token_usage(400, 50, "hyperfusion")
+    telemetry.model_cost(Decimal("0.01"), "hyperfusion")
+    telemetry.activity_candidate_count(4, "transaction_id")
+
+    exported = repr(reader.get_metrics_data())
+    for useful_value in (
+        "settlediff.provider_errors",
+        "settlediff.parse_errors",
+        "settlediff.ambiguous_matches",
+        "settlediff.limit_exceeded",
+        "settlediff.prohibited_action_blocked",
+        "settlediff.component_duration",
+        "settlediff.model_requests",
+        "settlediff.tool_calls",
+        "settlediff.input_tokens",
+        "settlediff.output_tokens",
+        "settlediff.model_cost",
+        "settlediff.activity_candidate_count",
+        "contextdev",
+        "hyperfusion",
+        "transaction_id",
+    ):
+        assert useful_value in exported
+    assert CANARY not in exported
+    telemetry.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("kind", "name", "value", "attributes"),
+    [
+        ("counter", "settlediff.unknown", None, {"provider": "perflo"}),
+        (
+            "counter",
+            "settlediff.provider_errors",
+            None,
+            {"provider": "perflo", "error_class": "PerfloCommandError", "url": CANARY},
+        ),
+        (
+            "counter",
+            "settlediff.provider_errors",
+            None,
+            {"provider": CANARY, "error_class": "PerfloCommandError"},
+        ),
+        ("histogram", "settlediff.unknown", 1, {"provider": "hyperfusion"}),
+        ("histogram", "settlediff.model_requests", 1, {"provider": CANARY}),
+        (
+            "histogram",
+            "settlediff.model_requests",
+            1,
+            {"provider": "hyperfusion", "model": CANARY},
+        ),
+        ("histogram", "settlediff.model_requests", CANARY, {"provider": "hyperfusion"}),
+        ("histogram", "settlediff.model_requests", True, {"provider": "hyperfusion"}),
+        ("histogram", "settlediff.model_requests", -1, {"provider": "hyperfusion"}),
+    ],
+)
+def test_remaining_metric_contract_fails_closed(
+    kind: str, name: str, value: object, attributes: dict[str, object]
+) -> None:
+    reader = InMemoryMetricReader()
+    telemetry = configure_telemetry(
+        configured_settings(), metric_reader=reader, log_stream=io.StringIO()
+    )
+
+    with pytest.raises(ValueError):
+        if kind == "counter":
+            telemetry.counter(name, attributes)
+        else:
+            telemetry.histogram(name, value, attributes)
+
+    assert reader.get_metrics_data() is None
+    telemetry.shutdown()
+
+
+def test_telemetry_delivery_failures_do_not_raise_after_validation() -> None:
+    telemetry = configure_telemetry(configured_settings(), log_stream=io.StringIO())
+
+    class FailingInstrument:
+        def add(self, amount: int, attributes: object) -> None:
+            del amount, attributes
+            raise RuntimeError("counter failed")
+
+        def record(self, value: int | float, attributes: object) -> None:
+            del value, attributes
+            raise RuntimeError("histogram failed")
+
+    class FailingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            del record
+            raise RuntimeError("handler failed")
+
+    telemetry._counters["settlediff.runs"] = FailingInstrument()  # type: ignore[assignment]
+    telemetry._histograms["settlediff.model_requests"] = FailingInstrument()  # type: ignore[assignment]
+    failing_handler = FailingHandler()
+    telemetry._logger.addHandler(  # pyright: ignore[reportPrivateUsage]
+        failing_handler
+    )
+
+    telemetry.counter("settlediff.runs", {"mode": "replay", "verdict": "VERIFIED"})
+    telemetry.histogram("settlediff.model_requests", 1, {"provider": "hyperfusion"})
+    telemetry.event("run.started", {"component": "application"})
+    telemetry._logger.removeHandler(  # pyright: ignore[reportPrivateUsage]
+        failing_handler
+    )
+    telemetry.shutdown()
+
+
+def test_force_flush_and_shutdown_failures_do_not_raise() -> None:
+    telemetry = configure_telemetry(configured_settings(), log_stream=io.StringIO())
+
+    with (
+        patch.object(
+            telemetry._provider,  # pyright: ignore[reportPrivateUsage]
+            "force_flush",
+            side_effect=RuntimeError("trace flush"),
+        ),
+        patch.object(
+            telemetry._meter_provider,  # pyright: ignore[reportPrivateUsage]
+            "force_flush",
+            side_effect=RuntimeError("metric flush"),
+        ),
+    ):
+        telemetry.force_flush()
+
+    with (
+        patch.object(
+            telemetry._provider,  # pyright: ignore[reportPrivateUsage]
+            "shutdown",
+            side_effect=RuntimeError("trace shutdown"),
+        ),
+        patch.object(
+            telemetry._meter_provider,  # pyright: ignore[reportPrivateUsage]
+            "shutdown",
+            side_effect=RuntimeError("metric shutdown"),
+        ),
+        patch.object(
+            telemetry._logger,  # pyright: ignore[reportPrivateUsage]
+            "removeHandler",
+            side_effect=RuntimeError("handler removal"),
+        ),
+        patch.object(
+            telemetry._handler,  # pyright: ignore[reportPrivateUsage]
+            "close",
+            side_effect=RuntimeError("handler close"),
+        ),
+    ):
+        telemetry.shutdown()
 
 
 def test_safe_attributes_accept_only_bounded_operational_fields() -> None:

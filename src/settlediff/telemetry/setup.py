@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 import secrets
 import sys
@@ -12,12 +13,13 @@ from collections.abc import Generator, Mapping
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from decimal import Decimal
+from time import perf_counter
 from typing import IO, cast
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.metrics import Counter
+from opentelemetry.metrics import Counter, Histogram
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import MetricReader, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -30,7 +32,8 @@ from pydantic_ai import Agent
 from pydantic_ai.agent import InstrumentationSettings
 
 from settlediff.config import Settings
-from settlediff.domain.models import CheckStatus, Verdict
+from settlediff.domain.matching import MatchStrategy
+from settlediff.domain.models import ArtifactType, CheckStatus, Verdict
 from settlediff.domain.redaction import redact_embedded_identifiers
 
 SAFE_ATTRIBUTE_KEYS = frozenset(
@@ -83,7 +86,47 @@ _CHECK_NAMES = frozenset(
         "settlement",
     }
 )
-_METRIC_ATTRIBUTE_ENUMS = {
+_PROVIDERS = frozenset({"contextdev", "hyperfusion", "perflo"})
+_PROVIDER_ERROR_CLASSES = frozenset(
+    {
+        "ContextDevProtocolError",
+        "ContextDevUnavailableError",
+        "ExplanationGroundingError",
+        "PerfloCommandError",
+        "PerfloMutationUncertainError",
+        "PerfloOutputLimitError",
+        "PerfloProtocolError",
+        "ProviderError",
+        "TimeoutError",
+    }
+)
+_MATCHER_STRATEGIES = frozenset(strategy.value for strategy in MatchStrategy)
+_LIMIT_TYPES = frozenset(
+    {"contextdev_calls", "model_requests", "tool_calls", "input_tokens", "output_tokens"}
+)
+_ACTION_CLASSES = frozenset(
+    {
+        "authorization_mismatch",
+        "budget_increase",
+        "replay_execution",
+        "uncertain_submission_retry",
+        "verdict_mutation",
+    }
+)
+_COMPONENTS = frozenset(
+    {
+        "agent",
+        "application",
+        "authorization",
+        "contextdev",
+        "domain",
+        "matching",
+        "perflo",
+        "rendering",
+        "storage",
+    }
+)
+_COUNTER_ATTRIBUTE_ENUMS = {
     "settlediff.runs": {
         "mode": _RUN_MODES,
         "verdict": frozenset(verdict.value for verdict in Verdict),
@@ -92,6 +135,25 @@ _METRIC_ATTRIBUTE_ENUMS = {
         "check_name": _CHECK_NAMES,
         "check_status": frozenset(status.value for status in CheckStatus),
     },
+    "settlediff.provider_errors": {
+        "provider": _PROVIDERS,
+        "error_class": _PROVIDER_ERROR_CLASSES,
+    },
+    "settlediff.parse_errors": {
+        "artifact_type": frozenset(artifact_type.value for artifact_type in ArtifactType)
+    },
+    "settlediff.ambiguous_matches": {"matcher_strategy": _MATCHER_STRATEGIES},
+    "settlediff.limit_exceeded": {"limit_type": _LIMIT_TYPES},
+    "settlediff.prohibited_action_blocked": {"action_class": _ACTION_CLASSES},
+}
+_HISTOGRAM_ATTRIBUTE_ENUMS = {
+    "settlediff.component_duration": {"component": _COMPONENTS},
+    "settlediff.model_requests": {"provider": _PROVIDERS},
+    "settlediff.tool_calls": {"provider": _PROVIDERS},
+    "settlediff.input_tokens": {"provider": _PROVIDERS},
+    "settlediff.output_tokens": {"provider": _PROVIDERS},
+    "settlediff.model_cost": {"provider": _PROVIDERS},
+    "settlediff.activity_candidate_count": {"matcher_strategy": _MATCHER_STRATEGIES},
 }
 
 
@@ -109,7 +171,11 @@ class JsonLogFormatter(logging.Formatter):
 
 
 class TelemetryRuntime:
-    """One run-scoped privacy boundary for local logs and exported spans."""
+    """One run-scoped privacy boundary for local logs and exported spans.
+
+    Provider, meter, and instrument construction failures are configuration errors and intentionally
+    propagate. Once constructed, telemetry delivery and shutdown failures are best effort.
+    """
 
     def __init__(
         self,
@@ -133,7 +199,10 @@ class TelemetryRuntime:
         self._tracer: Tracer = provider.get_tracer("settlediff")
         meter = meter_provider.get_meter("settlediff")
         self._counters: dict[str, Counter] = {
-            name: meter.create_counter(name) for name in _METRIC_ATTRIBUTE_ENUMS
+            name: meter.create_counter(name) for name in _COUNTER_ATTRIBUTE_ENUMS
+        }
+        self._histograms: dict[str, Histogram] = {
+            name: meter.create_histogram(name) for name in _HISTOGRAM_ATTRIBUTE_ENUMS
         }
 
     def safe_attributes(self, attributes: Mapping[str, object]) -> dict[str, AttributeValue]:
@@ -152,20 +221,72 @@ class TelemetryRuntime:
 
     def counter(self, name: str, attributes: Mapping[str, object]) -> None:
         """Increment one approved counter after validating its bounded labels."""
-        attribute_enums = _METRIC_ATTRIBUTE_ENUMS.get(name)
+        attribute_enums = _COUNTER_ATTRIBUTE_ENUMS.get(name)
         if attribute_enums is None:
             raise ValueError("unknown telemetry metric name")
-        if set(attributes) != set(attribute_enums):
-            raise ValueError("metric attributes must exactly match the approved keys")
-
-        bounded_attributes: dict[str, AttributeValue] = {}
-        for key, value in attributes.items():
-            if not isinstance(value, str) or value not in attribute_enums[key]:
-                raise ValueError("metric attributes must use bounded enum values")
-            bounded_attributes[key] = value
+        bounded_attributes = self._bounded_metric_attributes(attributes, attribute_enums)
 
         with suppress(Exception):
             self._counters[name].add(1, bounded_attributes)
+
+    def histogram(self, name: str, value: object, attributes: Mapping[str, object]) -> None:
+        """Record a non-negative value in one approved histogram with bounded labels."""
+        attribute_enums = _HISTOGRAM_ATTRIBUTE_ENUMS.get(name)
+        if attribute_enums is None:
+            raise ValueError("unknown telemetry metric name")
+        numeric_value = self._histogram_value(value)
+        bounded_attributes = self._bounded_metric_attributes(attributes, attribute_enums)
+
+        with suppress(Exception):
+            self._histograms[name].record(numeric_value, bounded_attributes)
+
+    def provider_errors(self, provider: str, error_class: str) -> None:
+        self.counter(
+            "settlediff.provider_errors",
+            {"provider": provider, "error_class": error_class},
+        )
+
+    def parse_errors(self, artifact_type: str) -> None:
+        self.counter("settlediff.parse_errors", {"artifact_type": artifact_type})
+
+    def ambiguous_matches(self, matcher_strategy: str) -> None:
+        self.counter("settlediff.ambiguous_matches", {"matcher_strategy": matcher_strategy})
+
+    def limit_exceeded(self, limit_type: str) -> None:
+        self.counter("settlediff.limit_exceeded", {"limit_type": limit_type})
+
+    def prohibited_action_blocked(self, action_class: str) -> None:
+        self.counter("settlediff.prohibited_action_blocked", {"action_class": action_class})
+
+    def component_duration(self, duration_ms: object, component: str) -> None:
+        self.histogram("settlediff.component_duration", duration_ms, {"component": component})
+
+    def model_requests(self, request_count: object, provider: str) -> None:
+        self.histogram("settlediff.model_requests", request_count, {"provider": provider})
+
+    def tool_calls(self, tool_call_count: object, provider: str) -> None:
+        self.histogram("settlediff.tool_calls", tool_call_count, {"provider": provider})
+
+    def token_usage(self, input_tokens: object, output_tokens: object, provider: str) -> None:
+        attributes = self._bounded_metric_attributes(
+            {"provider": provider}, _HISTOGRAM_ATTRIBUTE_ENUMS["settlediff.input_tokens"]
+        )
+        bounded_input = self._histogram_value(input_tokens)
+        bounded_output = self._histogram_value(output_tokens)
+        with suppress(Exception):
+            self._histograms["settlediff.input_tokens"].record(bounded_input, attributes)
+        with suppress(Exception):
+            self._histograms["settlediff.output_tokens"].record(bounded_output, attributes)
+
+    def model_cost(self, cost_estimate: object, provider: str) -> None:
+        self.histogram("settlediff.model_cost", cost_estimate, {"provider": provider})
+
+    def activity_candidate_count(self, count: object, matcher_strategy: str) -> None:
+        self.histogram(
+            "settlediff.activity_candidate_count",
+            count,
+            {"matcher_strategy": matcher_strategy},
+        )
 
     def event(
         self,
@@ -185,6 +306,7 @@ class TelemetryRuntime:
         """Create a domain span without recording exception messages or stack traces."""
         if not _SPAN_NAME.fullmatch(name):
             raise ValueError("telemetry span names must use the settlediff namespace")
+        started_at = perf_counter()
         span = self._tracer.start_span(name, attributes=self.safe_attributes(attributes))
         token = trace.use_span(
             span, end_on_exit=False, record_exception=False, set_status_on_exception=False
@@ -197,6 +319,9 @@ class TelemetryRuntime:
             span.set_status(Status(StatusCode.ERROR))
             raise
         finally:
+            component = attributes.get("component")
+            if isinstance(component, str) and component in _COMPONENTS:
+                self.component_duration((perf_counter() - started_at) * 1000, component)
             with suppress(Exception):
                 span.end()
 
@@ -212,9 +337,33 @@ class TelemetryRuntime:
         if self._owns_meter_provider:
             with suppress(Exception):
                 self._meter_provider.shutdown()
-        self._logger.removeHandler(self._handler)
+        with suppress(Exception):
+            self._logger.removeHandler(self._handler)
         with suppress(Exception):
             self._handler.close()
+
+    def _bounded_metric_attributes(
+        self,
+        attributes: Mapping[str, object],
+        attribute_enums: Mapping[str, frozenset[str]],
+    ) -> dict[str, AttributeValue]:
+        if set(attributes) != set(attribute_enums):
+            raise ValueError("metric attributes must exactly match the approved keys")
+
+        bounded_attributes: dict[str, AttributeValue] = {}
+        for key, value in attributes.items():
+            if not isinstance(value, str) or value not in attribute_enums[key]:
+                raise ValueError("metric attributes must use bounded enum values")
+            bounded_attributes[key] = value
+        return bounded_attributes
+
+    def _histogram_value(self, value: object) -> int | float:
+        if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+            raise ValueError("histogram values must be numeric")
+        numeric_value = float(value) if isinstance(value, Decimal) else value
+        if numeric_value < 0 or not math.isfinite(numeric_value):
+            raise ValueError("histogram values must be finite and non-negative")
+        return numeric_value
 
     def _safe_scalar(self, value: object) -> AttributeValue | None:
         if isinstance(value, bool):

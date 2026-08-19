@@ -106,6 +106,11 @@ async def test_uncertain_execution_verifies_without_a_second_paid_attempt() -> N
     assert outcome.events[-1].state is RunState.COMPLETE
     assert outcome.explanation.source is ExplanationSource.FALLBACK
     assert outcome.explanation.explanation.deterministic_verdict is report.verdict
+    assert outcome.explanation.model_requests == 0
+    assert outcome.explanation.input_tokens == 0
+    assert outcome.explanation.output_tokens == 0
+    assert outcome.explanation.model_cost is None
+    assert outcome.explanation.rejected_output is None
     assert persisted == [event.state for event in outcome.events]
 
 
@@ -929,6 +934,72 @@ async def test_tool_calls_are_accounted_against_the_budget() -> None:
     assert budget.remaining().tool_calls == 0
 
 
+@pytest.mark.asyncio
+async def test_token_budget_exhaustion_preserves_usage_metadata_without_mutating_report() -> None:
+    from settlediff.application.budget import InvestigationBudget, InvestigationBudgetState
+
+    report = replay_fixture(Path("fixtures/clean-success"))
+    report_before = report.model_dump_json()
+    request = PaidExecutionRequest(
+        run_id=report.run_id,
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+    capability = PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    )
+    budget = InvestigationBudgetState(
+        InvestigationBudget.issue(
+            request.run_id,
+            contextdev_calls=1,
+            model_requests=1,
+            tool_calls=1,
+            input_tokens=1,
+            output_tokens=1,
+        )
+    )
+
+    async def execute(
+        _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
+    ) -> None:
+        pass
+
+    async def verify() -> MachineReport:
+        return report
+
+    async def explain(_report: MachineReport, _artifact_ids: frozenset[str]) -> ExplanationRecord:
+        return ExplanationRecord(
+            explanation=InvestigationExplanation(
+                run_id=report.run_id,
+                summary="Provider explanation.",
+                evidence_used=(),
+                finding_ids=(report.findings[0].finding_id,),
+                deterministic_verdict=report.verdict,
+                recommended_next_step=None,
+            ),
+            source=ExplanationSource.PROVIDER,
+            tool_calls=0,
+            model_requests=1,
+            input_tokens=2,
+            output_tokens=1,
+            rejected_output='{"deterministic_verdict":"VERIFIED"}',
+        )
+
+    outcome = await RunInvestigation(execute, verify, explain=explain, budget=budget).execute(
+        LiveRunCommand(request, capability)
+    )
+
+    assert outcome.explanation.source is ExplanationSource.FALLBACK
+    assert outcome.explanation.model_requests == 1
+    assert outcome.explanation.input_tokens == 2
+    assert outcome.explanation.output_tokens == 1
+    assert outcome.explanation.rejected_output == '{"deterministic_verdict":"VERIFIED"}'
+    assert report.model_dump_json() == report_before
+    assert budget.remaining().input_tokens == 1
+    assert budget.remaining().output_tokens == 1
+
+
 class StubSpan:
     def __init__(self, names: list[str], name: str) -> None:
         self._names = names
@@ -962,6 +1033,9 @@ class StubTelemetry:
     def counter(self, name: str, attributes: Mapping[str, object]) -> None:
         self.counters.append((name, dict(attributes)))
 
+    def histogram(self, name: str, value: object, attributes: Mapping[str, object]) -> None:
+        del name, value, attributes
+
 
 @pytest.mark.asyncio
 async def test_run_emits_safe_state_and_boundary_telemetry() -> None:
@@ -992,6 +1066,7 @@ async def test_run_emits_safe_state_and_boundary_telemetry() -> None:
     assert outcome.report is report
     assert telemetry.spans == [
         "settlediff.run",
+        "settlediff.authorize",
         "settlediff.perflo.execute",
         "settlediff.verify",
         "settlediff.agent.explain",
