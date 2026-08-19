@@ -21,6 +21,15 @@
       </select>
     </label>
     <label>
+      <span>Latest state</span>
+      <select name="state">
+        <option value="">All states</option>
+        {% for state in states %}
+          <option value="{{ state }}"{% if selected_state == state %} selected{% endif %}>{{ state|replace("_", " ")|title }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
       <span>Sort</span>
       <select name="sort">
         <option value="newest"{% if selected_sort == "newest" %} selected{% endif %}>Newest first</option>

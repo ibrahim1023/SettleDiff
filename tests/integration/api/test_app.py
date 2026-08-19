@@ -124,7 +124,13 @@ def test_runs_support_search_verdict_filter_and_deterministic_sort(tmp_path: Pat
     repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
     clean = replay_fixture(Path("fixtures/clean-success"))
     paid_failure = replay_fixture(Path("fixtures/paid-failure"))
-    repository.save(clean)
+    timeline = RunTimeline()
+    timeline.transition(RunState.AUTHORIZED)
+    timeline.transition(RunState.EXECUTING)
+    timeline.transition(RunState.VERIFYING)
+    timeline.transition(RunState.EXPLAINING)
+    timeline.transition(RunState.COMPLETE)
+    repository.save(clean, events=timeline.events)
     repository.save(paid_failure)
     client = TestClient(create_app(repository))
 
@@ -139,6 +145,12 @@ def test_runs_support_search_verdict_filter_and_deterministic_sort(tmp_path: Pat
     assert paid_failure.run_id in filtered.text
     assert clean.run_id not in filtered.text
     assert 'option value="PAID_FAILURE" selected' in filtered.text
+
+    state_filtered = client.get("/runs", params={"state": "complete"})
+    assert state_filtered.status_code == 200
+    assert clean.run_id in state_filtered.text
+    assert paid_failure.run_id not in state_filtered.text
+    assert 'option value="complete" selected' in state_filtered.text
 
     sorted_response = client.get("/runs", params={"sort": "verdict"})
     assert sorted_response.status_code == 200

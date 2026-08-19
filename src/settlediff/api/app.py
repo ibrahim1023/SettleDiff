@@ -63,6 +63,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
     def runs(
         q: str | None = None,
         verdict: Verdict | None = None,
+        state: str | None = None,
         sort: Literal["newest", "oldest", "verdict"] = "newest",
     ) -> str:
         reports = list(repository.list())
@@ -91,12 +92,17 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
             }
             for report in reports
         )
+        selected_state = state or ""
+        if selected_state:
+            items = tuple(item for item in items if item["latest_state"] == selected_state)
         return templates.get_template("runs.html").render(
             items=items,
             query=query,
             selected_verdict=verdict.value if verdict is not None else "",
+            selected_state=selected_state,
             selected_sort=sort,
             verdicts=tuple(Verdict),
+            states=("no timeline", *(run_state.value for run_state in RunState)),
         )
 
     app.get("/runs", response_class=HTMLResponse)(runs)

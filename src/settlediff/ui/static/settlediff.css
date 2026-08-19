@@ -38,7 +38,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .eyebrow { margin-bottom: .55rem; color: var(--accent); font-size: .73rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
 .breadcrumb { display: flex; gap: .5rem; align-items: center; margin-bottom: 1.25rem; color: var(--muted); font-size: .8rem; font-family: ui-monospace, SFMono-Regular, monospace; }
 .breadcrumb a { color: #ceccff; text-underline-offset: .25rem; }
-.run-filters { display: grid; grid-template-columns: minmax(15rem, 1fr) minmax(11rem, auto) minmax(10rem, auto) auto auto; gap: .7rem; align-items: end; margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: .8rem; background: var(--surface); }
+.run-filters { display: grid; grid-template-columns: minmax(13rem, 1fr) repeat(3, minmax(9rem, auto)) auto auto; gap: .7rem; align-items: end; margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: .8rem; background: var(--surface); }
 .run-filters label { display: grid; gap: .35rem; color: var(--muted); font-size: .72rem; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
 .run-filters input, .run-filters select { min-height: 2.65rem; width: 100%; border: 1px solid var(--border-strong); border-radius: .5rem; padding: .55rem .65rem; color: var(--text); background: #121519; font: inherit; }
 .run-filters button, .clear-filters, .secondary-action { display: inline-flex; min-height: 2.65rem; align-items: center; justify-content: center; border-radius: .5rem; padding: .55rem .8rem; font: inherit; font-weight: 750; text-decoration: none; }
@@ -138,6 +138,10 @@ tr:last-child > * { border-bottom: 0; }
 .artifact-actions button { min-height: 2rem; border: 1px solid var(--border-strong); border-radius: .45rem; padding: .3rem .55rem; color: #d6d3ff; background: transparent; cursor: pointer; font: .72rem ui-monospace, SFMono-Regular, monospace; }
 .artifact-json { max-height: 30rem; margin: .7rem .9rem .9rem; padding: .9rem; overflow: auto; border: 1px solid var(--border); border-radius: .55rem; background: #101215; color: #dce1e6; font: .74rem/1.55 ui-monospace, SFMono-Regular, monospace; white-space: pre; }
 .artifact-json.wrap-json { white-space: pre-wrap; }
+@media (min-width: 38.01rem) {
+  .evidence-table thead th:first-child, .evidence-table tbody th { position: sticky; left: 0; z-index: 1; background: #15181c; }
+  .evidence-table thead th:first-child { z-index: 2; }
+}
 @media (max-width: 52rem) {
   .run-filters { grid-template-columns: 1fr 1fr; }
   .search-field { grid-column: 1 / -1; }
