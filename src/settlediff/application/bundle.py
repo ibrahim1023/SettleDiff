@@ -1,0 +1,124 @@
+"""Portable, integrity-checked exports of persisted investigation evidence."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from hashlib import sha256
+from typing import Annotated, Literal, Protocol
+
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
+
+from settlediff.application.run import RunEvent
+from settlediff.domain.models import EvidenceArtifact, ExplanationRecord, MachineReport, NonEmptyStr
+from settlediff.domain.redaction import redact_artifact
+from settlediff.domain.verdict import derive_verdict
+
+Sha256Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+
+
+class BundleError(ValueError):
+    """A bundle could not be exported, loaded, or deterministically verified."""
+
+
+class EvidenceBundle(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    run_id: NonEmptyStr
+    report: MachineReport
+    explanation: ExplanationRecord | None
+    events: tuple[RunEvent, ...]
+    artifacts: tuple[EvidenceArtifact, ...]
+    integrity: Sha256Digest
+
+
+class BundleRepository(Protocol):
+    def get(self, run_id: str) -> MachineReport | None: ...
+
+    def events(self, run_id: str) -> tuple[RunEvent, ...]: ...
+
+    def artifacts(self, run_id: str) -> tuple[EvidenceArtifact, ...]: ...
+
+    def explanation(self, run_id: str) -> ExplanationRecord | None: ...
+
+
+def _canonical_json(value: Mapping[str, object]) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+
+def _payload(bundle: EvidenceBundle) -> dict[str, object]:
+    return bundle.model_dump(mode="json", exclude={"integrity"})
+
+
+def _digest(bundle: EvidenceBundle) -> str:
+    return sha256(_canonical_json(_payload(bundle))).hexdigest()
+
+
+def export_bundle(repository: BundleRepository, run_id: str) -> EvidenceBundle:
+    """Export one persisted run as a canonical, redacted evidence bundle."""
+    report = repository.get(run_id)
+    if report is None:
+        raise BundleError(f"run {run_id!r} not found")
+
+    artifacts = tuple(redact_artifact(artifact) for artifact in repository.artifacts(run_id))
+    if any(not artifact.redacted for artifact in artifacts):
+        raise BundleError("bundle contains an unredacted artifact")
+
+    bundle = EvidenceBundle(
+        run_id=run_id,
+        report=report,
+        explanation=repository.explanation(run_id),
+        events=repository.events(run_id),
+        artifacts=artifacts,
+        integrity="0" * 64,
+    )
+    return bundle.model_copy(update={"integrity": _digest(bundle)})
+
+
+def verify_bundle(bundle: EvidenceBundle) -> MachineReport:
+    """Verify bundle integrity and persisted deterministic-report consistency."""
+    if _digest(bundle) != bundle.integrity:
+        raise BundleError("bundle integrity digest does not match its payload")
+
+    report = bundle.report
+    if bundle.run_id != report.run_id or report.run_id != report.intent.run_id:
+        raise BundleError("bundle, report, and intent run IDs do not match")
+    if any(not artifact.redacted for artifact in bundle.artifacts):
+        raise BundleError("bundle contains an unredacted artifact")
+    if derive_verdict(report.findings) is not report.verdict:
+        raise BundleError("report verdict does not match its persisted findings")
+
+    finding_ids = tuple(finding.finding_id for finding in report.findings)
+    if len(set(finding_ids)) != len(finding_ids):
+        raise BundleError("report contains duplicate finding IDs")
+
+    if bundle.explanation is not None:
+        explanation = bundle.explanation.explanation
+        known_finding_ids = set(finding_ids)
+        if (
+            explanation.run_id != report.run_id
+            or explanation.deterministic_verdict is not report.verdict
+            or any(finding_id not in known_finding_ids for finding_id in explanation.finding_ids)
+        ):
+            raise BundleError("explanation does not match the deterministic report")
+
+    return report
+
+
+def serialize_bundle(bundle: EvidenceBundle) -> bytes:
+    """Serialize a bundle as compact, sorted UTF-8 JSON."""
+    return _canonical_json(bundle.model_dump(mode="json"))
+
+
+def load_bundle(data: bytes) -> EvidenceBundle:
+    """Load strict bundle JSON while presenting one typed boundary error."""
+    try:
+        return EvidenceBundle.model_validate_json(data, strict=True)
+    except (ValidationError, ValueError, UnicodeDecodeError) as error:
+        raise BundleError("invalid evidence bundle") from error
