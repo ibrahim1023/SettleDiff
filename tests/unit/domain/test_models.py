@@ -233,6 +233,64 @@ def test_explanation_record_round_trips_with_explicit_provenance() -> None:
     assert restored.tool_calls == 2
 
 
+def test_explanation_record_usage_defaults_support_existing_rows() -> None:
+    explanation = InvestigationExplanation(
+        run_id="run_syn_001",
+        summary="Deterministic verification completed.",
+        evidence_used=(),
+        finding_ids=(),
+        deterministic_verdict=Verdict.VERIFIED,
+        recommended_next_step=None,
+    )
+    existing_json = (
+        '{"schema_version":1,"explanation":'
+        + explanation.model_dump_json()
+        + ',"source":"fallback","tool_calls":0}'
+    )
+
+    restored = ExplanationRecord.model_validate_json(existing_json)
+
+    assert restored.model_requests == 0
+    assert restored.input_tokens == 0
+    assert restored.output_tokens == 0
+    assert restored.model_cost is None
+    assert restored.rejected_output is None
+
+
+def test_explanation_record_usage_is_bounded_and_uses_decimal_cost() -> None:
+    explanation = InvestigationExplanation(
+        run_id="run_syn_001",
+        summary="Deterministic verification completed.",
+        evidence_used=(),
+        finding_ids=(),
+        deterministic_verdict=Verdict.VERIFIED,
+        recommended_next_step=None,
+    )
+    record = ExplanationRecord(
+        explanation=explanation,
+        source=ExplanationSource.PROVIDER,
+        tool_calls=1,
+        model_requests=2,
+        input_tokens=123,
+        output_tokens=45,
+        model_cost=Decimal("0.0012"),
+        rejected_output="redacted diagnostic",
+    )
+
+    restored = ExplanationRecord.model_validate_json(record.model_dump_json())
+
+    assert restored.model_cost == Decimal("0.0012")
+    with pytest.raises(ValidationError):
+        ExplanationRecord(
+            explanation=explanation,
+            source=ExplanationSource.PROVIDER,
+            tool_calls=0,
+            model_requests=11,
+        )
+    with pytest.raises(ValidationError):
+        ExplanationRecord.model_validate({**record.model_dump(), "rejected_output": "x" * 2049})
+
+
 def test_finding_money_round_trips_as_money_not_generic_json() -> None:
     finding = Finding(
         finding_id="finding_budget_001",

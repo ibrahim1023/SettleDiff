@@ -133,6 +133,13 @@ def test_explanation_round_trips_strict_json_with_only_narrative_identifiers_red
         ),
         source=ExplanationSource.PROVIDER,
         tool_calls=2,
+        model_requests=1,
+        input_tokens=321,
+        output_tokens=54,
+        rejected_output=(
+            f'{{"api_key":"{CANARY}","transaction_id":"{summary_transaction}",'
+            f'"contact":"{summary_email}"}}'
+        ),
     )
     before = explanation.model_dump_json()
     repository = SQLiteReportRepository(database)
@@ -147,6 +154,13 @@ def test_explanation_round_trips_strict_json_with_only_narrative_identifiers_red
     assert loaded.explanation.evidence_used == explanation.explanation.evidence_used
     assert loaded.source is ExplanationSource.PROVIDER
     assert loaded.tool_calls == 2
+    assert loaded.model_requests == 1
+    assert loaded.input_tokens == 321
+    assert loaded.output_tokens == 54
+    assert loaded.rejected_output is not None
+    assert CANARY not in loaded.rejected_output
+    assert summary_transaction not in loaded.rejected_output
+    assert summary_email not in loaded.rejected_output
     assert loaded.explanation.summary == "Ask o***@example.com about transaction 0x0123…cdef."
     assert loaded.explanation.recommended_next_step == "Review account abcd…6789."
     with closing(sqlite3.connect(database)) as connection:

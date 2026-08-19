@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
+from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_ai import Agent, RunContext, UsageLimits
 from pydantic_ai.models import Model
 
@@ -22,7 +24,31 @@ class InvestigationResult(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
     explanation: InvestigationExplanation
-    tool_calls: int = Field(ge=0)
+    tool_calls: int = Field(ge=0, le=25)
+    used_fallback: bool
+    model_requests: int = Field(default=0, ge=0, le=10)
+    input_tokens: int = Field(default=0, ge=0, le=100_000)
+    output_tokens: int = Field(default=0, ge=0, le=10_000)
+    model_cost: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("1000"))
+    rejected_output: str | None = Field(default=None, min_length=1, max_length=2048)
+
+
+class _ProviderExplanation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    summary: str
+    evidence_used: tuple[str, ...]
+    finding_ids: tuple[str, ...]
+    deterministic_verdict: str
+    recommended_next_step: str | None
+
+
+class _ProviderInvestigationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    explanation: _ProviderExplanation
+    tool_calls: int = Field(ge=0, le=25)
     used_fallback: bool
 
 
@@ -45,12 +71,14 @@ def build_investigation_prompt(report: MachineReport) -> str:
     )
 
 
-def build_investigator(model: Model) -> Agent[InvestigationDependencies, InvestigationResult]:
+def build_investigator(
+    model: Model,
+) -> Agent[InvestigationDependencies, _ProviderInvestigationResult]:
     """Build a constant, evidence-only tool set; it has no payment or verdict tool."""
     agent = Agent(
         model,
         deps_type=InvestigationDependencies,
-        output_type=InvestigationResult,
+        output_type=_ProviderInvestigationResult,
         instructions=(
             "Select evidence needed to explain the already-computed report. "
             "You cannot alter findings or verdicts. Cite only tool artifact IDs."
@@ -77,6 +105,18 @@ def build_investigator(model: Model) -> Agent[InvestigationDependencies, Investi
     return agent
 
 
+def _rejected_output_diagnostic(
+    output: InvestigationResult | _ProviderInvestigationResult,
+) -> str:
+    diagnostic = {
+        "deterministic_verdict": str(output.explanation.deterministic_verdict),
+        "evidence_count": len(output.explanation.evidence_used),
+        "finding_count": len(output.explanation.finding_ids),
+        "tool_calls": output.tool_calls,
+    }
+    return json.dumps(diagnostic, sort_keys=True, separators=(",", ":"))
+
+
 async def investigate(
     state: InvestigationState,
     deps: InvestigationDependencies,
@@ -99,15 +139,51 @@ async def investigate(
                     output_tokens_limit=1_000,
                 ),
             )
-        explanation = validate_explanation(
-            response.output.explanation, state.report, set(state.artifact_ids)
-        )
-        return response.output.model_copy(
-            update={"explanation": explanation, "used_fallback": False}
-        )
-    except (ExplanationGroundingError, TimeoutError, RuntimeError):
+    except (TimeoutError, RuntimeError):
         return InvestigationResult(
             explanation=fallback_explanation(state.report, set(state.artifact_ids)),
             tool_calls=0,
             used_fallback=True,
         )
+
+    usage = response.usage
+    try:
+        output = InvestigationResult.model_validate_json(response.output.model_dump_json())
+    except ValidationError:
+        return InvestigationResult(
+            explanation=fallback_explanation(state.report, set(state.artifact_ids)),
+            tool_calls=usage.tool_calls,
+            used_fallback=True,
+            model_requests=usage.requests,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            model_cost=None,
+            rejected_output=_rejected_output_diagnostic(response.output),
+        )
+    try:
+        explanation = validate_explanation(
+            output.explanation, state.report, set(state.artifact_ids)
+        )
+    except ExplanationGroundingError:
+        return InvestigationResult(
+            explanation=fallback_explanation(state.report, set(state.artifact_ids)),
+            tool_calls=usage.tool_calls,
+            used_fallback=True,
+            model_requests=usage.requests,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            model_cost=None,
+            rejected_output=_rejected_output_diagnostic(output),
+        )
+    return output.model_copy(
+        update={
+            "explanation": explanation,
+            "used_fallback": False,
+            "tool_calls": usage.tool_calls,
+            "model_requests": usage.requests,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "model_cost": None,
+            "rejected_output": None,
+        }
+    )

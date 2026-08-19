@@ -2,14 +2,32 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from threading import RLock
 from typing import cast
 
+from pydantic import JsonValue, TypeAdapter, ValidationError
+
 from settlediff.application.run import RunEvent
 from settlediff.domain.models import EvidenceArtifact, ExplanationRecord, MachineReport
-from settlediff.domain.redaction import redact_artifact, redact_embedded_identifiers, redact_report
+from settlediff.domain.redaction import (
+    redact_artifact,
+    redact_embedded_identifiers,
+    redact_report,
+    redact_value,
+)
+
+_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+
+
+def _redact_rejected_output(value: str) -> str:
+    try:
+        parsed = _JSON_VALUE_ADAPTER.validate_python(json.loads(value))
+    except (json.JSONDecodeError, ValidationError):
+        return redact_embedded_identifiers(value)
+    return json.dumps(redact_value(parsed), sort_keys=True, separators=(",", ":"))
 
 
 def _redact_explanation(record: ExplanationRecord) -> ExplanationRecord:
@@ -24,7 +42,16 @@ def _redact_explanation(record: ExplanationRecord) -> ExplanationRecord:
             ),
         }
     )
-    return record.model_copy(update={"explanation": redacted_explanation})
+    return record.model_copy(
+        update={
+            "explanation": redacted_explanation,
+            "rejected_output": (
+                _redact_rejected_output(record.rejected_output)
+                if record.rejected_output is not None
+                else None
+            ),
+        }
+    )
 
 
 class SQLiteReportRepository:
