@@ -118,7 +118,7 @@ SettleDiff is a single Python application with a functional domain core and adap
 - `api` and `ui`: FastAPI with server-rendered Jinja/HTMX;
 - `telemetry`: optional OpenTelemetry export with sensitive content disabled.
 
-See [Architecture](docs/architecture/overview.md), [ADRs](docs/decisions/README.md), and the [repository map](docs/development/repository-structure.md).
+See [Architecture](docs/architecture/overview.md), [ADRs](docs/decisions/README.md), the [repository map](docs/development/repository-structure.md), and [local data backup and migration operations](docs/development/local-data.md).
 
 ## Development policy
 
