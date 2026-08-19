@@ -29,6 +29,40 @@ REQUEST = ContextEvidenceRequest(
     url="https://status.example.invalid/incidents/syn_incident", claim="HTTP 503"
 )
 NOW = datetime(2026, 8, 13, tzinfo=UTC)
+INELIGIBLE_STATUS_URLS = [
+    "http://status.example.invalid/x",
+    "status.example.invalid",
+    "https://",
+    "https://user@status.example.invalid/x",
+    "https://user:password@status.example.invalid/x",
+    "https://status.example.invalid/x#incident",
+    "https://status.example.invalid/x#",
+    "https://status.example.invalid:444/x",
+    "https://status.example.invalid:not-a-port/x",
+    "https://status.example.invalid:/x",
+    "https://localhost/x",
+    "https://LOCALHOST./x",
+    "https://service.localhost/x",
+    "https://service.localhost./x",
+    "https://127.0.0.1/x",
+    "https://10.0.0.1/x",
+    "https://169.254.1.1/x",
+    "https://224.0.0.1/x",
+    "https://240.0.0.1/x",
+    "https://0.0.0.0/x",
+    "https://[::1]/x",
+    "https://[fd00::1]/x",
+    "https://[fe80::1]/x",
+    "https://[ff00::1]/x",
+    "https://[100::1]/x",
+    "https://[::]/x",
+    "https://bad_host.example/x",
+    "https://-bad.example/x",
+    "https://bad-.example/x",
+    "https://bad..example/x",
+    "https://status.example.com../x",
+    "https://[not-an-ip]/x",
+]
 
 
 def fixture_bytes(name: str) -> bytes:
@@ -156,11 +190,8 @@ async def test_oversized_response_is_a_protocol_error_with_a_byte_count() -> Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "url",
-    ["http://status.example.invalid/x", "status.example.invalid", "https://"],
-)
-async def test_non_https_evidence_urls_are_rejected_before_request(url: str) -> None:
+@pytest.mark.parametrize("url", INELIGIBLE_STATUS_URLS)
+async def test_ineligible_evidence_urls_are_rejected_before_request(url: str) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise AssertionError("no request may be sent for an ineligible URL")
 
@@ -214,14 +245,31 @@ def execution_record(*, status: int | None, response_body: object) -> ExecutionR
             {"status_url": "https://status.example.invalid/x"},
             "https://status.example.invalid/x",
         ),
-        (503, {"status_url": "http://status.example.invalid/x"}, None),
+        (
+            503,
+            {"status_url": "https://status.public-provider.com:443/x"},
+            "https://status.public-provider.com:443/x",
+        ),
+        (503, {"status_url": "https://8.8.8.8/x"}, "https://8.8.8.8/x"),
+        (
+            503,
+            {"status_url": "https://[2606:4700:4700::1111]/x"},
+            "https://[2606:4700:4700::1111]/x",
+        ),
         (503, {"error": "synthetic"}, None),
         (503, None, None),
         (200, {"status_url": "https://status.example.invalid/x"}, None),
         (None, {"status_url": "https://status.example.invalid/x"}, None),
     ],
 )
-def test_eligibility_requires_failed_service_and_https_status_url(
+def test_eligibility_requires_failed_service_and_safe_https_status_url(
     status: int | None, body: object, expected: str | None
 ) -> None:
     assert eligible_evidence_url(execution_record(status=status, response_body=body)) == expected
+
+
+@pytest.mark.parametrize("url", INELIGIBLE_STATUS_URLS)
+def test_eligibility_rejects_unsafe_or_malformed_status_url(url: str) -> None:
+    execution = execution_record(status=503, response_body={"status_url": url})
+
+    assert eligible_evidence_url(execution) is None

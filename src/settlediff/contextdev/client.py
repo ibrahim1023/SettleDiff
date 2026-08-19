@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
+from ipaddress import ip_address
 from typing import Literal, Protocol, Self, cast
 from urllib.parse import urlparse
 
@@ -115,7 +116,7 @@ class ContextEvidenceRecord(CanonicalModel):
             ):
                 raise ValueError("not-applicable Context evidence cannot contain provider data")
             return self
-        if self.status_url is None or not _is_https_url(self.status_url):
+        if self.status_url is None or not _is_eligible_evidence_url(self.status_url):
             raise ValueError("attempted Context evidence requires an HTTPS status URL")
         if (self.state is ContextEvidenceState.PRESENT) is (self.excerpt is None):
             raise ValueError("only present Context evidence requires an excerpt")
@@ -176,7 +177,11 @@ def parse_contextdev_error(
 
 
 def eligible_evidence_url(execution: ExecutionRecord) -> str | None:
-    """Return an HTTPS status URL only when the purchased service failed."""
+    """Return a safe HTTPS status URL only when the purchased service failed.
+
+    Public cross-domain status hosts remain eligible because status providers commonly differ
+    from service hosts. Operator approval of cross-domain hosts is a separate product policy.
+    """
     status = execution.upstream_http_status
     if status is None or 200 <= status < 300:
         return None
@@ -186,7 +191,7 @@ def eligible_evidence_url(execution: ExecutionRecord) -> str | None:
     candidate = cast(dict[str, JsonValue], body).get("status_url")
     if not isinstance(candidate, str):
         return None
-    return candidate if _is_https_url(candidate) else None
+    return candidate if _is_eligible_evidence_url(candidate) else None
 
 
 class ContextDevClient:
@@ -212,8 +217,8 @@ class ContextDevClient:
         )
 
     async def verify(self, request: ContextEvidenceRequest) -> ContextEvidence:
-        if not _is_https_url(request.url):
-            raise ValueError("Context.dev evidence URL must be an absolute HTTPS URL")
+        if not _is_eligible_evidence_url(request.url):
+            raise ValueError("Context.dev evidence URL must be an eligible HTTPS URL")
         try:
             response = await self._client.get(
                 self._endpoint,
@@ -294,6 +299,69 @@ def _exact_excerpt(markdown: str, claim: str) -> str | None:
     return redact_embedded_identifiers(excerpt) or None
 
 
+def _is_eligible_evidence_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return False
+    if (
+        parsed.scheme != "https"
+        or hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or "#" in value
+        or parsed.netloc.endswith(":")
+        or port not in (None, 443)
+    ):
+        return False
+    return _is_public_host(hostname)
+
+
+def _is_public_host(hostname: str) -> bool:
+    if hostname.endswith(".."):
+        return False
+    host = hostname.rstrip(".").casefold()
+    if not host or host == "localhost" or host.endswith(".localhost") or "%" in host:
+        return False
+    try:
+        address = ip_address(host)
+    except ValueError:
+        return _is_valid_domain_host(host)
+    return not any(
+        (
+            address.is_loopback,
+            address.is_private,
+            address.is_link_local,
+            address.is_multicast,
+            address.is_reserved,
+            address.is_unspecified,
+        )
+    )
+
+
+def _is_valid_domain_host(host: str) -> bool:
+    try:
+        ascii_host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return False
+    if len(ascii_host) > 253 or ascii_host.replace(".", "").isdigit():
+        return False
+    labels = ascii_host.split(".")
+    return all(
+        label
+        and len(label) <= 63
+        and label[0].isalnum()
+        and label[-1].isalnum()
+        and all(character.isalnum() or character == "-" for character in label)
+        for label in labels
+    )
+
+
 def _is_https_url(value: str) -> bool:
-    parsed = urlparse(value)
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
     return parsed.scheme == "https" and bool(parsed.netloc)
