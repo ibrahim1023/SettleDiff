@@ -142,7 +142,7 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
     assert "Body digest:" in result.stdout
     assert "Investigation budget:" in result.stdout
     assert "Context.dev calls: 1" in result.stdout
-    assert "model requests: 1" in result.stdout
+    assert "model requests: 4" in result.stdout
 
 
 def test_transaction_handle_comes_only_from_captured_execution_evidence() -> None:
@@ -250,7 +250,7 @@ def test_run_reports_unresolved_submission_recovery(monkeypatch: pytest.MonkeyPa
     )
 
     assert result.exit_code == 0
-    assert calls == ["check", "schema", "fetch", "activity", "activity"]
+    assert calls == ["check", "schema", "fetch", "activity"]
     assert "Submission: unresolved" in result.stdout
     assert "proof of non-submission: no" in result.stdout
 

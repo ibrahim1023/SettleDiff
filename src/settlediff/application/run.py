@@ -17,6 +17,12 @@ from settlediff.agent.grounding import (
     fallback_explanation,
     validate_explanation,
 )
+from settlediff.agent.investigator import (
+    INVESTIGATION_INPUT_TOKEN_LIMIT,
+    INVESTIGATION_OUTPUT_TOKEN_LIMIT,
+    INVESTIGATION_REQUEST_LIMIT,
+    INVESTIGATION_TOOL_CALL_LIMIT,
+)
 from settlediff.application.auth import (
     ConsumedPaidAuthorization,
     PaidExecutionCapability,
@@ -271,6 +277,7 @@ class LiveEvidenceCollector:
             activity_data = _result_data(await self._perflo.get_activity())
         artifact = _artifact(run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data)
         self._recovery = artifact
+        self._activity = artifact
         records = (
             cast(dict[str, JsonValue], activity_data).get("records")
             if isinstance(activity_data, dict)
@@ -292,13 +299,15 @@ class LiveEvidenceCollector:
             self._execution = _artifact(
                 request.run_id, ArtifactType.EXECUTION, "perflo.fetch_status", execution_data
             )
-        with self._span(
-            "settlediff.perflo.activity", {"run_id": request.run_id, "component": "perflo"}
-        ):
-            activity_data = _result_data(await self._perflo.get_activity())
-        self._activity = _artifact(
-            request.run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data
-        )
+        if self._activity is None:
+            with self._span(
+                "settlediff.perflo.activity",
+                {"run_id": request.run_id, "component": "perflo"},
+            ):
+                activity_data = _result_data(await self._perflo.get_activity())
+            self._activity = _artifact(
+                request.run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data
+            )
         contract = normalize_contract(self._contract)
         execution = normalize_execution(self._execution)
         with self._span(
@@ -570,6 +579,35 @@ class RunInvestigation:
             evidence_ids=tuple(artifact.artifact_id for artifact in artifacts),
         )
 
+    def _explanation_budget_blocker(self) -> str | None:
+        if self._budget is None:
+            return None
+        remaining = self._budget.remaining()
+        for limit_type, available, required in (
+            ("model_requests", remaining.model_requests, INVESTIGATION_REQUEST_LIMIT),
+            ("tool_calls", remaining.tool_calls, INVESTIGATION_TOOL_CALL_LIMIT),
+            ("input_tokens", remaining.input_tokens, INVESTIGATION_INPUT_TOKEN_LIMIT),
+            ("output_tokens", remaining.output_tokens, INVESTIGATION_OUTPUT_TOKEN_LIMIT),
+        ):
+            if available < required:
+                return limit_type
+        return None
+
+    async def _consume_explanation_usage(
+        self, report: MachineReport, record: ExplanationRecord
+    ) -> None:
+        if self._budget is None:
+            return
+        for _ in range(record.model_requests):
+            await self._budget.consume_model_request(run_id=report.run_id)
+        for _ in range(record.tool_calls):
+            await self._budget.consume_tool_call(run_id=report.run_id)
+        await self._budget.consume_tokens(
+            record.input_tokens,
+            record.output_tokens,
+            run_id=report.run_id,
+        )
+
     async def _explain_report(self, report: MachineReport) -> ExplanationRecord:
         artifact_ids: frozenset[str] = (
             self._artifact_ids() if self._artifact_ids is not None else frozenset()
@@ -581,41 +619,15 @@ class RunInvestigation:
         )
         if self._explain is None:
             return fallback
-        if self._budget is not None:
-            try:
-                await self._budget.consume_model_request(run_id=report.run_id)
-            except InvestigationBudgetExceeded:
-                self._record_limit_metric("model_requests")
-                return fallback
+        blocker = self._explanation_budget_blocker()
+        if blocker is not None:
+            self._record_limit_metric(blocker)
+            return fallback
         record: ExplanationRecord | None = None
         try:
             record = await self._explain(report, artifact_ids)
             explanation = validate_explanation(record.explanation, report, set(artifact_ids))
-            if self._budget is not None:
-                try:
-                    for _ in range(max(0, record.model_requests - 1)):
-                        await self._budget.consume_model_request(run_id=report.run_id)
-                except InvestigationBudgetExceeded:
-                    self._record_limit_metric("model_requests")
-                    raise
-                try:
-                    for _ in range(record.tool_calls):
-                        await self._budget.consume_tool_call(run_id=report.run_id)
-                except InvestigationBudgetExceeded:
-                    self._record_limit_metric("tool_calls")
-                    raise
-                try:
-                    await self._budget.consume_tokens(
-                        record.input_tokens,
-                        record.output_tokens,
-                        run_id=report.run_id,
-                    )
-                except InvestigationBudgetExceeded as error:
-                    limit_type = (
-                        "output_tokens" if "output_tokens" in str(error) else "input_tokens"
-                    )
-                    self._record_limit_metric(limit_type)
-                    raise
+            await self._consume_explanation_usage(report, record)
         except (ExplanationGroundingError, RuntimeError, TimeoutError, ValueError):
             if record is None:
                 return fallback

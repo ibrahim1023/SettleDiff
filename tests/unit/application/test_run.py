@@ -897,12 +897,13 @@ async def test_tool_calls_are_accounted_against_the_budget() -> None:
         InvestigationBudget.issue(
             request.run_id,
             contextdev_calls=1,
-            model_requests=1,
+            model_requests=4,
             tool_calls=1,
             input_tokens=8_000,
             output_tokens=1_000,
         )
     )
+    explanation_calls: list[str] = []
 
     async def execute(
         _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
@@ -913,6 +914,7 @@ async def test_tool_calls_are_accounted_against_the_budget() -> None:
         return report
 
     async def explain(_report: MachineReport, _artifact_ids: frozenset[str]) -> ExplanationRecord:
+        explanation_calls.append("called")
         return ExplanationRecord(
             explanation=InvestigationExplanation(
                 run_id=report.run_id,
@@ -931,11 +933,12 @@ async def test_tool_calls_are_accounted_against_the_budget() -> None:
     )
 
     assert outcome.explanation.source is ExplanationSource.FALLBACK
-    assert budget.remaining().tool_calls == 0
+    assert explanation_calls == []
+    assert budget.remaining().tool_calls == 1
 
 
 @pytest.mark.asyncio
-async def test_token_budget_exhaustion_preserves_usage_metadata_without_mutating_report() -> None:
+async def test_token_budget_exhaustion_skips_model_without_mutating_report() -> None:
     from settlediff.application.budget import InvestigationBudget, InvestigationBudgetState
 
     report = replay_fixture(Path("fixtures/clean-success"))
@@ -953,12 +956,13 @@ async def test_token_budget_exhaustion_preserves_usage_metadata_without_mutating
         InvestigationBudget.issue(
             request.run_id,
             contextdev_calls=1,
-            model_requests=1,
-            tool_calls=1,
+            model_requests=4,
+            tool_calls=6,
             input_tokens=1,
             output_tokens=1,
         )
     )
+    explanation_calls: list[str] = []
 
     async def execute(
         _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
@@ -969,6 +973,7 @@ async def test_token_budget_exhaustion_preserves_usage_metadata_without_mutating
         return report
 
     async def explain(_report: MachineReport, _artifact_ids: frozenset[str]) -> ExplanationRecord:
+        explanation_calls.append("called")
         return ExplanationRecord(
             explanation=InvestigationExplanation(
                 run_id=report.run_id,
@@ -991,10 +996,11 @@ async def test_token_budget_exhaustion_preserves_usage_metadata_without_mutating
     )
 
     assert outcome.explanation.source is ExplanationSource.FALLBACK
-    assert outcome.explanation.model_requests == 1
-    assert outcome.explanation.input_tokens == 2
-    assert outcome.explanation.output_tokens == 1
-    assert outcome.explanation.rejected_output == '{"deterministic_verdict":"VERIFIED"}'
+    assert explanation_calls == []
+    assert outcome.explanation.model_requests == 0
+    assert outcome.explanation.input_tokens == 0
+    assert outcome.explanation.output_tokens == 0
+    assert outcome.explanation.rejected_output is None
     assert report.model_dump_json() == report_before
     assert budget.remaining().input_tokens == 1
     assert budget.remaining().output_tokens == 1

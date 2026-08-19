@@ -16,7 +16,14 @@ from pydantic import JsonValue, ValidationError
 from pydantic_ai.models import Model
 
 from settlediff import __version__
-from settlediff.agent.investigator import InvestigationState, investigate
+from settlediff.agent.investigator import (
+    INVESTIGATION_INPUT_TOKEN_LIMIT,
+    INVESTIGATION_OUTPUT_TOKEN_LIMIT,
+    INVESTIGATION_REQUEST_LIMIT,
+    INVESTIGATION_TOOL_CALL_LIMIT,
+    InvestigationState,
+    investigate,
+)
 from settlediff.agent.model import build_hyperfusion_model
 from settlediff.agent.tools import build_investigation_dependencies
 from settlediff.api.app import create_app
@@ -31,6 +38,7 @@ from settlediff.application.bundle import (
 )
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
+    InvestigationOutcome,
     LiveEvidenceCollector,
     LiveRunCommand,
     RunInvestigation,
@@ -46,7 +54,7 @@ from settlediff.domain.models import (
 from settlediff.domain.money import Money
 from settlediff.perflo.client import PerfloClient, PerfloClientError
 from settlediff.storage.sqlite import SQLiteReportRepository
-from settlediff.telemetry.setup import configure_telemetry
+from settlediff.telemetry.setup import TelemetryRuntime, configure_telemetry
 
 app = typer.Typer(
     name="settlediff",
@@ -157,6 +165,57 @@ def _transaction_handle(collector: LiveEvidenceCollector) -> str | None:
     return None
 
 
+async def _execute_live_run(
+    request: PaidExecutionRequest,
+    settings: Settings,
+    contextdev: ContextDevClient,
+    collector: LiveEvidenceCollector,
+    budget: InvestigationBudgetState,
+    telemetry: TelemetryRuntime,
+) -> InvestigationOutcome:
+    """Keep every async live boundary on one event loop."""
+    try:
+        try:
+            await collector.preflight(request)
+        except (PerfloClientError, ValueError) as error:
+            typer.echo(f"Live preflight failed: {error}", err=True)
+            raise typer.Exit(code=2) from error
+
+        capability = PaidExecutionCapability.issue(
+            request, expires_at=datetime.now(UTC) + timedelta(minutes=5)
+        )
+        typer.echo(
+            "Target: "
+            f"{request.target}\nBody digest: {capability.body_digest}\nBudget: {request.budget}"
+        )
+        typer.echo(
+            "Investigation budget: Context.dev calls: 1, "
+            f"model requests: {INVESTIGATION_REQUEST_LIMIT}, "
+            f"tool calls: {INVESTIGATION_TOOL_CALL_LIMIT}, "
+            f"input tokens: {INVESTIGATION_INPUT_TOKEN_LIMIT}, "
+            f"output tokens: {INVESTIGATION_OUTPUT_TOKEN_LIMIT}"
+        )
+        if not typer.confirm("Authorize this exact paid request?"):
+            typer.echo("Authorization declined; no paid request was sent.")
+            raise typer.Exit(code=1)
+
+        model = _build_model_if_configured(settings)
+        return await RunInvestigation(
+            collector.execute,
+            lambda: collector.verify(request),
+            telemetry=telemetry,
+            explain=lambda report, artifact_ids: _explain_report(report, artifact_ids, model),
+            artifact_ids=lambda: frozenset(
+                artifact.artifact_id for artifact in collector.artifacts
+            ),
+            budget=budget,
+            recover=collector.recover_submission,
+            transaction_hash=lambda: _transaction_handle(collector),
+        ).execute(LiveRunCommand(request=request, capability=capability))
+    finally:
+        await contextdev.aclose()
+
+
 @app.command("verify-fixture")
 def verify_fixture(
     path: Path,
@@ -221,10 +280,10 @@ def run(
         InvestigationBudget.issue(
             request.run_id,
             contextdev_calls=1,
-            model_requests=1,
-            tool_calls=6,
-            input_tokens=8_000,
-            output_tokens=1_000,
+            model_requests=INVESTIGATION_REQUEST_LIMIT,
+            tool_calls=INVESTIGATION_TOOL_CALL_LIMIT,
+            input_tokens=INVESTIGATION_INPUT_TOKEN_LIMIT,
+            output_tokens=INVESTIGATION_OUTPUT_TOKEN_LIMIT,
         )
     )
     collector = LiveEvidenceCollector(
@@ -232,43 +291,15 @@ def run(
     )
     try:
         try:
-            asyncio.run(collector.preflight(request))
-        except (PerfloClientError, ValueError) as error:
-            typer.echo(f"Live preflight failed: {error}", err=True)
-            raise typer.Exit(code=2) from error
-
-        capability = PaidExecutionCapability.issue(
-            request, expires_at=datetime.now(UTC) + timedelta(minutes=5)
-        )
-        typer.echo(
-            "Target: "
-            f"{request.target}\nBody digest: {capability.body_digest}\nBudget: {request.budget}"
-        )
-        typer.echo(
-            "Investigation budget: Context.dev calls: 1, model requests: 1, "
-            "tool calls: 6, input tokens: 8000, output tokens: 1000"
-        )
-        if not typer.confirm("Authorize this exact paid request?"):
-            typer.echo("Authorization declined; no paid request was sent.")
-            raise typer.Exit(code=1)
-
-        model = _build_model_if_configured(settings)
-        try:
             outcome = asyncio.run(
-                RunInvestigation(
-                    collector.execute,
-                    lambda: collector.verify(request),
-                    telemetry=telemetry,
-                    explain=lambda report, artifact_ids: _explain_report(
-                        report, artifact_ids, model
-                    ),
-                    artifact_ids=lambda: frozenset(
-                        artifact.artifact_id for artifact in collector.artifacts
-                    ),
-                    budget=budget_state,
-                    recover=collector.recover_submission,
-                    transaction_hash=lambda: _transaction_handle(collector),
-                ).execute(LiveRunCommand(request=request, capability=capability))
+                _execute_live_run(
+                    request,
+                    settings,
+                    contextdev,
+                    collector,
+                    budget_state,
+                    telemetry,
+                )
             )
         except (PerfloClientError, ValueError) as error:
             typer.echo(f"Live investigation failed: {error}", err=True)
@@ -276,22 +307,23 @@ def run(
         if database is not None:
             repository = SQLiteReportRepository(database)
             try:
-                repository.save(
-                    outcome.report,
-                    events=outcome.events,
-                    artifacts=collector.artifacts,
-                    explanation=outcome.explanation,
-                )
+                with telemetry.span("settlediff.storage.persist", {"component": "storage"}):
+                    repository.save(
+                        outcome.report,
+                        events=outcome.events,
+                        artifacts=collector.artifacts,
+                        explanation=outcome.explanation,
+                    )
             finally:
                 repository.close()
-        _render(
-            outcome.report,
-            json_mode=json_mode,
-            explanation=outcome.explanation,
-            recovery=outcome.recovery,
-        )
+        with telemetry.span("settlediff.render", {"component": "rendering"}):
+            _render(
+                outcome.report,
+                json_mode=json_mode,
+                explanation=outcome.explanation,
+                recovery=outcome.recovery,
+            )
     finally:
-        asyncio.run(contextdev.aclose())
         telemetry.shutdown()
 
 

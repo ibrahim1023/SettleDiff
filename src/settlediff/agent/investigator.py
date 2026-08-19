@@ -19,6 +19,11 @@ from settlediff.agent.grounding import (
 from settlediff.agent.tools import EvidenceSummary, InvestigationDependencies
 from settlediff.domain.models import InvestigationExplanation, MachineReport
 
+INVESTIGATION_REQUEST_LIMIT = 4
+INVESTIGATION_TOOL_CALL_LIMIT = 6
+INVESTIGATION_INPUT_TOKEN_LIMIT = 8_000
+INVESTIGATION_OUTPUT_TOKEN_LIMIT = 1_000
+
 
 class InvestigationResult(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
@@ -133,10 +138,10 @@ async def investigate(
                 prompt,
                 deps=deps,
                 usage_limits=UsageLimits(
-                    request_limit=4,
-                    tool_calls_limit=6,
-                    input_tokens_limit=8_000,
-                    output_tokens_limit=1_000,
+                    request_limit=INVESTIGATION_REQUEST_LIMIT,
+                    tool_calls_limit=INVESTIGATION_TOOL_CALL_LIMIT,
+                    input_tokens_limit=INVESTIGATION_INPUT_TOKEN_LIMIT,
+                    output_tokens_limit=INVESTIGATION_OUTPUT_TOKEN_LIMIT,
                 ),
             )
     except (TimeoutError, RuntimeError):
