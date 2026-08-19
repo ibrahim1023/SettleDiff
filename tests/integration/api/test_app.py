@@ -79,9 +79,12 @@ def test_runs_and_detail_are_persisted_and_escaped(tmp_path: Path) -> None:
     response = client.get("/runs")
     assert response.status_code == 200
     assert report.run_id in response.text
-    assert response.headers["content-security-policy"].startswith("default-src")
+    csp = response.headers["content-security-policy"]
+    assert csp == "default-src 'self'; script-src 'self'; style-src 'self'"
+    assert "unsafe-inline" not in csp
     assert client.get("/static/settlediff.css").status_code == 200
     assert client.get("/static/htmx.min.js").status_code == 200
+    assert client.get("/static/settlediff.js").status_code == 200
     detail = client.get(f"/runs/{report.run_id}")
     assert detail.status_code == 200
     assert "hx-get" in detail.text

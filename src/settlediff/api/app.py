@@ -47,7 +47,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
     ) -> Response:
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; style-src 'self' 'unsafe-inline'"
+            "default-src 'self'; script-src 'self'; style-src 'self'"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
