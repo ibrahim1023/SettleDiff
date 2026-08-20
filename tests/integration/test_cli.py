@@ -217,17 +217,12 @@ def test_run_reports_submitted_activity_recovery(monkeypatch: pytest.MonkeyPatch
         async def execute(self, authorization: object, request: object) -> PerfloSuccessEnvelope:
             del authorization, request
             calls.append("fetch")
-            from pathlib import Path as FixturePath
-
             from settlediff.perflo.client import PerfloMutationUncertainError
 
-            self._execution = json.loads(
-                (FixturePath("fixtures/clean-success") / "execution.json").read_text()
-            )
             raise PerfloMutationUncertainError("synthetic timeout")
 
         async def get_execution(self) -> PerfloSuccessEnvelope:
-            return _envelope(self._execution)
+            raise AssertionError("Perflo 4.1 has no execution status command")
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
             calls.append("activity")
@@ -251,6 +246,7 @@ def test_run_reports_submitted_activity_recovery(monkeypatch: pytest.MonkeyPatch
 
     assert result.exit_code == 0
     assert calls == ["check", "schema", "fetch", "activity"]
+    assert "UNVERIFIABLE" in result.stdout
     assert "Submission: submitted" in result.stdout
     assert "proof of non-submission: no" in result.stdout
 

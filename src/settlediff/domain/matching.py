@@ -46,7 +46,7 @@ class MatchResult:
 
 
 def match_activity(
-    execution: ExecutionRecord,
+    execution: ExecutionRecord | None,
     candidates: tuple[LedgerRecord, ...],
     *,
     window: timedelta = timedelta(minutes=5),
@@ -58,6 +58,8 @@ def match_activity(
     """
     if window < timedelta(0):
         raise ValueError("Activity matching window must not be negative")
+    if execution is None:
+        return _missing_result()
 
     for strategy, matches in (
         (

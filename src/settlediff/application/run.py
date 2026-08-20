@@ -160,8 +160,6 @@ class PerfloEvidencePort(Protocol):
 
     async def get_activity(self) -> PerfloEnvelope: ...
 
-    async def get_execution(self) -> PerfloEnvelope: ...
-
     async def transaction_status(self, transaction_hash: str) -> PerfloEnvelope: ...
 
 
@@ -305,15 +303,6 @@ class LiveEvidenceCollector:
     async def verify(self, request: PaidExecutionRequest) -> MachineReport:
         if self._contract is None:
             raise RunTransitionError("live verification requires captured contract evidence")
-        if self._execution is None:
-            with self._span(
-                "settlediff.perflo.execution_status",
-                {"run_id": request.run_id, "component": "perflo"},
-            ):
-                execution_data = _result_data(await self._perflo.get_execution())
-            self._execution = _artifact(
-                request.run_id, ArtifactType.EXECUTION, "perflo.fetch_status", execution_data
-            )
         if self._activity is None:
             with self._span(
                 "settlediff.perflo.activity",
@@ -324,7 +313,7 @@ class LiveEvidenceCollector:
                 request.run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data
             )
         contract = normalize_contract(self._contract)
-        execution = normalize_execution(self._execution)
+        execution = normalize_execution(self._execution) if self._execution is not None else None
         with self._span(
             "settlediff.match_activity", {"run_id": request.run_id, "component": "matching"}
         ):
@@ -347,7 +336,8 @@ class LiveEvidenceCollector:
             findings=findings,
             verdict=derive_verdict(findings),
         )
-        await self._collect_context(request, execution)
+        if execution is not None:
+            await self._collect_context(request, execution)
         return report
 
     async def _collect_context(

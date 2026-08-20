@@ -65,9 +65,6 @@ class PerfloClient:
     async def get_activity(self) -> PerfloEnvelope:
         return await self._run(("activity", "--json"), mutation=False)
 
-    async def get_execution(self) -> PerfloEnvelope:
-        return await self._run(("fetch", "status", "--json"), mutation=False)
-
     async def transaction_status(self, transaction_hash: str) -> PerfloEnvelope:
         return await self._run(("tx", "status", transaction_hash, "--json"), mutation=False)
 
