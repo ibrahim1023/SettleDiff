@@ -45,6 +45,32 @@ def artifact(
     )
 
 
+def test_normalize_current_perflo_contract_without_inventing_vendor_identity() -> None:
+    raw = artifact(
+        "artifact_contract_current",
+        ArtifactType.SERVICE_CONTRACT,
+        {
+            "asset": "USDC",
+            "chain": "tempo",
+            "found": True,
+            "method": "POST",
+            "priceMinor": "10000",
+            "requestSchema": '{"method":"POST","body":[{"name":"query","type":"string"}]}',
+            "source": "curated",
+            "url": "https://example.invalid/search",
+        },
+    )
+
+    contract = normalize_contract(raw)
+
+    assert contract.vendor_slug is None
+    assert contract.price == Money(amount=Decimal("0.01"), unit="USDC")
+    assert contract.request_schema == {
+        "method": "POST",
+        "body": [{"name": "query", "type": "string"}],
+    }
+
+
 def test_normalize_contract_maps_aliases_and_preserves_raw_evidence() -> None:
     raw_data: dict[str, JsonValue] = {
         "vendorSlug": "synthetic-search",
@@ -197,7 +223,6 @@ def test_unknown_enumerated_values_are_explicit_and_diagnostic() -> None:
 @pytest.mark.parametrize(
     ("data", "field_path"),
     [
-        ({"url": "https://example.invalid", "request_schema": {}}, "data.vendor_slug"),
         (
             {
                 "vendor_slug": "one",
@@ -213,7 +238,7 @@ def test_unknown_enumerated_values_are_explicit_and_diagnostic() -> None:
                 "url": "https://example.invalid",
                 "request_schema": {},
                 "price_minor": "10000",
-                "asset": "USDC",
+                "asset": "UNKNOWN",
             },
             "data.price_minor_units",
         ),

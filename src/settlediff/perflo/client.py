@@ -35,6 +35,9 @@ class PerfloOutputLimitError(PerfloClientError):
     pass
 
 
+_MINOR_UNIT_EXPONENT = {"USDC": 6, "USDT": 6}
+
+
 class PerfloClient:
     """Run a narrow Perflo command set with fixed process controls."""
 
@@ -75,6 +78,12 @@ class PerfloClient:
     ) -> PerfloEnvelope:
         authorization.require_exact_request(request)
         body = json.dumps(request.body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        exponent = _MINOR_UNIT_EXPONENT.get(request.budget.unit)
+        if exponent is None:
+            raise ValueError(f"Perflo does not support budget unit {request.budget.unit}")
+        price_minor = request.budget.amount.scaleb(exponent)
+        if price_minor != price_minor.to_integral_value():
+            raise ValueError("Perflo budget has more precision than its settlement asset")
         return await self._run(
             (
                 "fetch",
@@ -82,7 +91,7 @@ class PerfloClient:
                 "-b",
                 body,
                 "--price",
-                str(request.budget.amount),
+                format(price_minor, "f"),
                 "--asset",
                 request.budget.unit,
                 "--json",

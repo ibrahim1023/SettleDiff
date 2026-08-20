@@ -230,17 +230,30 @@ class LiveEvidenceCollector:
         with self._span(
             "settlediff.perflo.inspect", {"run_id": request.run_id, "component": "perflo"}
         ):
-            contract_data = _result_data(await self._perflo.inspect_service(request.target))
+            contract_data = _result_data(
+                await self._perflo.inspect_service(request.target), field="contract"
+            )
         self._contract = _artifact(
             request.run_id, ArtifactType.SERVICE_CONTRACT, "perflo.check", contract_data
         )
         contract = normalize_contract(self._contract)
-        with self._span(
-            "settlediff.perflo.schema", {"run_id": request.run_id, "component": "perflo"}
-        ):
-            schema_data = _result_data(await self._perflo.get_schema(contract.vendor_slug))
+        if contract.request_schema:
+            schema_data: JsonValue = contract.request_schema
+            schema_source = "perflo.check.request_schema"
+        else:
+            if contract.vendor_slug is None:
+                raise RunTransitionError(
+                    "Perflo contract omitted both an embedded schema and catalog vendor slug"
+                )
+            with self._span(
+                "settlediff.perflo.schema", {"run_id": request.run_id, "component": "perflo"}
+            ):
+                schema_data = _result_data(
+                    await self._perflo.get_schema(contract.vendor_slug), field="schema"
+                )
+            schema_source = "perflo.schema"
         self._schema = _artifact(
-            request.run_id, ArtifactType.CONTEXT_EVIDENCE, "perflo.schema", schema_data
+            request.run_id, ArtifactType.CONTEXT_EVIDENCE, schema_source, schema_data
         )
 
     async def execute(
@@ -274,7 +287,7 @@ class LiveEvidenceCollector:
             return RecoveryState.UNRESOLVED, (artifact,)
 
         with self._span("settlediff.perflo.activity", {"run_id": run_id, "component": "perflo"}):
-            activity_data = _result_data(await self._perflo.get_activity())
+            activity_data = _activity_data(await self._perflo.get_activity())
         artifact = _artifact(run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data)
         self._recovery = artifact
         self._activity = artifact
@@ -304,7 +317,7 @@ class LiveEvidenceCollector:
                 "settlediff.perflo.activity",
                 {"run_id": request.run_id, "component": "perflo"},
             ):
-                activity_data = _result_data(await self._perflo.get_activity())
+                activity_data = _activity_data(await self._perflo.get_activity())
             self._activity = _artifact(
                 request.run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data
             )
@@ -719,10 +732,29 @@ def _artifact(
     )
 
 
-def _result_data(envelope: PerfloEnvelope) -> JsonValue:
+def _result_data(envelope: PerfloEnvelope, *, field: str = "result") -> JsonValue:
     if not isinstance(envelope, PerfloSuccessEnvelope):
         raise RunTransitionError("Perflo returned an error envelope after the adapter accepted it")
-    result = envelope.payload.get("result")
+    result = envelope.payload.get(field)
+    if result is None and field != "result":
+        result = envelope.payload.get("result")
     if result is None:
-        raise RunTransitionError("Perflo success envelope did not include result evidence")
+        raise RunTransitionError(f"Perflo success envelope did not include {field} evidence")
     return cast(JsonValue, result)
+
+
+def _activity_data(envelope: PerfloEnvelope) -> JsonValue:
+    if not isinstance(envelope, PerfloSuccessEnvelope):
+        raise RunTransitionError("Perflo returned an error envelope after the adapter accepted it")
+    legacy = envelope.payload.get("result")
+    if legacy is not None:
+        return cast(JsonValue, legacy)
+    agent = envelope.payload.get("agent")
+    transactions = (
+        cast(dict[str, JsonValue], agent).get("transactions") if isinstance(agent, dict) else None
+    )
+    if not isinstance(transactions, list):
+        raise RunTransitionError(
+            "Perflo success envelope did not include agent transaction evidence"
+        )
+    return cast(JsonValue, transactions)

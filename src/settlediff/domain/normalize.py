@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -22,6 +23,7 @@ from settlediff.domain.models import (
 from settlediff.domain.money import Money
 
 _RECOGNIZED_ASSETS: Final = frozenset({"USDC", "USDT"})
+_MINOR_UNIT_EXPONENTS: Final = {"USDC": 6, "USDT": 6}
 _RECOGNIZED_PROTOCOLS: Final = frozenset({"mpp"})
 _RECOGNIZED_CHAINS: Final = frozenset({"base", "tempo"})
 
@@ -41,13 +43,13 @@ def normalize_contract(raw: EvidenceArtifact) -> ExpectedContract:
     notes = _stored_notes(data, raw)
     price = _money(data, raw, amount_field="price_minor", unit_field="asset", required=False)
     return ExpectedContract(
-        vendor_slug=_required_string(data, raw, "vendor_slug"),
+        vendor_slug=_optional_string(data, raw, "vendor_slug"),
         url=_required_string(data, raw, "url"),
         price=price,
         asset=_normalized_name(data, raw, "asset", _RECOGNIZED_ASSETS, str.upper, notes),
         protocol=_normalized_name(data, raw, "protocol", _RECOGNIZED_PROTOCOLS, str.lower, notes),
         chain=_normalized_name(data, raw, "chain", _RECOGNIZED_CHAINS, str.lower, notes),
-        request_schema=_required_object(data, raw, "request_schema"),
+        request_schema=_required_schema(data, raw),
         normalization_notes=tuple(notes),
     )
 
@@ -228,13 +230,20 @@ def _optional_string(
     return value.strip()
 
 
-def _required_object(
-    data: dict[str, JsonValue], raw: EvidenceArtifact, field: str
-) -> dict[str, JsonValue]:
-    value = _field(data, raw, field)
-    if not isinstance(value, dict):
-        raise ArtifactParseError(raw.artifact_id, f"data.{field}", "required JSON object")
-    return cast(dict[str, JsonValue], value)
+def _required_schema(data: dict[str, JsonValue], raw: EvidenceArtifact) -> dict[str, JsonValue]:
+    value = _field(data, raw, "request_schema")
+    if isinstance(value, dict):
+        return cast(dict[str, JsonValue], value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as error:
+            raise ArtifactParseError(
+                raw.artifact_id, "data.request_schema", "required JSON object"
+            ) from error
+        if isinstance(parsed, dict):
+            return cast(dict[str, JsonValue], parsed)
+    raise ArtifactParseError(raw.artifact_id, "data.request_schema", "required JSON object")
 
 
 def _optional_json(
@@ -391,9 +400,13 @@ def _money(
         if amount_field.endswith("_minor") and canonical_field is None:
             raise AssertionError("minor money field must have a canonical counterpart")
         if amount_field.endswith("_minor") and canonical_field not in data and minor_units is None:
-            raise ArtifactParseError(
-                raw.artifact_id, f"{prefix}{amount_field}_units", "required minor-unit exponent"
-            )
+            minor_units = _MINOR_UNIT_EXPONENTS.get(unit.strip().upper())
+            if minor_units is None:
+                raise ArtifactParseError(
+                    raw.artifact_id,
+                    f"{prefix}{amount_field}_units",
+                    "required minor-unit exponent",
+                )
         if minor_units is not None:
             if isinstance(minor_units, bool) or not isinstance(minor_units, int):
                 raise ArtifactParseError(

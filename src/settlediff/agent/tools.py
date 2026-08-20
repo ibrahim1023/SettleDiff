@@ -43,7 +43,7 @@ def build_investigation_dependencies(
                 else "unknown"
             )
             summary = (
-                f"vendor={contract.vendor_slug}; price={price}; "
+                f"vendor={contract.vendor_slug or 'unknown'}; price={price}; "
                 f"asset={contract.asset or 'unknown'}; "
                 f"protocol={contract.protocol or 'unknown'}; chain={contract.chain or 'unknown'}"
             )

@@ -302,6 +302,51 @@ async def test_collector_empty_activity_history_does_not_prove_non_submission() 
 
 
 @pytest.mark.asyncio
+async def test_live_preflight_accepts_current_perflo_contract_envelope() -> None:
+    request = PaidExecutionRequest(
+        run_id="syn_current_contract",
+        target="https://example.invalid/search",
+        body={"query": "synthetic"},
+        budget=Money(amount=Decimal("0.02"), unit="USDC"),
+    )
+    contract: dict[str, JsonValue] = {
+        "asset": "USDC",
+        "chain": "tempo",
+        "found": True,
+        "method": "POST",
+        "priceMinor": "10000",
+        "requestSchema": '{"method":"POST","body":[{"name":"query","type":"string"}]}',
+        "source": "curated",
+        "url": request.target,
+    }
+
+    class FakePerflo:
+        async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
+            assert target == request.target
+            return PerfloSuccessEnvelope(
+                ok=True,
+                payload={"ok": True, "contract": contract},
+                stdout_bytes=0,
+                stderr_bytes=0,
+                returncode=0,
+            )
+
+        async def get_schema(self, slug: str) -> PerfloSuccessEnvelope:
+            raise AssertionError(f"embedded schema must avoid a second preflight call: {slug}")
+
+    collector = LiveEvidenceCollector(
+        cast(PerfloEvidencePort, FakePerflo()), StubContextDev(evidence=CONTEXT_EVIDENCE)
+    )
+
+    await collector.preflight(request)
+
+    assert [artifact.source for artifact in collector.artifacts] == [
+        "perflo.check",
+        "perflo.check.request_schema",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
@@ -327,7 +372,22 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
             return _envelope(_fixture_data("execution.json"))
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
-            return _envelope(_fixture_data("activity.json"))
+            return PerfloSuccessEnvelope(
+                ok=True,
+                payload={
+                    "ok": True,
+                    "agent": {
+                        "limit": 20,
+                        "offset": 0,
+                        "total": 1,
+                        "transactions": _fixture_data("activity.json"),
+                    },
+                    "money": [],
+                },
+                stdout_bytes=0,
+                stderr_bytes=0,
+                returncode=0,
+            )
 
         async def get_execution(self) -> PerfloSuccessEnvelope:
             raise AssertionError("execution status is not used for a certain submission")
@@ -573,7 +633,22 @@ async def test_collector_never_calls_contextdev_for_a_successful_service() -> No
             return _envelope(_fixture_data("execution.json"))
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
-            return _envelope(_fixture_data("activity.json"))
+            return PerfloSuccessEnvelope(
+                ok=True,
+                payload={
+                    "ok": True,
+                    "agent": {
+                        "limit": 20,
+                        "offset": 0,
+                        "total": 1,
+                        "transactions": _fixture_data("activity.json"),
+                    },
+                    "money": [],
+                },
+                stdout_bytes=0,
+                stderr_bytes=0,
+                returncode=0,
+            )
 
         async def get_execution(self) -> PerfloSuccessEnvelope:
             raise AssertionError("execution status is not used for a certain submission")

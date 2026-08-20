@@ -97,7 +97,7 @@ class PurchaseIntent(CanonicalModel):
 
 class ExpectedContract(CanonicalModel):
     schema_version: int = Field(default=1, ge=1)
-    vendor_slug: NonEmptyStr
+    vendor_slug: NonEmptyStr | None
     url: NonEmptyStr
     price: Money | None
     asset: NonEmptyStr | None
