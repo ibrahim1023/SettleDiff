@@ -56,7 +56,8 @@ def normalize_contract(raw: EvidenceArtifact) -> ExpectedContract:
 
 def normalize_execution(raw: EvidenceArtifact) -> ExecutionRecord:
     """Map an execution artifact without treating settlement as service success."""
-    data = _artifact_object(raw, ArtifactType.EXECUTION)
+    raw_data = _artifact_object(raw, ArtifactType.EXECUTION)
+    data = _merge_upstream_response(raw_data, raw)
     notes = _stored_notes(data, raw)
     return ExecutionRecord(
         vendor_slug=_optional_string(data, raw, "vendor_slug"),
@@ -193,6 +194,33 @@ def _artifact_object(raw: EvidenceArtifact, expected_type: ArtifactType) -> dict
     if not isinstance(raw.data, dict):
         raise ArtifactParseError(raw.artifact_id, "data", "expected a JSON object")
     return cast(dict[str, JsonValue], raw.data)
+
+
+def _merge_upstream_response(
+    data: dict[str, JsonValue], raw: EvidenceArtifact
+) -> dict[str, JsonValue]:
+    value = data.get("upstreamResponse")
+    if value is None:
+        return data
+    if not isinstance(value, dict):
+        raise ArtifactParseError(raw.artifact_id, "data.upstreamResponse", "JSON object or null")
+
+    response = cast(dict[str, JsonValue], value)
+    merged = dict(data)
+    for field, nested_field in (
+        ("upstream_http_status", "status"),
+        ("response_body", "body"),
+    ):
+        if nested_field not in response:
+            continue
+        existing = _field(data, raw, field)
+        nested = response[nested_field]
+        if existing is not None and existing != nested:
+            raise ArtifactParseError(
+                raw.artifact_id, f"data.{field}", "conflicting documented fields"
+            )
+        merged[field] = nested
+    return merged
 
 
 def _field(

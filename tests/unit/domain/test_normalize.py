@@ -140,8 +140,26 @@ def test_normalize_current_execution_preserves_missing_provider_timestamp() -> N
     execution = normalize_execution(raw)
 
     assert execution.executed_at is None
-    assert execution.response_body is None
+    assert execution.upstream_http_status == 200
+    assert execution.response_body == {"answer": "synthetic"}
     assert raw.data == {"upstreamResponse": {"status": 200, "body": {"answer": "synthetic"}}}
+
+
+def test_normalize_execution_rejects_conflicting_upstream_response_fields() -> None:
+    raw = artifact(
+        "artifact_execution_conflict",
+        ArtifactType.EXECUTION,
+        {
+            "upstreamHttpStatus": 200,
+            "responseBody": {"answer": "top-level"},
+            "upstreamResponse": {"status": 500, "body": {"answer": "nested"}},
+        },
+    )
+
+    with pytest.raises(ArtifactParseError, match="conflicting documented fields") as error:
+        normalize_execution(raw)
+
+    assert error.value.field_path == "data.upstream_http_status"
 
 
 def test_normalize_receipt_maps_only_consistency_fields() -> None:
