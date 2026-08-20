@@ -123,6 +123,19 @@ async def test_request_uses_documented_endpoint_query_and_bearer_authorization()
 
 
 @pytest.mark.asyncio
+async def test_default_timeout_allows_documented_cold_scrape_window() -> None:
+    captured_timeout: dict[str, float] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_timeout.update(cast(dict[str, float], request.extensions["timeout"]))
+        return httpx.Response(200, content=fixture_bytes("reachable.json"))
+
+    await client_for(httpx.MockTransport(handler)).verify(REQUEST)
+
+    assert captured_timeout == {"connect": 60.0, "read": 60.0, "write": 60.0, "pool": 60.0}
+
+
+@pytest.mark.asyncio
 async def test_source_scrape_failure_records_unreachable_evidence() -> None:
     evidence = await client_for(
         envelope_transport(fixture_bytes("unavailable.json"), status=400)

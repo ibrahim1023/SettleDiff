@@ -203,7 +203,7 @@ class ContextDevClient:
         base_url: str,
         api_key: SecretStr,
         *,
-        timeout_seconds: float = 10.0,
+        timeout_seconds: float = 60.0,
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
