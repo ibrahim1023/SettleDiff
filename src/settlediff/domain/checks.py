@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from settlediff.domain.matching import MatchResult, MatchStatus
+from settlediff.domain.matching import MatchConfidence, MatchResult, MatchStatus
 from settlediff.domain.models import (
     CheckStatus,
     EvidenceValue,
@@ -14,6 +14,7 @@ from settlediff.domain.models import (
     SettlementStatus,
     Severity,
 )
+from settlediff.domain.money import Money
 
 
 def run_checks(
@@ -24,8 +25,8 @@ def run_checks(
 ) -> tuple[Finding, ...]:
     """Run the fixed verification suite without I/O, model calls, or check dependencies."""
     return (
-        _budget(intent, execution),
-        _price(contract, execution),
+        _budget(intent, execution, match),
+        _price(contract, execution, match),
         _field_consistency("asset", contract, execution, match),
         _field_consistency("protocol", contract, execution, match),
         _field_consistency("chain", contract, execution, match),
@@ -38,53 +39,84 @@ def run_checks(
     )
 
 
-def _budget(intent: PurchaseIntent, execution: ExecutionRecord | None) -> Finding:
-    if execution is None or execution.charge is None:
-        return _unknown("budget", "No execution charge is available.")
-    if execution.charge.unit != intent.max_budget.unit:
+def _budget(
+    intent: PurchaseIntent, execution: ExecutionRecord | None, match: MatchResult
+) -> Finding:
+    charge, artifact_id, field_path = _actual_charge(execution, match)
+    if charge is None or artifact_id is None or field_path is None:
+        return _unknown("budget", "No execution or matched Activity charge is available.")
+    if charge.unit != intent.max_budget.unit:
         return _unknown("budget", "Charge and authorized budget use different units.")
-    status = CheckStatus.PASS if execution.charge.is_within(intent.max_budget) else CheckStatus.FAIL
+    status = CheckStatus.PASS if charge.is_within(intent.max_budget) else CheckStatus.FAIL
+    charge_name = "Execution charge" if artifact_id == "execution" else "Recorded Activity amount"
     return _finding(
         "budget",
         Severity.ERROR if status is CheckStatus.FAIL else Severity.INFO,
         status,
         intent.max_budget,
-        execution.charge,
-        "Execution charge is within the authorized budget."
+        charge,
+        f"{charge_name} is within the authorized budget."
         if status is CheckStatus.PASS
-        else "Execution charge exceeds the authorized budget.",
-        (f"{intent.run_id}:intent", f"{intent.run_id}:execution"),
-        ("intent.max_budget", "execution.charge"),
+        else f"{charge_name} exceeds the authorized budget.",
+        (
+            f"{intent.run_id}:intent",
+            f"{intent.run_id}:execution" if artifact_id == "execution" else artifact_id,
+        ),
+        ("intent.max_budget", field_path),
     )
 
 
-def _price(contract: ExpectedContract | None, execution: ExecutionRecord | None) -> Finding:
-    if contract is None or contract.price is None or execution is None or execution.charge is None:
-        return _unknown("price", "Quoted price or execution charge is unavailable.")
-    if contract.price.unit != execution.charge.unit:
+def _price(
+    contract: ExpectedContract | None, execution: ExecutionRecord | None, match: MatchResult
+) -> Finding:
+    charge, artifact_id, field_path = _actual_charge(execution, match)
+    if contract is None or contract.price is None or charge is None:
+        return _unknown("price", "Quoted price or actual charge is unavailable.")
+    if artifact_id is None or field_path is None:
+        raise AssertionError("charge evidence must preserve its source")
+    if contract.price.unit != charge.unit:
         return _finding(
             "price",
             Severity.WARNING,
             CheckStatus.DIFF,
             contract.price,
-            execution.charge,
-            "Quoted and charged prices use different units.",
-            ("contract", "execution"),
-            ("contract.price", "execution.charge"),
+            charge,
+            "Quoted and charged prices use different units."
+            if artifact_id == "execution"
+            else "Quoted price and recorded Activity amount use different units.",
+            ("contract", artifact_id),
+            ("contract.price", field_path),
         )
-    status = CheckStatus.PASS if contract.price == execution.charge else CheckStatus.DIFF
+    status = CheckStatus.PASS if contract.price == charge else CheckStatus.DIFF
+    charge_name = "execution charge" if artifact_id == "execution" else "recorded Activity amount"
     return _finding(
         "price",
         Severity.WARNING if status is CheckStatus.DIFF else Severity.INFO,
         status,
         contract.price,
-        execution.charge,
-        "Quoted price matches the execution charge."
+        charge,
+        f"Quoted price matches the {charge_name}."
         if status is CheckStatus.PASS
-        else "Quoted price differs from the execution charge.",
-        ("contract", "execution"),
-        ("contract.price", "execution.charge"),
+        else f"Quoted price differs from the {charge_name}.",
+        ("contract", artifact_id),
+        ("contract.price", field_path),
     )
+
+
+def _actual_charge(
+    execution: ExecutionRecord | None, match: MatchResult
+) -> tuple[Money | None, str | None, str | None]:
+    if execution is not None and execution.charge is not None:
+        return execution.charge, "execution", "execution.charge"
+    if (
+        match.status is MatchStatus.MATCHED
+        and match.confidence is MatchConfidence.HIGH
+        and match.matched is not None
+        and match.matched.status is LedgerStatus.CONFIRMED
+        and match.matched.amount is not None
+    ):
+        return match.matched.amount, "activity", "activity.amount"
+    return None, None, None
 
 
 def _field_consistency(
