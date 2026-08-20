@@ -26,6 +26,7 @@ def test_contextdev_uses_the_documented_api_by_default() -> None:
     config = offline_settings(contextdev_api_key=SecretStr("syn-key")).require_contextdev()
     assert config.base_url == "https://api.context.dev/v1"
     assert config.api_key.get_secret_value() == "syn-key"
+    assert config.timeout_seconds == 60
 
 
 @pytest.mark.parametrize(

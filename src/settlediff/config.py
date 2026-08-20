@@ -38,7 +38,7 @@ class ContextDevConfig(BaseSettings):
 
     base_url: NonEmpty = "https://api.context.dev/v1"
     api_key: SecretStr
-    timeout_seconds: float = Field(default=10, gt=0, le=60)
+    timeout_seconds: float = Field(default=60, gt=0, le=60)
 
     @field_validator("api_key")
     @classmethod
