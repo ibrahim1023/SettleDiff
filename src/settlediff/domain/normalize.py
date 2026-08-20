@@ -71,7 +71,7 @@ def normalize_execution(raw: EvidenceArtifact) -> ExecutionRecord:
         session_id=_optional_string(data, raw, "session_id"),
         transaction_hash=_optional_string(data, raw, "transaction_hash"),
         response_body=_optional_json(data, raw, "response_body"),
-        executed_at=_required_timestamp(data, raw, "executed_at"),
+        executed_at=_optional_timestamp(data, raw, "executed_at"),
         normalization_notes=tuple(notes),
     )
 
@@ -181,7 +181,7 @@ _ALIASES: Final[dict[str, tuple[str, ...]]] = {
     "issued_at": ("issued_at", "issuedAt"),
     "ledger_id": ("ledger_id", "ledgerId", "id"),
     "error_reason": ("error_reason", "errorReason"),
-    "occurred_at": ("occurred_at", "occurredAt", "timestamp"),
+    "occurred_at": ("occurred_at", "occurredAt", "createdAt", "timestamp"),
 }
 
 
@@ -336,11 +336,7 @@ def _required_timestamp(
     data: dict[str, JsonValue], raw: EvidenceArtifact, field: str, *, prefix: str = "data."
 ) -> datetime:
     value = _field(data, raw, field, prefix=prefix)
-    if not isinstance(value, str):
-        raise ArtifactParseError(
-            raw.artifact_id, f"{prefix}{field}", "required UTC timestamp string"
-        )
-    return _parse_utc_timestamp(value, raw, f"{prefix}{field}")
+    return _parse_timestamp_value(value, raw, f"{prefix}{field}")
 
 
 def _optional_timestamp(
@@ -349,9 +345,18 @@ def _optional_timestamp(
     value = _field(data, raw, field)
     if value is None:
         return None
-    if not isinstance(value, str):
-        raise ArtifactParseError(raw.artifact_id, f"data.{field}", "UTC timestamp string or null")
-    return _parse_utc_timestamp(value, raw, f"data.{field}")
+    return _parse_timestamp_value(value, raw, f"data.{field}")
+
+
+def _parse_timestamp_value(value: JsonValue, raw: EvidenceArtifact, field_path: str) -> datetime:
+    if isinstance(value, str):
+        return _parse_utc_timestamp(value, raw, field_path)
+    if isinstance(value, int) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(value / 1_000, UTC)
+        except (OSError, OverflowError, ValueError) as error:
+            raise ArtifactParseError(raw.artifact_id, field_path, "UTC timestamp") from error
+    raise ArtifactParseError(raw.artifact_id, field_path, "UTC timestamp")
 
 
 def _parse_utc_timestamp(value: str, raw: EvidenceArtifact, field_path: str) -> datetime:

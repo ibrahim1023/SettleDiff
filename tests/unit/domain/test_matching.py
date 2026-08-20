@@ -117,6 +117,21 @@ def test_unique_vendor_amount_time_candidate_uses_bounded_low_confidence_fallbac
     assert result.matched_id == "syn_ledger_match"
 
 
+def test_missing_execution_time_disables_low_confidence_fallback() -> None:
+    result = match_activity(
+        execution(
+            transaction_id=None,
+            session_id=None,
+            transaction_hash=None,
+            executed_at=None,
+        ),
+        (record("syn_ledger_candidate"),),
+    )
+
+    assert result.status is MatchStatus.MISSING
+    assert result.strategy is MatchStrategy.NONE
+
+
 def test_equal_fallback_candidates_are_ambiguous() -> None:
     result = match_activity(
         execution(transaction_id=None, session_id=None, transaction_hash=None),

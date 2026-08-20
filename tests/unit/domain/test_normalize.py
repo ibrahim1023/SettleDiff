@@ -130,6 +130,20 @@ def test_normalize_paid_failure_keeps_settlement_separate_from_http_status() -> 
     assert execution.executed_at == NOW
 
 
+def test_normalize_current_execution_preserves_missing_provider_timestamp() -> None:
+    raw = artifact(
+        "artifact_execution_current",
+        ArtifactType.EXECUTION,
+        {"upstreamResponse": {"status": 200, "body": {"answer": "synthetic"}}},
+    )
+
+    execution = normalize_execution(raw)
+
+    assert execution.executed_at is None
+    assert execution.response_body is None
+    assert raw.data == {"upstreamResponse": {"status": 200, "body": {"answer": "synthetic"}}}
+
+
 def test_normalize_receipt_maps_only_consistency_fields() -> None:
     raw = artifact(
         "artifact_receipt_001",
@@ -191,6 +205,32 @@ def test_normalize_activity_maps_each_candidate_without_matching_it() -> None:
     assert records[0].amount == Money(amount=Decimal("0.01"), unit="USDC")
     assert records[0].status is LedgerStatus.CONFIRMED
     assert records[1].status is LedgerStatus.PENDING
+
+
+def test_normalize_current_activity_millisecond_timestamp() -> None:
+    raw = artifact(
+        "artifact_activity_current",
+        ArtifactType.ACTIVITY,
+        [
+            {
+                "id": "syn_ledger_current",
+                "vendorSlug": "synthetic-search",
+                "amount": "$0.02",
+                "asset": "USDC",
+                "protocol": "mpp",
+                "chain": "tempo",
+                "status": "confirmed",
+                "txHash": "syn_hash_current",
+                "createdAt": int(NOW.timestamp() * 1000),
+            }
+        ],
+    )
+
+    record = normalize_activity(raw)[0]
+
+    assert record.occurred_at == NOW
+    assert record.amount == Money(amount=Decimal("0.02"), unit="USDC")
+    assert record.transaction_hash == "syn_hash_current"
 
 
 def test_unknown_enumerated_values_are_explicit_and_diagnostic() -> None:

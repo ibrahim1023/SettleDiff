@@ -121,7 +121,7 @@ class ExecutionRecord(CanonicalModel):
     session_id: NonEmptyStr | None
     transaction_hash: NonEmptyStr | None
     response_body: JsonValue | None
-    executed_at: UtcDatetime
+    executed_at: UtcDatetime | None
     normalization_notes: tuple[NonEmptyStr, ...] = ()
 
 

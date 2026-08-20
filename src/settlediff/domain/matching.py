@@ -135,7 +135,7 @@ def _fallback_result(
     candidates: tuple[LedgerRecord, ...],
     window: timedelta,
 ) -> MatchResult:
-    if execution.vendor_slug is None or execution.charge is None:
+    if execution.vendor_slug is None or execution.charge is None or execution.executed_at is None:
         return _missing_result()
 
     matching = tuple(
