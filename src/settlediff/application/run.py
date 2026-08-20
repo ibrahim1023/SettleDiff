@@ -292,7 +292,9 @@ class LiveEvidenceCollector:
         self._recovery = artifact
         self._activity = artifact
         records = (
-            cast(dict[str, JsonValue], activity_data).get("records")
+            activity_data
+            if isinstance(activity_data, list)
+            else cast(dict[str, JsonValue], activity_data).get("records")
             if isinstance(activity_data, dict)
             else None
         )

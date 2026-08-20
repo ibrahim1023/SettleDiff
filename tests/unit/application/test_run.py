@@ -287,6 +287,31 @@ async def test_collector_recovery_uses_activity_history_without_a_handle() -> No
 
 
 @pytest.mark.asyncio
+async def test_collector_recovery_uses_current_activity_history_without_a_handle() -> None:
+    class FakePerflo:
+        async def get_activity(self) -> PerfloSuccessEnvelope:
+            return PerfloSuccessEnvelope(
+                ok=True,
+                payload={
+                    "ok": True,
+                    "agent": {"transactions": [{"id": "syn_transaction_uncertain"}]},
+                },
+                stdout_bytes=0,
+                stderr_bytes=0,
+                returncode=0,
+            )
+
+    collector = LiveEvidenceCollector(
+        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+    )
+
+    state, artifacts = await collector.recover_submission("syn_run_uncertain", None)
+
+    assert state is RecoveryState.SUBMITTED
+    assert artifacts[0].data == [{"id": "syn_transaction_uncertain"}]
+
+
+@pytest.mark.asyncio
 async def test_collector_empty_activity_history_does_not_prove_non_submission() -> None:
     class FakePerflo:
         async def get_activity(self) -> PerfloSuccessEnvelope:

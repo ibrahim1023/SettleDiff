@@ -190,7 +190,7 @@ def test_transaction_handle_comes_only_from_captured_execution_evidence() -> Non
     assert _transaction_handle(collector) == "syn_hash_recovered"
 
 
-def test_run_reports_unresolved_submission_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_reports_submitted_activity_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
     class FakePerflo:
@@ -251,7 +251,7 @@ def test_run_reports_unresolved_submission_recovery(monkeypatch: pytest.MonkeyPa
 
     assert result.exit_code == 0
     assert calls == ["check", "schema", "fetch", "activity"]
-    assert "Submission: unresolved" in result.stdout
+    assert "Submission: submitted" in result.stdout
     assert "proof of non-submission: no" in result.stdout
 
 
