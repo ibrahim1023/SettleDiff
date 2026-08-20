@@ -57,7 +57,12 @@ def test_environment_example_contains_only_blank_safe_assignments() -> None:
         "SETTLEDIFF_HYPERFUSION_API_KEY": "",
         "SETTLEDIFF_HYPERFUSION_BASE_URL": "",
         "SETTLEDIFF_HYPERFUSION_MODEL": "",
+        "SETTLEDIFF_LIVE_CONTEXTDEV": "",
+        "SETTLEDIFF_LIVE_CONTEXTDEV_CLAIM": "",
+        "SETTLEDIFF_LIVE_CONTEXTDEV_URL": "",
+        "SETTLEDIFF_LIVE_HYPERFUSION": "",
         "SETTLEDIFF_OTLP_ENDPOINT": "",
+        "SETTLEDIFF_ALLOW_PAID_TEST": "",
     }
 
 
