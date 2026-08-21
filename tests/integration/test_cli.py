@@ -14,7 +14,12 @@ from typer.testing import CliRunner
 from settlediff import __version__
 from settlediff.agent.grounding import fallback_explanation
 from settlediff.application.replay import replay_fixture
-from settlediff.application.run import LiveEvidenceCollector, RunEvent, RunState
+from settlediff.application.run import (
+    LiveEvidenceCollector,
+    PerfloEvidencePort,
+    RunEvent,
+    RunState,
+)
 from settlediff.cli import app
 from settlediff.config import Settings
 from settlediff.contextdev.client import ContextEvidencePort
@@ -189,7 +194,46 @@ def test_transaction_handle_comes_only_from_captured_execution_evidence() -> Non
     assert _transaction_handle(collector) == "syn_hash_recovered"
 
 
-def test_run_reports_submitted_activity_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_transaction_handle_accepts_current_tx_hash_alias() -> None:
+    artifact = EvidenceArtifact(
+        artifact_id="run:execution",
+        artifact_type=ArtifactType.EXECUTION,
+        source="perflo.fetch",
+        collected_at=datetime.now(UTC),
+        redacted=False,
+        data={"txHash": "syn_hash_current"},
+    )
+    collector = LiveEvidenceCollector(
+        cast(PerfloEvidencePort, object()), cast(ContextEvidencePort, object())
+    )
+    collector._execution = artifact  # pyright: ignore[reportPrivateUsage]
+
+    from settlediff.cli import _transaction_handle  # pyright: ignore[reportPrivateUsage]
+
+    assert _transaction_handle(collector) == "syn_hash_current"
+
+
+def test_transaction_handle_rejects_conflicting_aliases() -> None:
+    artifact = EvidenceArtifact(
+        artifact_id="run:execution",
+        artifact_type=ArtifactType.EXECUTION,
+        source="perflo.fetch",
+        collected_at=datetime.now(UTC),
+        redacted=False,
+        data={"transaction_hash": "syn_hash_one", "txHash": "syn_hash_two"},
+    )
+    collector = LiveEvidenceCollector(
+        cast(PerfloEvidencePort, object()), cast(ContextEvidencePort, object())
+    )
+    collector._execution = artifact  # pyright: ignore[reportPrivateUsage]
+
+    from settlediff.cli import _transaction_handle  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(ValueError, match="conflicting"):
+        _transaction_handle(collector)
+
+
+def test_run_reports_unresolved_activity_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
     class FakePerflo:

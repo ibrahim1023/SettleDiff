@@ -166,9 +166,18 @@ async def _explain_without_model(
 def _transaction_handle(collector: LiveEvidenceCollector) -> str | None:
     """Return a transaction handle only from captured execution evidence."""
     for artifact in reversed(collector.artifacts):
-        if artifact.artifact_type.value == "execution" and isinstance(artifact.data, dict):
-            value = artifact.data.get("transaction_hash")
-            return value if isinstance(value, str) and value.strip() else None
+        if artifact.artifact_type.value != "execution" or not isinstance(artifact.data, dict):
+            continue
+        values = [
+            value.strip()
+            for key in ("transaction_hash", "txHash")
+            if isinstance((value := artifact.data.get(key)), str) and value.strip()
+        ]
+        if not values:
+            return None
+        if len(set(values)) != 1:
+            raise ValueError("execution evidence has conflicting transaction hash aliases")
+        return values[0]
     return None
 
 
