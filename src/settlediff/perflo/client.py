@@ -7,6 +7,7 @@ import json
 import os
 
 from settlediff.application.auth import ConsumedPaidAuthorization, PaidExecutionRequest
+from settlediff.domain.money import Money
 from settlediff.perflo.parser import (
     PerfloEnvelope,
     PerfloError,
@@ -72,15 +73,26 @@ class PerfloClient:
         self,
         authorization: ConsumedPaidAuthorization,
         request: PaidExecutionRequest,
+        quoted_price: Money,
     ) -> PerfloEnvelope:
         authorization.require_exact_request(request)
-        body = json.dumps(request.body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        exponent = _MINOR_UNIT_EXPONENT.get(request.budget.unit)
+        if quoted_price.unit != request.budget.unit:
+            raise ValueError(
+                f"quote unit {quoted_price.unit} does not match authorized budget unit "
+                f"{request.budget.unit}"
+            )
+        if not quoted_price.is_within(request.budget):
+            raise ValueError(
+                f"quote {quoted_price.amount} {quoted_price.unit} exceeds the authorized budget "
+                f"{request.budget.amount} {request.budget.unit}"
+            )
+        exponent = _MINOR_UNIT_EXPONENT.get(quoted_price.unit)
         if exponent is None:
-            raise ValueError(f"Perflo does not support budget unit {request.budget.unit}")
-        price_minor = request.budget.amount.scaleb(exponent)
+            raise ValueError(f"Perflo does not support quote unit {quoted_price.unit}")
+        price_minor = quoted_price.amount.scaleb(exponent)
         if price_minor != price_minor.to_integral_value():
-            raise ValueError("Perflo budget has more precision than its settlement asset")
+            raise ValueError("quote has more precision than its settlement asset")
+        body = json.dumps(request.body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         return await self._run(
             (
                 "fetch",

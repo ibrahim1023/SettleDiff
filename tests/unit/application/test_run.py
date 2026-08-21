@@ -372,6 +372,138 @@ async def test_live_preflight_accepts_current_perflo_contract_envelope() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "contract_fields",
+    [
+        {"priceMinor": "60000", "asset": "USDC"},
+        {"price": {"amount": "0.01", "unit": "EUR"}, "asset": "EUR"},
+    ],
+    ids=["quote-over-budget", "quote-unit-mismatch"],
+)
+async def test_preflight_rejects_quote_outside_authorized_budget(
+    contract_fields: dict[str, JsonValue],
+) -> None:
+    request = PaidExecutionRequest(
+        run_id="syn_quote_guard",
+        target="https://example.invalid/search",
+        body={},
+        budget=Money(amount=Decimal("0.05"), unit="USDC"),
+    )
+    contract: dict[str, JsonValue] = {
+        "url": request.target,
+        "requestSchema": {"type": "object"},
+        **contract_fields,
+    }
+
+    class FakePerflo:
+        async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
+            return PerfloSuccessEnvelope(
+                ok=True,
+                payload={"ok": True, "contract": contract},
+                stdout_bytes=0,
+                stderr_bytes=0,
+                returncode=0,
+            )
+
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            raise AssertionError("execution must not run with a rejected quote")
+
+    collector = LiveEvidenceCollector(
+        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+    )
+
+    with pytest.raises(RunTransitionError, match="quote"):
+        await collector.preflight(request)
+
+
+@pytest.mark.asyncio
+async def test_execute_sends_the_preflight_quote_not_the_budget() -> None:
+    request = PaidExecutionRequest(
+        run_id="syn_quote_execute",
+        target="https://example.invalid/search",
+        body={},
+        budget=Money(amount=Decimal("0.05"), unit="USDC"),
+    )
+    sent: list[Money] = []
+
+    class FakePerflo:
+        async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
+            return PerfloSuccessEnvelope(
+                ok=True,
+                payload={
+                    "ok": True,
+                    "contract": {
+                        "url": request.target,
+                        "requestSchema": {"type": "object"},
+                        "priceMinor": "10000",
+                        "asset": "USDC",
+                    },
+                },
+                stdout_bytes=0,
+                stderr_bytes=0,
+                returncode=0,
+            )
+
+        async def execute(
+            self,
+            authorization: ConsumedPaidAuthorization,
+            request: PaidExecutionRequest,
+            quoted_price: Money,
+        ) -> PerfloSuccessEnvelope:
+            del authorization, request
+            sent.append(quoted_price)
+            return _envelope({"upstreamResponse": {"status": 200, "body": None}})
+
+    collector = LiveEvidenceCollector(
+        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+    )
+    await collector.preflight(request)
+    authorization = await PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    ).consume(request)
+    await collector.execute(authorization, request)
+
+    assert sent == [Money(amount=Decimal("0.01"), unit="USDC")]
+
+
+@pytest.mark.asyncio
+async def test_execute_requires_a_preflight_quote() -> None:
+    request = PaidExecutionRequest(
+        run_id="syn_quote_missing",
+        target="https://example.invalid/search",
+        body={},
+        budget=Money(amount=Decimal("0.05"), unit="USDC"),
+    )
+
+    class FakePerflo:
+        async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
+            return PerfloSuccessEnvelope(
+                ok=True,
+                payload={
+                    "ok": True,
+                    "contract": {"url": request.target, "requestSchema": {"type": "object"}},
+                },
+                stdout_bytes=0,
+                stderr_bytes=0,
+                returncode=0,
+            )
+
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            raise AssertionError("execution must not run without a quoted price")
+
+    collector = LiveEvidenceCollector(
+        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+    )
+    await collector.preflight(request)
+    authorization = await PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    ).consume(request)
+
+    with pytest.raises(RunTransitionError, match="quote"):
+        await collector.execute(authorization, request)
+
+
+@pytest.mark.asyncio
 async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
@@ -391,9 +523,12 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
             return _envelope({"request_schema": {}})
 
         async def execute(
-            self, authorization: ConsumedPaidAuthorization, request: PaidExecutionRequest
+            self,
+            authorization: ConsumedPaidAuthorization,
+            request: PaidExecutionRequest,
+            quoted_price: Money,
         ) -> PerfloSuccessEnvelope:
-            del authorization, request
+            del authorization, request, quoted_price
             return _envelope(_fixture_data("execution.json"))
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
@@ -501,9 +636,12 @@ def failing_collector(
             return _envelope({"request_schema": {}})
 
         async def execute(
-            self, authorization: ConsumedPaidAuthorization, request: PaidExecutionRequest
+            self,
+            authorization: ConsumedPaidAuthorization,
+            request: PaidExecutionRequest,
+            quoted_price: Money,
         ) -> PerfloSuccessEnvelope:
-            del authorization, request
+            del authorization, request, quoted_price
             return _envelope(execution)
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
@@ -652,9 +790,12 @@ async def test_collector_never_calls_contextdev_for_a_successful_service() -> No
             return _envelope({"request_schema": {}})
 
         async def execute(
-            self, authorization: ConsumedPaidAuthorization, request: PaidExecutionRequest
+            self,
+            authorization: ConsumedPaidAuthorization,
+            request: PaidExecutionRequest,
+            quoted_price: Money,
         ) -> PerfloSuccessEnvelope:
-            del authorization, request
+            del authorization, request, quoted_price
             return _envelope(_fixture_data("execution.json"))
 
         async def get_activity(self) -> PerfloSuccessEnvelope:

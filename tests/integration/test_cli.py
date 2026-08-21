@@ -164,14 +164,13 @@ def test_transaction_handle_comes_only_from_captured_execution_evidence() -> Non
             del slug
             raise AssertionError
 
-        async def execute(self, authorization: object, request: object) -> PerfloSuccessEnvelope:
-            del authorization, request
+        async def execute(
+            self, authorization: object, request: object, quoted_price: object
+        ) -> PerfloSuccessEnvelope:
+            del authorization, request, quoted_price
             raise AssertionError
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
-            raise AssertionError
-
-        async def get_execution(self) -> PerfloSuccessEnvelope:
             raise AssertionError
 
         async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
@@ -214,8 +213,10 @@ def test_run_reports_submitted_activity_recovery(monkeypatch: pytest.MonkeyPatch
             calls.append("schema")
             return _envelope({"request_schema": {}})
 
-        async def execute(self, authorization: object, request: object) -> PerfloSuccessEnvelope:
-            del authorization, request
+        async def execute(
+            self, authorization: object, request: object, quoted_price: object
+        ) -> PerfloSuccessEnvelope:
+            del authorization, request, quoted_price
             calls.append("fetch")
             from settlediff.perflo.client import PerfloMutationUncertainError
 

@@ -23,6 +23,7 @@ from settlediff.perflo.parser import PerfloSuccessEnvelope
 
 FAKE = Path(__file__).with_name("fake_perflo.py")
 NOW = datetime(2026, 8, 13, 10, tzinfo=UTC)
+QUOTED_PRICE = Money(amount=Decimal("0.01"), unit="USDC")
 
 
 def client(mode: str, *prefix_args: str, timeout: float = 1, limit: int = 2048) -> PerfloClient:
@@ -51,7 +52,7 @@ async def test_arguments_are_preserved_without_shell_interpretation() -> None:
     request = paid_request()
 
     authorization = await capability(request).consume(request, now=NOW)
-    envelope = await client("success").execute(authorization, request)
+    envelope = await client("success").execute(authorization, request, QUOTED_PRICE)
 
     assert isinstance(envelope, PerfloSuccessEnvelope)
     result = envelope.payload["result"]
@@ -62,12 +63,29 @@ async def test_arguments_are_preserved_without_shell_interpretation() -> None:
         "-b",
         '{"query":"synthetic value; $(ignored)"}',
         "--price",
-        "50000",
+        "10000",
         "--asset",
         "USDC",
         "--json",
     ]
     assert envelope.stderr_bytes == len(b"synthetic stderr")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "quoted_price",
+    [
+        Money(amount=Decimal("0.06"), unit="USDC"),
+        Money(amount=Decimal("0.01"), unit="USD"),
+        Money(amount=Decimal("0.0100001"), unit="USDC"),
+    ],
+)
+async def test_invalid_quote_fails_before_process_start(quoted_price: Money) -> None:
+    request = paid_request()
+    authorization = await capability(request).consume(request, now=NOW)
+
+    with pytest.raises(ValueError, match="quote"):
+        await client("success").execute(authorization, request, quoted_price)
 
 
 @pytest.mark.asyncio
@@ -77,7 +95,7 @@ async def test_authorization_mismatch_fails_before_process_start() -> None:
     authorization = await capability(request).consume(request, now=NOW)
 
     with pytest.raises(AuthorizationError):
-        await client("success").execute(authorization, changed)
+        await client("success").execute(authorization, changed, QUOTED_PRICE)
 
 
 @pytest.mark.asyncio
@@ -86,7 +104,7 @@ async def test_clean_refusal_preserves_typed_error_and_certainty() -> None:
     authorization = await capability(request).consume(request, now=NOW)
 
     with pytest.raises(PerfloCommandError) as raised:
-        await client("refusal").execute(authorization, request)
+        await client("refusal").execute(authorization, request, QUOTED_PRICE)
 
     assert raised.value.error.code == "GUARDRAIL_DENIED"
     assert raised.value.error.details == {"limit": "0.05"}
@@ -102,7 +120,7 @@ async def test_timeout_is_uncertain_and_consumed_capability_cannot_retry(tmp_pat
     authorization = await authorized.consume(request, now=NOW)
 
     with pytest.raises(PerfloMutationUncertainError):
-        await timed_client.execute(authorization, request)
+        await timed_client.execute(authorization, request, QUOTED_PRICE)
     with pytest.raises(AuthorizationError, match="already consumed"):
         await authorized.consume(request, now=NOW)
 
@@ -114,7 +132,7 @@ async def test_malformed_mutation_output_is_submission_uncertain() -> None:
     request = paid_request()
     authorization = await capability(request).consume(request, now=NOW)
     with pytest.raises(PerfloMutationUncertainError):
-        await client("malformed").execute(authorization, request)
+        await client("malformed").execute(authorization, request, QUOTED_PRICE)
 
 
 @pytest.mark.asyncio

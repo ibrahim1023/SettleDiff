@@ -54,6 +54,7 @@ from settlediff.domain.models import (
     MachineReport,
     PurchaseIntent,
 )
+from settlediff.domain.money import Money
 from settlediff.domain.normalize import normalize_activity, normalize_contract, normalize_execution
 from settlediff.domain.redaction import redact_artifact, redact_embedded_identifiers
 from settlediff.domain.verdict import derive_verdict
@@ -155,7 +156,10 @@ class PerfloEvidencePort(Protocol):
     async def get_schema(self, slug: str) -> PerfloEnvelope: ...
 
     async def execute(
-        self, authorization: ConsumedPaidAuthorization, request: PaidExecutionRequest
+        self,
+        authorization: ConsumedPaidAuthorization,
+        request: PaidExecutionRequest,
+        quoted_price: Money,
     ) -> PerfloEnvelope: ...
 
     async def get_activity(self) -> PerfloEnvelope: ...
@@ -203,6 +207,7 @@ class LiveEvidenceCollector:
         self._budget = budget
         self._telemetry = telemetry
         self._contract: EvidenceArtifact | None = None
+        self._quote: Money | None = None
         self._schema: EvidenceArtifact | None = None
         self._execution: EvidenceArtifact | None = None
         self._activity: EvidenceArtifact | None = None
@@ -235,6 +240,18 @@ class LiveEvidenceCollector:
             request.run_id, ArtifactType.SERVICE_CONTRACT, "perflo.check", contract_data
         )
         contract = normalize_contract(self._contract)
+        if contract.price is not None:
+            if contract.price.unit != request.budget.unit:
+                raise RunTransitionError(
+                    f"Perflo quote unit {contract.price.unit} does not match the authorized "
+                    f"budget unit {request.budget.unit}"
+                )
+            if not contract.price.is_within(request.budget):
+                raise RunTransitionError(
+                    f"Perflo quote {contract.price.amount} {contract.price.unit} exceeds the "
+                    f"authorized budget {request.budget.amount} {request.budget.unit}"
+                )
+        self._quote = contract.price
         if contract.request_schema:
             schema_data: JsonValue = contract.request_schema
             schema_source = "perflo.check.request_schema"
@@ -257,7 +274,13 @@ class LiveEvidenceCollector:
     async def execute(
         self, authorization: ConsumedPaidAuthorization, request: PaidExecutionRequest
     ) -> None:
-        execution_data = _result_data(await self._perflo.execute(authorization, request))
+        if self._quote is None:
+            raise RunTransitionError(
+                "Perflo preflight did not capture a quote for this exact request"
+            )
+        execution_data = _result_data(
+            await self._perflo.execute(authorization, request, self._quote)
+        )
         self._execution = _artifact(
             request.run_id, ArtifactType.EXECUTION, "perflo.fetch", execution_data
         )
