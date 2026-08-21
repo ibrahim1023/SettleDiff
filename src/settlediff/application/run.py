@@ -312,15 +312,6 @@ class LiveEvidenceCollector:
         artifact = _artifact(run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data)
         self._recovery = artifact
         self._activity = artifact
-        records = (
-            activity_data
-            if isinstance(activity_data, list)
-            else cast(dict[str, JsonValue], activity_data).get("records")
-            if isinstance(activity_data, dict)
-            else None
-        )
-        if isinstance(records, list) and records:
-            return RecoveryState.SUBMITTED, (artifact,)
         return RecoveryState.UNRESOLVED, (artifact,)
 
     async def verify(self, request: PaidExecutionRequest) -> MachineReport:

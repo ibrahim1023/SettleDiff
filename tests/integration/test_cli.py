@@ -248,7 +248,7 @@ def test_run_reports_submitted_activity_recovery(monkeypatch: pytest.MonkeyPatch
     assert result.exit_code == 0
     assert calls == ["check", "schema", "fetch", "activity"]
     assert "UNVERIFIABLE" in result.stdout
-    assert "Submission: submitted" in result.stdout
+    assert "Submission: unresolved" in result.stdout
     assert "proof of non-submission: no" in result.stdout
 
 

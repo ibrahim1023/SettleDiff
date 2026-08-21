@@ -265,7 +265,7 @@ async def test_collector_recovery_uses_transaction_status_without_a_second_mutat
 
 
 @pytest.mark.asyncio
-async def test_collector_recovery_uses_activity_history_without_a_handle() -> None:
+async def test_collector_uncorrelated_activity_history_cannot_prove_submission() -> None:
     class FakePerflo:
         async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
             raise AssertionError("no transaction handle is available")
@@ -281,13 +281,15 @@ async def test_collector_recovery_uses_activity_history_without_a_handle() -> No
     )
     state, artifacts = await collector.recover_submission("syn_run_uncertain", None)
 
-    assert state is RecoveryState.SUBMITTED
+    assert state is RecoveryState.UNRESOLVED
     assert len(artifacts) == 1
     assert artifacts[0].source == "perflo.activity"
 
 
 @pytest.mark.asyncio
-async def test_collector_recovery_uses_current_activity_history_without_a_handle() -> None:
+async def test_collector_current_activity_history_cannot_prove_submission_without_a_handle() -> (
+    None
+):
     class FakePerflo:
         async def get_activity(self) -> PerfloSuccessEnvelope:
             return PerfloSuccessEnvelope(
@@ -307,7 +309,7 @@ async def test_collector_recovery_uses_current_activity_history_without_a_handle
 
     state, artifacts = await collector.recover_submission("syn_run_uncertain", None)
 
-    assert state is RecoveryState.SUBMITTED
+    assert state is RecoveryState.UNRESOLVED
     assert artifacts[0].data == [{"id": "syn_transaction_uncertain"}]
 
 
