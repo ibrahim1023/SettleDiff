@@ -1,4 +1,4 @@
-"""Explicit raw Perflo artifact mappings for the deterministic domain core."""
+"""Tolerant reader mapping raw evidence payloads into canonical domain models."""
 
 from __future__ import annotations
 

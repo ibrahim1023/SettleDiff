@@ -32,6 +32,45 @@ Bounded investigator ──────► typed evidence tools
                               CLI / local UI
 ```
 
+## Payment-rail boundary
+
+Paid execution reaches SettleDiff through adapters that translate rail-specific
+envelopes into canonical evidence. Perflo is the first adapter; x402 or direct MPP
+clients are architectural extension points, not implemented integrations:
+
+```text
+                       ┌──────────────────────┐
+                       │   Paid execution     │
+                       │      adapters        │
+                       └──────────┬───────────┘
+                                  │
+                  ┌───────────────┼───────────────┐
+                  │               │               │
+               Perflo           x402          future rail
+                  │               │               │
+                  └───────────────┴───────────────┘
+                                  │
+                                  ▼
+                      canonical evidence model
+                                  │
+                                  ▼
+                      deterministic verifier
+                                  │
+                    ┌─────────────┴─────────────┐
+                    ▼                           ▼
+               machine report             explanation
+```
+
+Coupling audit (2026-08-24, after the first live cycle): the verdict, check, and
+matching layers contain no rail-specific branching; recognized chains and protocols
+are payment-domain concepts, not Perflo concepts; and every envelope alias accepted
+by normalization lists the canonical snake_case name first, so another adapter can
+emit canonical evidence today without domain changes. Envelope aliases therefore
+remain in the domain normalizer as the tolerant reader of raw preserved payloads —
+moving them into an adapter would either discard raw evidence or duplicate state.
+The only Perflo-specific modules are `perflo/` (subprocess boundary and envelope
+capture) and the application services that orchestrate the adapter port.
+
 ## Components
 
 ### Domain core
