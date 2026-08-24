@@ -16,6 +16,17 @@ FIXTURES = Path(__file__).parents[2] / "fixtures"
         ("clean-success", Verdict.VERIFIED, {"chain": "PASS", "activity_persistence": "PASS"}),
         ("chain-diff", Verdict.VERIFIED_WITH_WARNINGS, {"chain": "DIFF"}),
         ("paid-failure", Verdict.PAID_FAILURE, {"paid_failure": "FAIL"}),
+        (
+            "failed-broadcast",
+            Verdict.UNVERIFIABLE,
+            {
+                "chain": "DIFF",
+                "service_execution": "FAIL",
+                "budget": "UNKNOWN",
+                "price": "UNKNOWN",
+                "activity_persistence": "PASS",
+            },
+        ),
         ("recipient-diff", Verdict.VERIFIED_WITH_WARNINGS, {"recipient": "WARN"}),
         ("missing-activity", Verdict.UNVERIFIABLE, {"activity_persistence": "WARN"}),
         ("ambiguous-activity", Verdict.UNVERIFIABLE, {"activity_persistence": "WARN"}),

@@ -31,7 +31,7 @@ def test_complete_fixture_path_remains_offline(
     fixture_reports = tuple(
         (path, replay_fixture(path)) for path in sorted(Path("fixtures").iterdir()) if path.is_dir()
     )
-    assert len(fixture_reports) == 6
+    assert len(fixture_reports) == 7
 
     for fixture_path, report in fixture_reports:
         human = runner.invoke(
