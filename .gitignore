@@ -2,6 +2,9 @@
 Product-spec.md
 task.md
 
+# Raw live evidence bundles stay local
+*.sdbundle
+
 # Python
 __pycache__/
 *.py[cod]
