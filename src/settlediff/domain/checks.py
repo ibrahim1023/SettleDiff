@@ -259,6 +259,29 @@ def _paid_failure(execution: ExecutionRecord | None) -> Finding:
 def _ledger_outcome(execution: ExecutionRecord | None, match: MatchResult) -> Finding:
     if execution is None or execution.upstream_http_status is None or match.matched is None:
         return _unknown("ledger_outcome", "Activity record or service outcome is unavailable.")
+    settled_vs_failed = (
+        execution.settlement_status is SettlementStatus.SETTLED
+        and match.matched.status is LedgerStatus.FAILED
+    )
+    failed_vs_confirmed = (
+        execution.settlement_status is SettlementStatus.FAILED
+        and match.matched.status is LedgerStatus.CONFIRMED
+    )
+    if settled_vs_failed or failed_vs_confirmed:
+        return _finding(
+            "ledger_outcome",
+            Severity.ERROR,
+            CheckStatus.FAIL,
+            execution.settlement_status,
+            match.matched.status,
+            "Execution reports settlement, but the persisted Activity record marks the "
+            "payment failed."
+            if settled_vs_failed
+            else "Execution reports payment failure, but the persisted Activity record "
+            "confirms settlement.",
+            ("execution", "activity"),
+            ("execution.settlement_status", "activity.status"),
+        )
     if (
         match.matched.status is LedgerStatus.CONFIRMED
         and not 200 <= execution.upstream_http_status < 300

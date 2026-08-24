@@ -8,6 +8,7 @@ from settlediff.domain.matching import MatchConfidence, MatchResult, MatchStatus
 from settlediff.domain.models import (
     ExecutionRecord,
     ExpectedContract,
+    Finding,
     LedgerRecord,
     LedgerStatus,
     PurchaseIntent,
@@ -183,6 +184,96 @@ def test_matched_activity_amount_verifies_missing_execution_charge() -> None:
 
     assert pending_findings["budget"].status.value == "UNKNOWN"
     assert pending_findings["price"].status.value == "UNKNOWN"
+
+
+def test_ledger_outcome_flags_settlement_contradiction() -> None:
+    intent = PurchaseIntent(
+        run_id="syn_run",
+        task="synthetic",
+        max_budget=Money(amount=Decimal("0.05"), unit="USDC"),
+        requested_service=None,
+        created_at=NOW,
+    )
+    contract = ExpectedContract(
+        vendor_slug="synthetic",
+        url="https://example.invalid",
+        price=Money(amount=Decimal("0.01"), unit="USDC"),
+        asset="USDC",
+        protocol="mpp",
+        chain="tempo",
+        request_schema={},
+    )
+    execution = ExecutionRecord(
+        vendor_slug="synthetic",
+        upstream_http_status=200,
+        charge=Money(amount=Decimal("0.01"), unit="USDC"),
+        asset="USDC",
+        protocol="mpp",
+        chain="tempo",
+        recipient="syn_recipient",
+        settlement_status=SettlementStatus.SETTLED,
+        transaction_id="syn_tx",
+        session_id=None,
+        transaction_hash=None,
+        response_body=None,
+        executed_at=NOW,
+    )
+    ledger = LedgerRecord(
+        ledger_id="syn_ledger",
+        vendor_slug="synthetic",
+        amount=Money(amount=Decimal("0.01"), unit="USDC"),
+        asset="USDC",
+        protocol="mpp",
+        chain="tempo",
+        recipient="syn_recipient",
+        status=LedgerStatus.FAILED,
+        error_reason="synthetic broadcast rejected",
+        transaction_id="syn_tx",
+        session_id=None,
+        transaction_hash=None,
+        occurred_at=NOW,
+    )
+
+    def findings_for(
+        current_execution: ExecutionRecord, current_ledger: LedgerRecord
+    ) -> dict[str, Finding]:
+        match = MatchResult(
+            MatchStatus.MATCHED,
+            MatchStrategy.TRANSACTION_ID,
+            MatchConfidence.HIGH,
+            current_ledger,
+            (current_ledger.ledger_id,),
+        )
+        return {
+            finding.check_id: finding
+            for finding in run_checks(intent, contract, current_execution, match)
+        }
+
+    settled_vs_failed = findings_for(execution, ledger)
+    assert settled_vs_failed["ledger_outcome"].status.value == "FAIL"
+    assert settled_vs_failed["ledger_outcome"].severity.value == "error"
+    assert settled_vs_failed["ledger_outcome"].artifact_ids == ("execution", "activity")
+    assert settled_vs_failed["ledger_outcome"].field_paths == (
+        "execution.settlement_status",
+        "activity.status",
+    )
+
+    failed_execution = execution.model_copy(
+        update={"settlement_status": SettlementStatus.FAILED, "charge": None}
+    )
+    confirmed_ledger = ledger.model_copy(update={"status": LedgerStatus.CONFIRMED})
+    failed_vs_confirmed = findings_for(failed_execution, confirmed_ledger)
+    assert failed_vs_confirmed["ledger_outcome"].status.value == "FAIL"
+
+    pending_ledger = ledger.model_copy(update={"status": LedgerStatus.PENDING})
+    settled_vs_pending = findings_for(execution, pending_ledger)
+    assert settled_vs_pending["ledger_outcome"].status.value == "PASS"
+
+    unknown_ledger = ledger.model_copy(update={"status": LedgerStatus.UNKNOWN})
+    settled_vs_unknown = findings_for(execution, unknown_ledger)
+    assert settled_vs_unknown["ledger_outcome"].status.value == "PASS"
+
+    assert findings_for(execution, confirmed_ledger)["ledger_outcome"].status.value == "PASS"
 
 
 def test_missing_evidence_is_unknown_not_a_pass() -> None:

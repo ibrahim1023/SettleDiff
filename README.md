@@ -37,6 +37,7 @@ The local product specification is intentionally excluded from Git. The approved
 - asset, protocol, chain, and recipient inconsistencies;
 - missing or ambiguously matched activity records;
 - successful financial settlement paired with a failed paid service;
+- contradictory settlement outcomes between execution and the persisted activity record;
 - explanations that contradict deterministic findings;
 - insufficient evidence that makes a run unverifiable.
 
