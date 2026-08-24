@@ -108,6 +108,46 @@ Captured raw envelopes are sanitized and versioned. Contract tests prove:
 - CLI and HTTP render the same stored `Report` without recomputing findings.
 - Snapshot tests are limited to stable human layouts; machine JSON uses explicit assertions.
 
+## Live compatibility evidence
+
+Live tests are opt-in, and money-moving operations never run automatically in CI.
+The first live paid cycle is recorded in
+[live-run-report-2026-08-21](live-run-report-2026-08-21.md); every materially new
+failure mode it exposed was distilled into a sanitized offline fixture (for example
+`fixtures/failed-broadcast/`). Raw live evidence bundles remain local and untracked.
+
+## Lessons from the first live cycle
+
+Live providers exposed behavior not represented by initial fixtures:
+
+- response-envelope aliases;
+- missing timestamps;
+- minor-unit budget requirements;
+- failed Activity records that must not count as charges;
+- transaction hash aliases;
+- chain disagreement between advertised and executed evidence;
+- upstream 402 replay after credential submission;
+- longer Context.dev cold-scrape latency.
+
+The testing policy is therefore:
+
+1. never trust provider shape stability;
+2. preserve raw payloads before normalization;
+3. treat missing data as unknown rather than synthesizing values;
+4. require confirmed charge evidence before financial conclusions;
+5. convert every materially new live failure mode into an offline regression fixture.
+
+## When a new paid test is justified
+
+Do not add live paid tests merely to collect failures. A new paid test is justified
+only if it answers a specific question:
+
+- does a new Perflo version change the contract;
+- does a new payment rail map correctly into canonical evidence;
+- can a successful settlement be independently correlated;
+- can a known `PAID_FAILURE` be reproduced against a real vendor;
+- does a fix require live compatibility verification.
+
 ## Planned commands
 
 ```bash
