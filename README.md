@@ -1,35 +1,90 @@
 # SettleDiff
 
-AI agents can spend real money now. A successful payment does not mean a successful task.
+**Transaction forensics for agent purchases.**
 
-SettleDiff investigates a paid agent purchase and compares what was intended, advertised, executed, settled, persisted, and returned by the service. A bounded Investigation Agent gathers evidence; deterministic Python code alone decides financial findings and the final verdict.
+AI agents can spend real money, but the payment layer, vendor, execution path, and
+activity ledger can disagree about what actually happened.
+
+SettleDiff independently reconstructs a paid agent purchase across:
 
 ```text
-intent → contract → execution → receipt → service outcome → activity record
-                         │
-                         └── deterministic consistency checks
+intent → advertised contract → execution → settlement → service result → activity record
 ```
 
-## Status
+It then runs deterministic consistency checks and returns one of a small set of
+evidence-backed verdicts.
 
-The current package version is **0.1.0** and the project is available under the [MIT License](LICENSE).
+The LLM may gather and explain evidence. It cannot decide financial truth.
 
-The 12-phase MVP is implemented. It includes strict versioned evidence models, exact money
-semantics, recursive redaction, bounded provider parsing, deterministic Activity matching,
-independent verification checks, verdict precedence, fully offline fixture replay, a safe Perflo
-subprocess boundary, an explicitly authorized live-run state machine, SQLite report storage, and a
-loopback-only debugger UI. Required live Context.dev evidence and private-by-default OpenTelemetry
-are also available. Hyperfusion's opt-in compatibility probe was revalidated on 2026-08-19 with
-`openai/gpt-oss-120b`: structured output, tool calling, and tool-result continuation are compatible
-with the configured profile.
+## Real incident: advertised Base, executed Tempo, vendor rejected payment
 
-- LLM provider: Hyperfusion, through its OpenAI-compatible Chat Completions API.
-- Agent SDK: PydanticAI, one bounded investigator.
-- Trust boundary: the model selects and explains evidence but cannot change findings or verdicts.
-- Primary integration: Perflo CLI.
-- Default development path: sanitized fixture replay with no paid calls and no live model calls.
+During the first live paid test cycle against a real Perflo/MPP vendor, SettleDiff
+observed:
 
-The local product specification is intentionally excluded from Git. The approved foundation is captured in [the production design](docs/superpowers/specs/2026-08-12-production-foundation-design.md).
+| Layer | Observed evidence | Result |
+|---|---|---|
+| Advertised chain | `base` | expected |
+| Executed chain | `tempo` | `DIFF` |
+| Vendor response | HTTP `402 Payment Required` after credential submission | `FAIL` |
+| Activity record | `broadcast_failed` | matched |
+| Charge | none confirmed | `UNKNOWN` |
+| Transaction hash | absent | `UNKNOWN` |
+| Settlement | could not be established | `UNVERIFIABLE` |
+
+SettleDiff did not infer a successful payment from the presence of an Activity record.
+A failed Activity record proved that an attempt was recorded, but not that money settled.
+
+**Final verdict: `UNVERIFIABLE`**
+
+The incident is reproduced offline as a sanitized regression fixture:
+
+```text
+$ uv run settlediff verify-fixture fixtures/failed-broadcast
+UNVERIFIABLE
+UNKNOWN: No execution or matched Activity charge is available.
+UNKNOWN: Quoted price or actual charge is unavailable.
+PASS: Asset values agree across available evidence.
+PASS: Protocol values agree across available evidence.
+DIFF: Chain values differ across available evidence.
+PASS: Recipient values match.
+UNKNOWN: Financial settlement evidence is unavailable.
+FAIL: Purchased service returned a non-success HTTP response.
+UNKNOWN: Settlement or service outcome is unavailable.
+PASS: Persisted Activity and service outcome require no additional consistency warning.
+PASS: A deterministic Activity record match was found.
+```
+
+Full cycle write-up: [live paid test cycle — 2026-08-21](docs/testing/live-run-report-2026-08-21.md).
+Regression fixture: [`fixtures/failed-broadcast/`](fixtures/failed-broadcast/). The raw live
+evidence bundle stays local and is never committed.
+
+## Why this matters
+
+A payment system can report that a request was submitted.
+A vendor can report that authorization failed.
+An activity ledger can record a failed broadcast.
+A chain or protocol field can differ from the advertised contract.
+
+None of those sources alone establish the full truth.
+
+SettleDiff compares them independently and preserves uncertainty instead of collapsing
+conflicting evidence into a guessed success/failure state.
+
+## Example verdicts
+
+### `VERIFIED`
+
+The contract, execution, settlement, service result, and activity record agree.
+
+### `PAID_FAILURE`
+
+Settlement is proven, but the purchased operation failed.
+
+### `UNVERIFIABLE`
+
+The available evidence is incomplete or contradictory enough that settlement or execution
+truth cannot be established safely. This is an intentional product behavior — refusing to
+guess is the correct outcome when evidence cannot carry the conclusion.
 
 ## What SettleDiff detects
 
@@ -41,7 +96,115 @@ The local product specification is intentionally excluded from Git. The approved
 - explanations that contradict deterministic findings;
 - insufficient evidence that makes a run unverifiable.
 
-The flagship result is `PAID_FAILURE`: money settled, but the purchased operation failed.
+## Trust model
+
+SettleDiff treats every external source as evidence, not truth.
+
+| Component | Allowed to do | Not allowed to do |
+|---|---|---|
+| Perflo adapter | capture contract, execution, Activity, transaction evidence | decide final truth |
+| Context.dev | retrieve supporting public evidence | alter financial findings |
+| Investigation Agent | select evidence, request bounded tools, explain findings | change checks or verdict |
+| Deterministic verifier | compare canonical evidence and assign findings | perform paid actions |
+| User authorization | approve one exact paid request | authorize retries implicitly |
+
+## Payment-rail boundary
+
+Perflo is SettleDiff's first supported paid-execution adapter.
+
+SettleDiff's core verifier is not Perflo-specific. The domain model operates on canonical
+evidence:
+
+- contract;
+- execution;
+- settlement/receipt;
+- service outcome;
+- activity record.
+
+A payment integration is responsible for translating rail-specific evidence into those
+canonical forms. Future integrations may support x402, direct MPP clients, or other
+agent-payment rails without changing deterministic verification semantics. These are
+architectural extension points, not implemented integrations.
+
+## Offline demo scenarios
+
+Every scenario replays deterministically with no credentials, external requests, or spending:
+
+| Fixture | Key condition | Expected verdict |
+|---|---|---|
+| `clean-success` | all evidence agrees | `VERIFIED` |
+| `chain-diff` | advertised vs executed chain differs | `VERIFIED_WITH_WARNINGS` |
+| `paid-failure` | settlement proven, service failed | `PAID_FAILURE` |
+| `failed-broadcast` | failed 402 replay, no proven charge | `UNVERIFIABLE` |
+| `recipient-diff` | recipient mismatch | `VERIFIED_WITH_WARNINGS` |
+| `missing-activity` | no reliable Activity match | `UNVERIFIABLE` |
+| `ambiguous-activity` | multiple plausible Activity matches | `UNVERIFIABLE` |
+
+## 60-second fixture demo
+
+```bash
+uv sync --locked --all-groups
+uv run settlediff verify-fixture fixtures/paid-failure --database /tmp/settlediff-demo.sqlite3
+uv run settlediff verify-fixture fixtures/failed-broadcast --database /tmp/settlediff-demo.sqlite3
+uv run settlediff show syn_run_failed_broadcast --database /tmp/settlediff-demo.sqlite3
+uv run settlediff serve --database /tmp/settlediff-demo.sqlite3
+```
+
+The first command prints `PAID_FAILURE`: settlement proven, service failed. The second
+prints `UNVERIFIABLE` and is the more interesting case: it was distilled from the real paid
+run above, where the advertised chain differed from execution and the vendor replayed a 402
+challenge after credential submission. The failed Activity record is matched to its
+transaction but is not treated as proof of settlement.
+
+Then open `http://127.0.0.1:8765/runs` to inspect the persisted Expected, Executed, and
+Recorded evidence. This demo never contacts a model, Perflo, or a paid service.
+
+For a live call, `settlediff run --url URL --body JSON --budget AMOUNT` inspects provider
+metadata, shows the exact target, canonical body digest, and USDC budget, then requires an
+interactive yes/no authorization. It is never part of the default test suite.
+
+## Live findings become offline regression tests
+
+SettleDiff does not rely on live vendors for its default test suite. When a real paid run
+exposes a new failure mode:
+
+1. preserve the local evidence bundle;
+2. sanitize and reduce the scenario;
+3. convert it into a deterministic fixture;
+4. add regression assertions;
+5. keep all default CI offline.
+
+`fixtures/failed-broadcast/` is the first example. Distilled from the 402-replay incident,
+it permanently checks that:
+
+- the failed Activity record can match its transaction;
+- a failed Activity record is not treated as a confirmed charge;
+- chain drift is reported;
+- price and budget remain `UNKNOWN` when settlement cannot be proven;
+- the overall verdict remains `UNVERIFIABLE`.
+
+## Status
+
+The current package version is **0.1.0** and the project is available under the
+[MIT License](LICENSE).
+
+The 12-phase MVP is implemented. It includes strict versioned evidence models, exact money
+semantics, recursive redaction, bounded provider parsing, deterministic Activity matching,
+independent verification checks, verdict precedence, fully offline fixture replay, a safe
+Perflo subprocess boundary, an explicitly authorized live-run state machine, SQLite report
+storage, and a loopback-only debugger UI. Required live Context.dev evidence and
+private-by-default OpenTelemetry are also available. Hyperfusion's opt-in compatibility
+probe was revalidated on 2026-08-19 with `openai/gpt-oss-120b`: structured output, tool
+calling, and tool-result continuation are compatible with the configured profile.
+
+- LLM provider: Hyperfusion, through its OpenAI-compatible Chat Completions API.
+- Agent SDK: PydanticAI, one bounded investigator.
+- Trust boundary: the model selects and explains evidence but cannot change findings or verdicts.
+- First payment adapter: Perflo CLI.
+- Default development path: sanitized fixture replay with no paid calls and no live model calls.
+
+The local product specification is intentionally excluded from Git. The approved foundation
+is captured in [the production design](docs/superpowers/specs/2026-08-12-production-foundation-design.md).
 
 ## Install from a local wheel
 
@@ -52,32 +215,9 @@ uv tool install dist/settlediff-0.1.0-py3-none-any.whl
 settlediff --version
 ```
 
-The version command prints `settlediff 0.1.0`. Build and inspect release artifacts locally before selecting any public distribution channel.
-
-## 60-second fixture demo
-
-Run the complete local path without credentials, external requests, or spending:
-
-```bash
-uv sync --locked --all-groups
-uv run settlediff verify-fixture fixtures/paid-failure --database /tmp/settlediff-demo.sqlite3
-uv run settlediff show syn_run_paid_failure --database /tmp/settlediff-demo.sqlite3
-uv run settlediff serve --database /tmp/settlediff-demo.sqlite3
-```
-
-The first two commands print the deterministic report. Then open `http://127.0.0.1:8765/runs` to
-inspect the persisted Expected, Executed, and Recorded evidence. This demo never contacts a model,
-Perflo, or a paid service.
-
-Expected verdict:
-
-```text
-PAID_FAILURE
-```
-
-For a live call, `settlediff run --url URL --body JSON --budget AMOUNT` inspects provider metadata,
-shows the exact target, canonical body digest, and USDC budget, then requires an interactive yes/no
-authorization. It is never part of the default test suite.
+The version command prints `settlediff 0.1.0`. Build and inspect release artifacts locally
+before selecting any public distribution channel; see the
+[release checklist](docs/development/release-checklist.md).
 
 ## Live configuration and telemetry
 
@@ -107,17 +247,21 @@ exported; PydanticAI content capture remains off. Exporter failure cannot change
 
 ## Architecture
 
-SettleDiff is a single Python application with a functional domain core and adapters around external systems:
+SettleDiff is agentic where evidence selection benefits from judgment and deterministic
+where financial truth requires repeatability. It is a single Python application with a
+functional domain core and adapters around external systems:
 
 - `domain`: strict models, normalization, matching, checks, verdicts, and redaction;
 - `application`: live-run and fixture-replay use cases;
-- `perflo`: safe subprocess adapter and Perflo envelope parsing;
+- `perflo`: first paid-execution adapter — safe subprocess boundary and envelope parsing;
 - `agent`: PydanticAI investigator with typed, guarded tools;
 - `storage`: local SQLite reports and event timeline;
 - `api` and `ui`: FastAPI with server-rendered Jinja/HTMX;
 - `telemetry`: optional OpenTelemetry export with sensitive content disabled.
 
-See [Architecture](docs/architecture/overview.md), [ADRs](docs/decisions/README.md), the [repository map](docs/development/repository-structure.md), and [local data backup and migration operations](docs/development/local-data.md).
+See [Architecture](docs/architecture/overview.md), [ADRs](docs/decisions/README.md), the
+[repository map](docs/development/repository-structure.md), and
+[local data backup and migration operations](docs/development/local-data.md).
 
 ## Development policy
 
@@ -128,22 +272,22 @@ See [Architecture](docs/architecture/overview.md), [ADRs](docs/decisions/README.
 - Money-moving failures are never retried until submission certainty is resolved.
 - Changes are committed in independently reviewable, passing increments.
 - Generated-looking filler, unnecessary abstractions, placeholder copy, and other AI slop are rejected.
-- Superpowers is not used to execute implementation or fixes; the tracked plan and repository verification loops are authoritative.
+- Superpowers is not used to execute implementation or fixes; the tracked plan and repository
+  verification loops are authoritative.
 
-Repository instructions are in [AGENTS.md](AGENTS.md). Verification gates are in [Testing](docs/testing/strategy.md), [Evaluation](docs/evaluation/strategy.md), [Observability](docs/observability/strategy.md), and [Verification loops](docs/development/verification-loops.md).
+Repository instructions are in [AGENTS.md](AGENTS.md). Verification gates are in
+[Testing](docs/testing/strategy.md), [Evaluation](docs/evaluation/strategy.md),
+[Observability](docs/observability/strategy.md), and
+[Verification loops](docs/development/verification-loops.md).
 
-## Implementation sequence
+## Current priorities
 
-1. Tooling and strict domain models.
-2. Normalization, matching, verification, and sanitized fixtures.
-3. Safe Perflo subprocess adapter.
-4. Hyperfusion compatibility contract.
-5. Bounded PydanticAI investigator.
-6. CLI, SQLite, and local debugger UI.
-7. Required Context.dev evidence path for live investigations.
-8. ElevenLabs only after core acceptance criteria pass.
-
-The detailed task-by-task plan is [SettleDiff MVP Implementation Plan](docs/superpowers/plans/2026-08-12-settlediff-mvp.md).
+1. Preserve deterministic verification semantics.
+2. Expand regression coverage from real incidents.
+3. Improve evidence inspection and report readability.
+4. Harden the payment-adapter boundary.
+5. Validate demand with users building paid agents.
+6. Add another payment rail only when it provides meaningful validation.
 
 ## Documentation
 
@@ -152,12 +296,24 @@ The detailed task-by-task plan is [SettleDiff MVP Implementation Plan](docs/supe
 - [Architecture decisions](docs/decisions/README.md)
 - [Repository structure](docs/development/repository-structure.md)
 - [Testing strategy](docs/testing/strategy.md)
-- [Agent evaluation strategy](docs/evaluation/strategy.md)
+- [Live paid test cycle — 2026-08-21](docs/testing/live-run-report-2026-08-21.md)
+- [Release checklist](docs/development/release-checklist.md)
+- [Evaluation strategy](docs/evaluation/strategy.md)
 - [Observability strategy](docs/observability/strategy.md)
 - [Security and data handling](docs/security/data-handling.md)
 - [Research sources and practice assessment](docs/research/sources.md)
 - [Decisions requiring owner input](docs/development/open-decisions.md)
 
-## Scope
+## Non-goals
 
-The MVP is a local developer tool, not a wallet, payment network, generic agent framework, observability platform, refund engine, multi-tenant SaaS, or fraud-detection system.
+SettleDiff does not:
+
+- retry ambiguous money-moving operations automatically;
+- infer settlement from a vendor success flag alone;
+- treat Activity presence as proof of charge;
+- ask an LLM to decide financial truth;
+- issue refunds or dispute payments;
+- act as a wallet or payment network;
+- replace the underlying payment rail;
+- serve as a generic agent framework, observability platform, multi-tenant SaaS, or
+  fraud-detection system.
