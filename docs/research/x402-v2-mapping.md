@@ -146,5 +146,7 @@ Before implementation continues, accept a minimal schema design covering:
 - provider versus independent settlement evidence;
 - report, bundle, database, fixture, CLI, and UI version compatibility.
 
-No production adapter refactor or payment execution should begin until that model
-decision is reviewed and recorded in an ADR.
+These decisions were accepted in
+[ADR 0007](../decisions/0007-rail-neutral-canonical-payment-evidence.md). Production
+model work may proceed test-first; adapter refactoring and payment execution remain
+blocked until the canonical schema increment passes its compatibility gates.
