@@ -40,18 +40,24 @@ class X402ExternalClient:
         self._max_input_bytes = max_input_bytes
         self._max_output_bytes = max_output_bytes
         self._environment = environment or self._controlled_environment()
+        self._launch_lock = asyncio.Lock()
+        self._launched = False
 
     async def execute_once(self, request: ExternalSignerRequest) -> ExternalSignerResult:
         encoded_request = request.model_dump_json().encode()
         if len(encoded_request) > self._max_input_bytes:
             raise X402ClientError("x402 signer input exceeded its configured limit")
-        process = await asyncio.create_subprocess_exec(
-            *self._command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=self._environment,
-        )
+        async with self._launch_lock:
+            if self._launched:
+                raise X402ClientError("x402 signer was already launched")
+            process = await asyncio.create_subprocess_exec(
+                *self._command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self._environment,
+            )
+            self._launched = True
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(input=encoded_request),

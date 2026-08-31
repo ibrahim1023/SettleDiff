@@ -55,6 +55,7 @@ def test_signer_request_binds_body_and_selected_terms() -> None:
     value = request()
 
     assert value.schema_version == 1
+    assert value.adapter == "x402"
     assert value.x402_version == 2
     assert value.body_digest == body_digest_for(BODY)
     assert value.payment_terms_digest == TERMS_DIGEST
@@ -65,6 +66,7 @@ def test_signer_request_binds_body_and_selected_terms() -> None:
 @pytest.mark.parametrize(
     "updates",
     [
+        {"adapter": "perflo"},
         {"x402_version": 1},
         {"target": "http://example.invalid/paid"},
         {"target": "https://user@example.invalid/paid"},
@@ -75,6 +77,7 @@ def test_signer_request_binds_body_and_selected_terms() -> None:
         {"scheme": "upto"},
         {"payment_terms_digest": "not-a-digest"},
         {"max_budget": Money(amount=Decimal("0"), unit="USDC")},
+        {"max_budget": Money(amount=Decimal("0.001"), unit="EUR")},
     ],
 )
 def test_signer_request_rejects_unbound_or_unsupported_terms(

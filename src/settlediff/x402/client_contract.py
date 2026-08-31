@@ -49,6 +49,7 @@ class SignerContractModel(BaseModel):
 
 class ExternalSignerRequest(SignerContractModel):
     schema_version: Literal[1] = 1
+    adapter: Literal["x402"] = "x402"
     run_id: NonEmptyStr
     x402_version: Literal[2] = 2
     target: NonEmptyStr

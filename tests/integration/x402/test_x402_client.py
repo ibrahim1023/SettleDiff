@@ -73,6 +73,19 @@ async def test_external_client_sends_one_bounded_request_with_controlled_environ
 
 
 @pytest.mark.asyncio
+async def test_external_client_instance_cannot_launch_twice(tmp_path: Path) -> None:
+    count_path = tmp_path / "count"
+    signer = client("success", count_path)
+
+    await signer.execute_once(request())
+    with pytest.raises(X402ClientError, match="already launched") as error:
+        await signer.execute_once(request())
+
+    assert error.value.submission_uncertain is False
+    assert count_path.read_text() == "1"
+
+
+@pytest.mark.asyncio
 async def test_external_client_preserves_structured_uncertainty(tmp_path: Path) -> None:
     result = await client("uncertain", tmp_path / "count").execute_once(request())
 
