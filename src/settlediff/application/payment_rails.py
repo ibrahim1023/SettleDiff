@@ -7,7 +7,7 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from settlediff.application.auth import ConsumedPaidAuthorization, PaidExecutionRequest
-from settlediff.domain.models import ArtifactType, NonEmptyStr
+from settlediff.domain.models import ArtifactType, NonEmptyStr, UtcDatetime
 from settlediff.domain.money import Money
 
 
@@ -28,6 +28,7 @@ class AdapterEvidence(BaseModel):
     source: NonEmptyStr
     artifact_type: ArtifactType
     data: JsonValue
+    observed_at: UtcDatetime | None = None
     submission_uncertain: bool = False
     payment_reference: NonEmptyStr | None = None
     transaction_reference: NonEmptyStr | None = None

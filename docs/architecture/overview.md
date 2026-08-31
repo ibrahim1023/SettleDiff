@@ -67,7 +67,8 @@ execution, and independent activity collection. Schema and transaction lookup ar
 separate runtime-checkable capabilities, so an adapter is not forced to implement
 provider operations it does not support. Every operation returns strict
 `AdapterEvidence` carrying adapter, operation, source, artifact type, data,
-submission certainty, and available payment/transaction references.
+provider observation time when supplied, submission certainty, and available
+payment/transaction references.
 
 Perflo implements this boundary through `perflo/adapter.py`; its command envelopes
 and aliases no longer cross into application services. The verdict, check, and

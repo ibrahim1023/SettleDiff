@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 
 import pytest
@@ -66,12 +67,22 @@ def test_adapter_evidence_is_strict_and_preserves_operation_identity() -> None:
         "source": "synthetic.contract",
         "artifact_type": "service_contract",
         "data": {"raw": "evidence"},
+        "observed_at": None,
         "submission_uncertain": False,
         "payment_reference": None,
         "transaction_reference": None,
     }
     with pytest.raises(ValidationError):
         AdapterEvidence.model_validate({**evidence.model_dump(), "invented": True})
+    with pytest.raises(ValidationError, match="UTC"):
+        AdapterEvidence(
+            adapter_id="synthetic",
+            operation="inspect",
+            source="synthetic.contract",
+            artifact_type=ArtifactType.SERVICE_CONTRACT,
+            data={},
+            observed_at=datetime(2026, 8, 31),
+        )
 
 
 def test_optional_capabilities_are_not_forced_onto_every_adapter() -> None:

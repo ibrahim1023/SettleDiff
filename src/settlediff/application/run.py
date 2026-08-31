@@ -803,4 +803,11 @@ def _adapter_artifact(
             f"adapter {adapter_id} returned {evidence.artifact_type.value} evidence "
             f"for {expected_type.value}"
         )
-    return _artifact(run_id, expected_type, evidence.source, evidence.data)
+    return EvidenceArtifact(
+        artifact_id=f"{run_id}:{expected_type.value}",
+        artifact_type=expected_type,
+        source=evidence.source,
+        collected_at=evidence.observed_at or datetime.now(UTC),
+        redacted=False,
+        data=evidence.data,
+    )
