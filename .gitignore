@@ -1,6 +1,8 @@
 # Local product inputs
 Product-spec.md
 task.md
+settlediff-x402-implementation-plan.md
+.local/
 
 # Raw live evidence bundles stay local
 *.sdbundle

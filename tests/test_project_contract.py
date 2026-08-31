@@ -33,9 +33,26 @@ def test_local_product_inputs_are_ignored_and_untracked() -> None:
     ignore_patterns = (ROOT / ".gitignore").read_text().splitlines()
     assert "Product-spec.md" in ignore_patterns
     assert "task.md" in ignore_patterns
+    assert "settlediff-x402-implementation-plan.md" in ignore_patterns
+    assert ".local/" in ignore_patterns
+
+    local_paths = (
+        "Product-spec.md",
+        "task.md",
+        "settlediff-x402-implementation-plan.md",
+        ".local/x402-captures/challenge-v2.json",
+        ".local/x402-signer/payment-payload-v2.json",
+    )
+    for path in local_paths:
+        ignored = subprocess.run(
+            ["git", "check-ignore", "--quiet", "--no-index", path],
+            cwd=ROOT,
+            check=False,
+        )
+        assert ignored.returncode == 0
 
     result = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", "Product-spec.md", "task.md"],
+        ["git", "ls-files", "--error-unmatch", *local_paths],
         cwd=ROOT,
         capture_output=True,
         check=False,
