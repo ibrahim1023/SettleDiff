@@ -102,7 +102,11 @@ and mislabeled adapter/artifact evidence fails closed. Provider contract tests p
 - timeouts terminate the child and preserve an uncertainty-safe error;
 - output limits fail without loading unbounded data;
 - unexpected fields do not disappear from raw evidence;
-- required canonical fields missing from a new envelope become parse errors, not guessed values.
+- required canonical fields missing from a new envelope become parse errors, not guessed values;
+- x402 v2 headers enforce encoded/decoded/depth limits and strict `exact`, Base Sepolia,
+  address, amount, resource URL, and settlement-outcome contracts;
+- signed x402 authorization headers and nested payment payloads are redacted before any
+  persistence boundary.
 
 ## Interface tests
 

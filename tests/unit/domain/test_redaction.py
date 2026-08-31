@@ -62,6 +62,25 @@ def test_redact_artifact_recurses_without_mutating_source() -> None:
     assert original_data["api_key"] == "hf_live_secret_value"
 
 
+def test_x402_signed_authorization_material_is_never_preserved() -> None:
+    artifact = EvidenceArtifact(
+        artifact_id="artifact_x402_signature",
+        artifact_type=ArtifactType.EXECUTION,
+        source="synthetic_x402",
+        collected_at=NOW,
+        redacted=False,
+        data={
+            "PAYMENT-SIGNATURE": "syn_reusable_signed_payment",
+            "paymentPayload": {"signature": "syn_nested_signature"},
+        },
+    )
+
+    assert redact_artifact(artifact).data == {
+        "PAYMENT-SIGNATURE": "[REDACTED]",
+        "paymentPayload": "[REDACTED]",
+    }
+
+
 def test_secret_like_keys_redact_non_string_values() -> None:
     artifact = EvidenceArtifact(
         artifact_id="artifact_syn_002",

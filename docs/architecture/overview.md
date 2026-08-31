@@ -72,8 +72,10 @@ payment/transaction references.
 
 Perflo implements this boundary through `perflo/adapter.py`; its command envelopes
 and aliases no longer cross into application services. The verdict, check, and
-matching layers contain no adapter-specific branching. The x402 production adapter,
-signer, RPC verifier, and live CLI path are not implemented yet.
+matching layers contain no adapter-specific branching. The x402 package now provides
+bounded offline v2 challenge/settlement-response parsing and explicit Base Sepolia test
+USDC normalization. The production adapter, signer, RPC verifier, and live CLI path are
+not implemented yet.
 
 ## Components
 

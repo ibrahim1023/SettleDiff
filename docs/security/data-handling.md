@@ -9,6 +9,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - local user input;
 - Hyperfusion model API;
 - Perflo executable and backend;
+- x402 resource/facilitator headers and future external signer;
 - Context.dev live evidence service;
 - local SQLite/filesystem;
 - browser rendering;
@@ -27,7 +28,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 
 - Validate URL, JSON body, and explicit budget before authorization.
 - Bind authorization to target, canonical request-body digest, budget, and run ID.
-- Consume authorization before invoking Perflo.
+- Consume authorization before invoking a payment-rail adapter.
 - Permit at most one paid execution per live run.
 - Never retry on uncertain submission; verify history/status and ask before a new run.
 - Keep fixture replay structurally unable to acquire a paid capability.
@@ -39,6 +40,14 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Set timeout, output limit, controlled environment, and working directory.
 - Capture streams with `communicate` and terminate/kill predictably on timeout.
 - Treat malformed output as evidence failure, not permission to fall back to text scraping.
+
+### x402 headers
+
+- Treat `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE` as untrusted bounded input.
+- Enforce encoded-header, decoded-JSON, and nesting-depth limits before strict validation.
+- Support only x402 v2 `exact` on Base Sepolia test USDC until another contract is accepted.
+- Treat `PAYMENT-SIGNATURE`, nested signatures, and reusable payment payloads as secret-bearing ephemeral material; never persist, display, export, log, or emit them through telemetry.
+- A provider settlement response remains provider-asserted evidence and cannot replace independent settlement verification.
 
 ### Data minimization
 
