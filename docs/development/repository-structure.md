@@ -27,10 +27,10 @@ The repository starts documentation-only. Source, tests, fixtures, and configura
 ├── src/settlediff/
 │   ├── agent/                      # PydanticAI model factory, tools, prompt
 │   ├── api/                        # FastAPI routes and dependencies
-│   ├── application/                # run and replay use cases
+│   ├── application/                # run/replay use cases and rail-neutral adapter contracts
 │   ├── contextdev/                 # required live independent evidence adapter
 │   ├── domain/                     # pure models, normalization, checks
-│   ├── perflo/                     # subprocess client and envelope parsers
+│   ├── perflo/                     # neutral adapter, subprocess client, envelope parsers
 │   ├── storage/                    # repositories and SQLite implementation
 │   ├── telemetry/                  # structured logging and OTel wiring
 │   └── ui/                         # Jinja templates and static assets

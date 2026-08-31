@@ -52,6 +52,7 @@ from settlediff.domain.models import (
     MachineReport,
 )
 from settlediff.domain.money import Money
+from settlediff.perflo.adapter import PerfloAdapter
 from settlediff.perflo.client import PerfloClient, PerfloClientError
 from settlediff.storage.sqlite import SQLiteReportRepository
 from settlediff.telemetry.setup import TelemetryRuntime, configure_telemetry
@@ -163,24 +164,6 @@ async def _explain_without_model(
     )
 
 
-def _transaction_handle(collector: LiveEvidenceCollector) -> str | None:
-    """Return a transaction handle only from captured execution evidence."""
-    for artifact in reversed(collector.artifacts):
-        if artifact.artifact_type.value != "execution" or not isinstance(artifact.data, dict):
-            continue
-        values = [
-            value.strip()
-            for key in ("transaction_hash", "txHash")
-            if isinstance((value := artifact.data.get(key)), str) and value.strip()
-        ]
-        if not values:
-            return None
-        if len(set(values)) != 1:
-            raise ValueError("execution evidence has conflicting transaction hash aliases")
-        return values[0]
-    return None
-
-
 async def _execute_live_run(
     request: PaidExecutionRequest,
     settings: Settings,
@@ -226,7 +209,7 @@ async def _execute_live_run(
             ),
             budget=budget,
             recover=collector.recover_submission,
-            transaction_hash=lambda: _transaction_handle(collector),
+            transaction_hash=lambda: collector.transaction_reference,
         ).execute(LiveRunCommand(request=request, capability=capability))
     finally:
         await contextdev.aclose()
@@ -303,7 +286,10 @@ def run(
         )
     )
     collector = LiveEvidenceCollector(
-        PerfloClient(), contextdev=contextdev, budget=budget_state, telemetry=telemetry
+        PerfloAdapter(PerfloClient()),
+        contextdev=contextdev,
+        budget=budget_state,
+        telemetry=telemetry,
     )
     try:
         try:

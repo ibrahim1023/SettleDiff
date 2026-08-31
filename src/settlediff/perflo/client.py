@@ -7,6 +7,7 @@ import json
 import os
 
 from settlediff.application.auth import ConsumedPaidAuthorization, PaidExecutionRequest
+from settlediff.application.payment_rails import SubmissionUncertainError
 from settlediff.domain.money import Money
 from settlediff.perflo.parser import (
     PerfloEnvelope,
@@ -28,7 +29,7 @@ class PerfloCommandError(PerfloClientError):
         self.submission_uncertain = error.submission_uncertain
 
 
-class PerfloMutationUncertainError(PerfloClientError):
+class PerfloMutationUncertainError(SubmissionUncertainError, PerfloClientError):
     submission_uncertain = True
 
 

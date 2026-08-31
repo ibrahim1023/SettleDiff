@@ -62,6 +62,22 @@ def test_local_product_inputs_are_ignored_and_untracked() -> None:
     assert result.stdout == ""
 
 
+def test_domain_and_live_application_are_payment_adapter_neutral() -> None:
+    domain_text = "\n".join(
+        path.read_text() for path in sorted((ROOT / "src/settlediff/domain").glob("*.py"))
+    )
+    run_text = (ROOT / "src/settlediff/application/run.py").read_text()
+    verdict_text = (ROOT / "src/settlediff/domain/verdict.py").read_text()
+
+    for adapter in ("settlediff.perflo", "settlediff.x402"):
+        assert adapter not in domain_text
+        assert adapter not in run_text
+    assert "PerfloEnvelope" not in run_text
+    assert "PerfloEvidencePort" not in run_text
+    assert 'rail == "perflo"' not in verdict_text
+    assert 'rail == "x402"' not in verdict_text
+
+
 def test_environment_example_contains_only_blank_safe_assignments() -> None:
     lines = (ROOT / ".env.example").read_text().splitlines()
     assignments = [line for line in lines if line and not line.startswith("#")]

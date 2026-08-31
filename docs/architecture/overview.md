@@ -61,15 +61,18 @@ clients are architectural extension points, not implemented integrations:
                machine report             explanation
 ```
 
-Coupling audit (2026-08-24, after the first live cycle): the verdict, check, and
-matching layers contain no rail-specific branching; recognized chains and protocols
-are payment-domain concepts, not Perflo concepts; and every envelope alias accepted
-by normalization lists the canonical snake_case name first, so another adapter can
-emit canonical evidence today without domain changes. Envelope aliases therefore
-remain in the domain normalizer as the tolerant reader of raw preserved payloads —
-moving them into an adapter would either discard raw evidence or duplicate state.
-The only Perflo-specific modules are `perflo/` (subprocess boundary and envelope
-capture) and the application services that orchestrate the adapter port.
+The unsigned x402 reference capture led to a versioned rail-neutral evidence model
+and application port. `PaymentRailAdapter` requires contract inspection, one exact
+execution, and independent activity collection. Schema and transaction lookup are
+separate runtime-checkable capabilities, so an adapter is not forced to implement
+provider operations it does not support. Every operation returns strict
+`AdapterEvidence` carrying adapter, operation, source, artifact type, data,
+submission certainty, and available payment/transaction references.
+
+Perflo implements this boundary through `perflo/adapter.py`; its command envelopes
+and aliases no longer cross into application services. The verdict, check, and
+matching layers contain no adapter-specific branching. The x402 production adapter,
+signer, RPC verifier, and live CLI path are not implemented yet.
 
 ## Components
 

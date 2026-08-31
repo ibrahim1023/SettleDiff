@@ -15,11 +15,11 @@ from settlediff.application.auth import (
     PaidExecutionRequest,
 )
 from settlediff.application.budget import InvestigationBudgetState
+from settlediff.application.payment_rails import AdapterEvidence, SubmissionUncertainError
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
     LiveEvidenceCollector,
     LiveRunCommand,
-    PerfloEvidencePort,
     RecoveryState,
     RunEvent,
     RunInvestigation,
@@ -45,6 +45,7 @@ from settlediff.domain.models import (
     Verdict,
 )
 from settlediff.domain.money import Money
+from settlediff.perflo.adapter import PerfloAdapter, PerfloClientPort
 from settlediff.perflo.client import PerfloMutationUncertainError
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 
@@ -254,7 +255,7 @@ async def test_collector_recovery_uses_transaction_status_without_a_second_mutat
             raise AssertionError("recovery must not invoke paid execution")
 
     collector = LiveEvidenceCollector(
-        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
     )
     state, artifacts = await collector.recover_submission("syn_run_uncertain", "syn_hash_uncertain")
 
@@ -277,7 +278,7 @@ async def test_collector_uncorrelated_activity_history_cannot_prove_submission()
             raise AssertionError("recovery must not invoke paid execution")
 
     collector = LiveEvidenceCollector(
-        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
     )
     state, artifacts = await collector.recover_submission("syn_run_uncertain", None)
 
@@ -304,7 +305,7 @@ async def test_collector_current_activity_history_cannot_prove_submission_withou
             )
 
     collector = LiveEvidenceCollector(
-        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
     )
 
     state, artifacts = await collector.recover_submission("syn_run_uncertain", None)
@@ -320,7 +321,7 @@ async def test_collector_empty_activity_history_does_not_prove_non_submission() 
             return _envelope({"records": []})
 
     collector = LiveEvidenceCollector(
-        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
     )
     state, artifacts = await collector.recover_submission("syn_run_uncertain", None)
 
@@ -362,7 +363,8 @@ async def test_live_preflight_accepts_current_perflo_contract_envelope() -> None
             raise AssertionError(f"embedded schema must avoid a second preflight call: {slug}")
 
     collector = LiveEvidenceCollector(
-        cast(PerfloEvidencePort, FakePerflo()), StubContextDev(evidence=CONTEXT_EVIDENCE)
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())),
+        StubContextDev(evidence=CONTEXT_EVIDENCE),
     )
 
     await collector.preflight(request)
@@ -411,7 +413,7 @@ async def test_preflight_rejects_quote_outside_authorized_budget(
             raise AssertionError("execution must not run with a rejected quote")
 
     collector = LiveEvidenceCollector(
-        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
     )
 
     with pytest.raises(RunTransitionError, match="quote"):
@@ -457,7 +459,7 @@ async def test_execute_sends_the_preflight_quote_not_the_budget() -> None:
             return _envelope({"upstreamResponse": {"status": 200, "body": None}})
 
     collector = LiveEvidenceCollector(
-        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
     )
     await collector.preflight(request)
     authorization = await PaidExecutionCapability.issue(
@@ -494,7 +496,7 @@ async def test_execute_requires_a_preflight_quote() -> None:
             raise AssertionError("execution must not run without a quoted price")
 
     collector = LiveEvidenceCollector(
-        cast(PerfloEvidencePort, FakePerflo()), cast(ContextEvidencePort, object())
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
     )
     await collector.preflight(request)
     authorization = await PaidExecutionCapability.issue(
@@ -559,7 +561,10 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
                 f"transaction status is not used for a certain submission: {transaction_hash}"
             )
 
-    collector = LiveEvidenceCollector(FakePerflo(), StubContextDev(evidence=CONTEXT_EVIDENCE))
+    collector = LiveEvidenceCollector(
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())),
+        StubContextDev(evidence=CONTEXT_EVIDENCE),
+    )
     await collector.preflight(request)
     authorization = await PaidExecutionCapability.issue(
         request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
@@ -575,6 +580,193 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
         "activity",
         "context_evidence",
     }
+
+
+@pytest.mark.asyncio
+async def test_live_evidence_collector_accepts_a_non_perflo_adapter() -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    request = PaidExecutionRequest(
+        run_id=report.run_id,
+        target=report.contract.url if report.contract else "https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+    contract_value = _fixture_data("contract.json")
+    assert isinstance(contract_value, dict)
+    contract = cast(
+        dict[str, JsonValue],
+        {**contract_value, "request_schema": {"type": "object"}},
+    )
+
+    class SyntheticRail:
+        adapter_id = "synthetic"
+
+        async def inspect(self, request: PaidExecutionRequest) -> AdapterEvidence:
+            assert request.target == "https://example.invalid/search"
+            return AdapterEvidence(
+                adapter_id=self.adapter_id,
+                operation="inspect",
+                source="synthetic.contract",
+                artifact_type=ArtifactType.SERVICE_CONTRACT,
+                data=contract,
+            )
+
+        async def execute_once(
+            self,
+            authorization: ConsumedPaidAuthorization,
+            request: PaidExecutionRequest,
+            quoted_price: Money,
+        ) -> AdapterEvidence:
+            authorization.require_exact_request(request)
+            assert quoted_price == Money(amount=Decimal("0.01"), unit="USDC")
+            return AdapterEvidence(
+                adapter_id=self.adapter_id,
+                operation="execute",
+                source="synthetic.execution",
+                artifact_type=ArtifactType.EXECUTION,
+                data=_fixture_data("execution.json"),
+                transaction_reference="syn_hash_clean",
+            )
+
+        async def collect_activity(self) -> AdapterEvidence:
+            return AdapterEvidence(
+                adapter_id=self.adapter_id,
+                operation="activity",
+                source="synthetic.activity",
+                artifact_type=ArtifactType.ACTIVITY,
+                data=_fixture_data("activity.json"),
+            )
+
+    collector = LiveEvidenceCollector(SyntheticRail(), StubContextDev(evidence=CONTEXT_EVIDENCE))
+    await collector.preflight(request)
+    authorization = await PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    ).consume(request)
+
+    await collector.execute(authorization, request)
+    collected = await collector.verify(request)
+
+    assert collected.verdict == report.verdict
+    assert collector.transaction_reference == "syn_hash_clean"
+    assert [artifact.source for artifact in collector.artifacts] == [
+        "synthetic.contract",
+        "synthetic.contract.request_schema",
+        "synthetic.execution",
+        "synthetic.activity",
+        "contextdev",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("adapter_id", "operation", "artifact_type", "message"),
+    [
+        ("other", "inspect", ArtifactType.SERVICE_CONTRACT, "identity"),
+        ("synthetic", "inspect", ArtifactType.EXECUTION, "service_contract"),
+        ("synthetic", "execute", ArtifactType.SERVICE_CONTRACT, "operation"),
+    ],
+)
+async def test_collector_rejects_mislabeled_adapter_evidence(
+    adapter_id: str,
+    operation: str,
+    artifact_type: ArtifactType,
+    message: str,
+) -> None:
+    request = PaidExecutionRequest(
+        run_id="syn_run",
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+
+    class InvalidRail:
+        adapter_id = "synthetic"
+
+        async def inspect(self, request: PaidExecutionRequest) -> AdapterEvidence:
+            return AdapterEvidence(
+                adapter_id=adapter_id,
+                operation=operation,
+                source="synthetic.invalid",
+                artifact_type=artifact_type,
+                data={"url": request.target, "request_schema": {}},
+            )
+
+        async def execute_once(
+            self,
+            authorization: ConsumedPaidAuthorization,
+            request: PaidExecutionRequest,
+            quoted_price: Money,
+        ) -> AdapterEvidence:
+            del authorization, request, quoted_price
+            raise AssertionError
+
+        async def collect_activity(self) -> AdapterEvidence:
+            raise AssertionError
+
+    collector = LiveEvidenceCollector(InvalidRail(), cast(ContextEvidencePort, object()))
+
+    with pytest.raises(RunTransitionError, match=message):
+        await collector.preflight(request)
+
+
+@pytest.mark.asyncio
+async def test_collector_preserves_uncertain_execution_evidence_and_reference() -> None:
+    request = PaidExecutionRequest(
+        run_id="syn_uncertain_adapter",
+        target="https://example.invalid/search",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+
+    class UncertainRail:
+        adapter_id = "synthetic"
+
+        async def inspect(self, request: PaidExecutionRequest) -> AdapterEvidence:
+            return AdapterEvidence(
+                adapter_id=self.adapter_id,
+                operation="inspect",
+                source="synthetic.contract",
+                artifact_type=ArtifactType.SERVICE_CONTRACT,
+                data={
+                    "url": request.target,
+                    "price": {"amount": "0.01", "unit": "USDC"},
+                    "asset": "USDC",
+                    "request_schema": {"type": "object"},
+                },
+            )
+
+        async def execute_once(
+            self,
+            authorization: ConsumedPaidAuthorization,
+            request: PaidExecutionRequest,
+            quoted_price: Money,
+        ) -> AdapterEvidence:
+            authorization.require_exact_request(request)
+            assert quoted_price == request.budget
+            return AdapterEvidence(
+                adapter_id=self.adapter_id,
+                operation="execute",
+                source="synthetic.execution",
+                artifact_type=ArtifactType.EXECUTION,
+                data={"settlement_status": "unknown"},
+                submission_uncertain=True,
+                transaction_reference="syn_uncertain_hash",
+            )
+
+        async def collect_activity(self) -> AdapterEvidence:
+            raise AssertionError
+
+    collector = LiveEvidenceCollector(UncertainRail(), cast(ContextEvidencePort, object()))
+    await collector.preflight(request)
+    authorization = await PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    ).consume(request)
+
+    with pytest.raises(SubmissionUncertainError):
+        await collector.execute(authorization, request)
+
+    assert collector.transaction_reference == "syn_uncertain_hash"
+    assert collector.artifacts[-1].source == "synthetic.execution"
 
 
 class StubContextDev:
@@ -657,7 +849,9 @@ def failing_collector(
                 f"transaction status is not used for a certain submission: {transaction_hash}"
             )
 
-    return LiveEvidenceCollector(FakePerflo(), contextdev=contextdev, budget=budget)
+    return LiveEvidenceCollector(
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), contextdev=contextdev, budget=budget
+    )
 
 
 async def run_failing_collector(collector: LiveEvidenceCollector) -> MachineReport:
@@ -826,7 +1020,9 @@ async def test_collector_never_calls_contextdev_for_a_successful_service() -> No
                 f"transaction status is not used for a certain submission: {transaction_hash}"
             )
 
-    collector = LiveEvidenceCollector(FakePerflo(), contextdev=contextdev)
+    collector = LiveEvidenceCollector(
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), contextdev=contextdev
+    )
     request = PaidExecutionRequest(
         run_id="syn_run_clean",
         target="https://example.invalid/search",
@@ -1316,7 +1512,7 @@ async def test_run_emits_safe_state_and_boundary_telemetry() -> None:
     assert telemetry.spans == [
         "settlediff.run",
         "settlediff.authorize",
-        "settlediff.perflo.execute",
+        "settlediff.payment_rail.execute",
         "settlediff.verify",
         "settlediff.agent.explain",
     ]

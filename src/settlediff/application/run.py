@@ -32,6 +32,13 @@ from settlediff.application.budget import (
     InvestigationBudgetExceeded,
     InvestigationBudgetState,
 )
+from settlediff.application.payment_rails import (
+    AdapterEvidence,
+    PaymentRailAdapter,
+    SchemaEvidencePort,
+    SubmissionUncertainError,
+    TransactionEvidencePort,
+)
 from settlediff.contextdev.client import (
     ContextDevProtocolError,
     ContextDevUnavailableError,
@@ -58,8 +65,6 @@ from settlediff.domain.money import Money
 from settlediff.domain.normalize import normalize_activity, normalize_contract, normalize_execution
 from settlediff.domain.redaction import redact_artifact, redact_embedded_identifiers
 from settlediff.domain.verdict import derive_verdict
-from settlediff.perflo.client import PerfloMutationUncertainError
-from settlediff.perflo.parser import PerfloEnvelope, PerfloSuccessEnvelope
 
 
 class RecoveryState(StrEnum):
@@ -148,25 +153,6 @@ class InvestigationOutcome:
     submission_uncertain: bool
 
 
-class PerfloEvidencePort(Protocol):
-    """The four narrow Perflo calls used by a live investigation."""
-
-    async def inspect_service(self, target: str) -> PerfloEnvelope: ...
-
-    async def get_schema(self, slug: str) -> PerfloEnvelope: ...
-
-    async def execute(
-        self,
-        authorization: ConsumedPaidAuthorization,
-        request: PaidExecutionRequest,
-        quoted_price: Money,
-    ) -> PerfloEnvelope: ...
-
-    async def get_activity(self) -> PerfloEnvelope: ...
-
-    async def transaction_status(self, transaction_hash: str) -> PerfloEnvelope: ...
-
-
 class TelemetryPort(Protocol):
     def span(
         self, name: str, attributes: Mapping[str, object]
@@ -197,12 +183,12 @@ class LiveEvidenceCollector:
 
     def __init__(
         self,
-        perflo: PerfloEvidencePort,
+        adapter: PaymentRailAdapter,
         contextdev: ContextEvidencePort,
         budget: InvestigationBudgetState | None = None,
         telemetry: TelemetryPort | None = None,
     ) -> None:
-        self._perflo = perflo
+        self._adapter = adapter
         self._contextdev = contextdev
         self._budget = budget
         self._telemetry = telemetry
@@ -213,6 +199,11 @@ class LiveEvidenceCollector:
         self._activity: EvidenceArtifact | None = None
         self._context: EvidenceArtifact | None = None
         self._recovery: EvidenceArtifact | None = None
+        self._transaction_reference: str | None = None
+
+    @property
+    def transaction_reference(self) -> str | None:
+        return self._transaction_reference
 
     @property
     def artifacts(self) -> tuple[EvidenceArtifact, ...]:
@@ -231,85 +222,130 @@ class LiveEvidenceCollector:
 
     async def preflight(self, request: PaidExecutionRequest) -> None:
         with self._span(
-            "settlediff.perflo.inspect", {"run_id": request.run_id, "component": "perflo"}
+            "settlediff.payment_rail.inspect",
+            {
+                "run_id": request.run_id,
+                "component": "payment_rail",
+                "adapter": self._adapter.adapter_id,
+            },
         ):
-            contract_data = _result_data(
-                await self._perflo.inspect_service(request.target), field="contract"
-            )
-        self._contract = _artifact(
-            request.run_id, ArtifactType.SERVICE_CONTRACT, "perflo.check", contract_data
+            contract_evidence = await self._adapter.inspect(request)
+        self._contract = _adapter_artifact(
+            request.run_id,
+            contract_evidence,
+            expected_type=ArtifactType.SERVICE_CONTRACT,
+            expected_operation="inspect",
+            adapter_id=self._adapter.adapter_id,
         )
         contract = normalize_contract(self._contract)
         if contract.price is not None:
             if contract.price.unit != request.budget.unit:
                 raise RunTransitionError(
-                    f"Perflo quote unit {contract.price.unit} does not match the authorized "
+                    f"quote unit {contract.price.unit} does not match the authorized "
                     f"budget unit {request.budget.unit}"
                 )
             if not contract.price.is_within(request.budget):
                 raise RunTransitionError(
-                    f"Perflo quote {contract.price.amount} {contract.price.unit} exceeds the "
+                    f"quote {contract.price.amount} {contract.price.unit} exceeds the "
                     f"authorized budget {request.budget.amount} {request.budget.unit}"
                 )
         self._quote = contract.price
         if contract.request_schema:
-            schema_data: JsonValue = contract.request_schema
-            schema_source = "perflo.check.request_schema"
+            self._schema = _artifact(
+                request.run_id,
+                ArtifactType.CONTEXT_EVIDENCE,
+                f"{contract_evidence.source}.request_schema",
+                contract.request_schema,
+            )
         else:
-            if contract.vendor_slug is None:
+            if contract.vendor_slug is None or not isinstance(self._adapter, SchemaEvidencePort):
                 raise RunTransitionError(
-                    "Perflo contract omitted both an embedded schema and catalog vendor slug"
+                    "Contract omitted an embedded schema and the adapter cannot retrieve one"
                 )
             with self._span(
-                "settlediff.perflo.schema", {"run_id": request.run_id, "component": "perflo"}
+                "settlediff.payment_rail.schema",
+                {
+                    "run_id": request.run_id,
+                    "component": "payment_rail",
+                    "adapter": self._adapter.adapter_id,
+                },
             ):
-                schema_data = _result_data(
-                    await self._perflo.get_schema(contract.vendor_slug), field="schema"
-                )
-            schema_source = "perflo.schema"
-        self._schema = _artifact(
-            request.run_id, ArtifactType.CONTEXT_EVIDENCE, schema_source, schema_data
-        )
+                schema_evidence = await self._adapter.collect_schema(contract.vendor_slug)
+            self._schema = _adapter_artifact(
+                request.run_id,
+                schema_evidence,
+                expected_type=ArtifactType.CONTEXT_EVIDENCE,
+                expected_operation="schema",
+                adapter_id=self._adapter.adapter_id,
+            )
 
     async def execute(
         self, authorization: ConsumedPaidAuthorization, request: PaidExecutionRequest
     ) -> None:
         if self._quote is None:
             raise RunTransitionError(
-                "Perflo preflight did not capture a quote for this exact request"
+                "Payment-rail preflight did not capture a quote for this exact request"
             )
-        execution_data = _result_data(
-            await self._perflo.execute(authorization, request, self._quote)
+        execution_evidence = await self._adapter.execute_once(authorization, request, self._quote)
+        self._execution = _adapter_artifact(
+            request.run_id,
+            execution_evidence,
+            expected_type=ArtifactType.EXECUTION,
+            expected_operation="execute",
+            adapter_id=self._adapter.adapter_id,
         )
-        self._execution = _artifact(
-            request.run_id, ArtifactType.EXECUTION, "perflo.fetch", execution_data
-        )
+        self._transaction_reference = execution_evidence.transaction_reference
+        if execution_evidence.submission_uncertain:
+            raise SubmissionUncertainError(
+                "payment-rail execution may have been submitted; recover before any new attempt"
+            )
 
     async def recover_submission(
         self, run_id: str, transaction_hash: str | None
     ) -> tuple[RecoveryState, tuple[EvidenceArtifact, ...]]:
         """Use read-only evidence to establish submission without another mutation."""
-        if transaction_hash is not None:
+        if transaction_hash is not None and isinstance(self._adapter, TransactionEvidencePort):
             with self._span(
-                "settlediff.perflo.transaction_status",
-                {"run_id": run_id, "component": "perflo"},
+                "settlediff.payment_rail.transaction",
+                {
+                    "run_id": run_id,
+                    "component": "payment_rail",
+                    "adapter": self._adapter.adapter_id,
+                },
             ):
-                status_data = _result_data(await self._perflo.transaction_status(transaction_hash))
-            artifact = _artifact(
-                run_id, ArtifactType.PAYMENT_RECEIPT, "perflo.tx_status", status_data
+                transaction_evidence = await self._adapter.collect_transaction(transaction_hash)
+            artifact = _adapter_artifact(
+                run_id,
+                transaction_evidence,
+                expected_type=ArtifactType.PAYMENT_RECEIPT,
+                expected_operation="transaction_status",
+                adapter_id=self._adapter.adapter_id,
             )
             self._recovery = artifact
-            if isinstance(status_data, dict):
-                status = cast(dict[str, JsonValue], status_data).get("status")
+            if isinstance(artifact.data, dict):
+                status = cast(dict[str, JsonValue], artifact.data).get("status")
                 if status == "confirmed":
                     return RecoveryState.SUBMITTED, (artifact,)
                 if status == "failed":
                     return RecoveryState.NOT_SUBMITTED, (artifact,)
             return RecoveryState.UNRESOLVED, (artifact,)
 
-        with self._span("settlediff.perflo.activity", {"run_id": run_id, "component": "perflo"}):
-            activity_data = _activity_data(await self._perflo.get_activity())
-        artifact = _artifact(run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data)
+        with self._span(
+            "settlediff.payment_rail.activity",
+            {
+                "run_id": run_id,
+                "component": "payment_rail",
+                "adapter": self._adapter.adapter_id,
+            },
+        ):
+            activity_evidence = await self._adapter.collect_activity()
+        artifact = _adapter_artifact(
+            run_id,
+            activity_evidence,
+            expected_type=ArtifactType.ACTIVITY,
+            expected_operation="activity",
+            adapter_id=self._adapter.adapter_id,
+        )
         self._recovery = artifact
         self._activity = artifact
         return RecoveryState.UNRESOLVED, (artifact,)
@@ -319,12 +355,20 @@ class LiveEvidenceCollector:
             raise RunTransitionError("live verification requires captured contract evidence")
         if self._activity is None:
             with self._span(
-                "settlediff.perflo.activity",
-                {"run_id": request.run_id, "component": "perflo"},
+                "settlediff.payment_rail.activity",
+                {
+                    "run_id": request.run_id,
+                    "component": "payment_rail",
+                    "adapter": self._adapter.adapter_id,
+                },
             ):
-                activity_data = _activity_data(await self._perflo.get_activity())
-            self._activity = _artifact(
-                request.run_id, ArtifactType.ACTIVITY, "perflo.activity", activity_data
+                activity_evidence = await self._adapter.collect_activity()
+            self._activity = _adapter_artifact(
+                request.run_id,
+                activity_evidence,
+                expected_type=ArtifactType.ACTIVITY,
+                expected_operation="activity",
+                adapter_id=self._adapter.adapter_id,
             )
         contract = normalize_contract(self._contract)
         execution = normalize_execution(self._execution) if self._execution is not None else None
@@ -542,10 +586,11 @@ class RunInvestigation:
             recovery: SubmissionRecovery | None = None
             try:
                 with self._span(
-                    "settlediff.perflo.execute", {"run_id": run_id, "component": "perflo"}
+                    "settlediff.payment_rail.execute",
+                    {"run_id": run_id, "component": "payment_rail"},
                 ):
                     await self._execute_paid(authorization, command.request)
-            except PerfloMutationUncertainError:
+            except SubmissionUncertainError:
                 uncertain = True
                 await self._transition(timeline, RunState.EVIDENCE_RECOVERY, run_id)
                 recovery = await self._recover_submission(run_id)
@@ -738,29 +783,24 @@ def _artifact(
     )
 
 
-def _result_data(envelope: PerfloEnvelope, *, field: str = "result") -> JsonValue:
-    if not isinstance(envelope, PerfloSuccessEnvelope):
-        raise RunTransitionError("Perflo returned an error envelope after the adapter accepted it")
-    result = envelope.payload.get(field)
-    if result is None and field != "result":
-        result = envelope.payload.get("result")
-    if result is None:
-        raise RunTransitionError(f"Perflo success envelope did not include {field} evidence")
-    return cast(JsonValue, result)
-
-
-def _activity_data(envelope: PerfloEnvelope) -> JsonValue:
-    if not isinstance(envelope, PerfloSuccessEnvelope):
-        raise RunTransitionError("Perflo returned an error envelope after the adapter accepted it")
-    legacy = envelope.payload.get("result")
-    if legacy is not None:
-        return cast(JsonValue, legacy)
-    agent = envelope.payload.get("agent")
-    transactions = (
-        cast(dict[str, JsonValue], agent).get("transactions") if isinstance(agent, dict) else None
-    )
-    if not isinstance(transactions, list):
+def _adapter_artifact(
+    run_id: str,
+    evidence: AdapterEvidence,
+    *,
+    expected_type: ArtifactType,
+    expected_operation: str,
+    adapter_id: str,
+) -> EvidenceArtifact:
+    if evidence.adapter_id != adapter_id:
+        raise RunTransitionError("adapter evidence identity does not match the selected adapter")
+    if evidence.operation != expected_operation:
         raise RunTransitionError(
-            "Perflo success envelope did not include agent transaction evidence"
+            f"adapter {adapter_id} returned {evidence.operation} evidence for "
+            f"{expected_operation} operation"
         )
-    return cast(JsonValue, transactions)
+    if evidence.artifact_type is not expected_type:
+        raise RunTransitionError(
+            f"adapter {adapter_id} returned {evidence.artifact_type.value} evidence "
+            f"for {expected_type.value}"
+        )
+    return _artifact(run_id, expected_type, evidence.source, evidence.data)

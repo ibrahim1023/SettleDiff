@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
@@ -13,22 +14,19 @@ from typer.testing import CliRunner
 
 from settlediff import __version__
 from settlediff.agent.grounding import fallback_explanation
+from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
 from settlediff.application.replay import replay_fixture
-from settlediff.application.run import (
-    LiveEvidenceCollector,
-    PerfloEvidencePort,
-    RunEvent,
-    RunState,
-)
+from settlediff.application.run import RunEvent, RunState
 from settlediff.cli import app
 from settlediff.config import Settings
-from settlediff.contextdev.client import ContextEvidencePort
 from settlediff.domain.models import (
     ArtifactType,
     EvidenceArtifact,
     ExplanationRecord,
     ExplanationSource,
 )
+from settlediff.domain.money import Money
+from settlediff.perflo.adapter import PerfloAdapter, PerfloClientPort
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 from settlediff.storage.sqlite import SQLiteReportRepository
 
@@ -150,87 +148,54 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
     assert "model requests: 4" in result.stdout
 
 
-def test_transaction_handle_comes_only_from_captured_execution_evidence() -> None:
-    artifact = EvidenceArtifact(
-        artifact_id="run:execution",
-        artifact_type=ArtifactType.EXECUTION,
-        source="perflo.fetch",
-        collected_at=datetime.now(UTC),
-        redacted=False,
-        data={"transaction_hash": "syn_hash_recovered"},
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["transaction_hash", "transactionHash", "txHash"])
+async def test_perflo_adapter_preserves_transaction_reference_alias(field: str) -> None:
+    request = PaidExecutionRequest(
+        run_id="syn_run",
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
+    authorization = await PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    ).consume(request)
 
     class FakePerflo:
-        async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
-            del target
-            raise AssertionError
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            return _envelope({field: "syn_hash_recovered"})
 
-        async def get_schema(self, slug: str) -> PerfloSuccessEnvelope:
-            del slug
-            raise AssertionError
+    adapter = PerfloAdapter(cast(PerfloClientPort, FakePerflo()))
 
-        async def execute(
-            self, authorization: object, request: object, quoted_price: object
-        ) -> PerfloSuccessEnvelope:
-            del authorization, request, quoted_price
-            raise AssertionError
-
-        async def get_activity(self) -> PerfloSuccessEnvelope:
-            raise AssertionError
-
-        async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
-            del transaction_hash
-            raise AssertionError
-
-    class FakeContextDev:
-        async def verify(self, _request: object) -> object:
-            raise AssertionError
-
-    collector = LiveEvidenceCollector(FakePerflo(), cast(ContextEvidencePort, FakeContextDev()))
-    collector._execution = artifact  # pyright: ignore[reportPrivateUsage]
-
-    from settlediff.cli import _transaction_handle  # pyright: ignore[reportPrivateUsage]
-
-    assert _transaction_handle(collector) == "syn_hash_recovered"
-
-
-def test_transaction_handle_accepts_current_tx_hash_alias() -> None:
-    artifact = EvidenceArtifact(
-        artifact_id="run:execution",
-        artifact_type=ArtifactType.EXECUTION,
-        source="perflo.fetch",
-        collected_at=datetime.now(UTC),
-        redacted=False,
-        data={"txHash": "syn_hash_current"},
+    evidence = await adapter.execute_once(
+        authorization, request, Money(amount=Decimal("0.01"), unit="USDC")
     )
-    collector = LiveEvidenceCollector(
-        cast(PerfloEvidencePort, object()), cast(ContextEvidencePort, object())
+
+    assert evidence.transaction_reference == "syn_hash_recovered"
+
+
+@pytest.mark.asyncio
+async def test_perflo_adapter_rejects_conflicting_transaction_references() -> None:
+    request = PaidExecutionRequest(
+        run_id="syn_run",
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
-    collector._execution = artifact  # pyright: ignore[reportPrivateUsage]
+    authorization = await PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    ).consume(request)
 
-    from settlediff.cli import _transaction_handle  # pyright: ignore[reportPrivateUsage]
+    class FakePerflo:
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            return _envelope({"transaction_hash": "syn_hash_one", "txHash": "syn_hash_two"})
 
-    assert _transaction_handle(collector) == "syn_hash_current"
-
-
-def test_transaction_handle_rejects_conflicting_aliases() -> None:
-    artifact = EvidenceArtifact(
-        artifact_id="run:execution",
-        artifact_type=ArtifactType.EXECUTION,
-        source="perflo.fetch",
-        collected_at=datetime.now(UTC),
-        redacted=False,
-        data={"transaction_hash": "syn_hash_one", "txHash": "syn_hash_two"},
-    )
-    collector = LiveEvidenceCollector(
-        cast(PerfloEvidencePort, object()), cast(ContextEvidencePort, object())
-    )
-    collector._execution = artifact  # pyright: ignore[reportPrivateUsage]
-
-    from settlediff.cli import _transaction_handle  # pyright: ignore[reportPrivateUsage]
+    adapter = PerfloAdapter(cast(PerfloClientPort, FakePerflo()))
 
     with pytest.raises(ValueError, match="conflicting"):
-        _transaction_handle(collector)
+        await adapter.execute_once(
+            authorization, request, Money(amount=Decimal("0.01"), unit="USDC")
+        )
 
 
 def test_run_reports_unresolved_activity_recovery(monkeypatch: pytest.MonkeyPatch) -> None:

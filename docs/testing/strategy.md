@@ -92,7 +92,10 @@ Set `pydantic_ai.models.ALLOW_MODEL_REQUESTS = False` in the default test config
 
 ## Adapter contracts
 
-Captured raw envelopes are sanitized and versioned. Contract tests prove:
+Captured raw envelopes are sanitized and versioned. Application contract tests also
+prove that a non-Perflo adapter can provide typed evidence without exposing a provider
+envelope, optional schema/transaction capabilities are not forced onto every adapter,
+and mislabeled adapter/artifact evidence fails closed. Provider contract tests prove:
 
 - stdout JSON and stderr diagnostics remain distinct;
 - non-zero exit with a valid Perflo error envelope preserves code, recoverability, details, hint, and submission certainty;
