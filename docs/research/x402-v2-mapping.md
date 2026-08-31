@@ -45,6 +45,7 @@ This is reference-protocol evidence, not external-vendor compatibility evidence.
 | selected requirement | `asset` | Base Sepolia USDC contract address | canonical asset identity | `EXACT` | Current asset is a symbol string and would become unknown |
 | selected requirement | `payTo` | EVM address | advertised recipient | `EXACT` | `ExpectedContract` has no recipient |
 | selected requirement | `maxTimeoutSeconds` | positive integer `300` | payment-term expiry/timeout | `EXACT` | No canonical field |
+| requirement `extra` | `assetTransferMethod` | absent | transfer mechanism | `TRANSFORMED` | Exact-EVM specification defines absent as `eip3009`; the normalized value must cite that specification |
 | requirement `extra` | `name` | `USDC` | token signing/domain metadata | `PROVIDER_ASSERTED` | Must not establish asset identity by itself |
 | requirement `extra` | `version` | string `2` | token EIP-712 domain metadata | `PROVIDER_ASSERTED` | Preservable only in raw evidence |
 | HTTP request | method | `GET` | authorized request method | `EXACT` | `PaidExecutionRequest` has no method |
