@@ -13,7 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from settlediff.domain.checks import run_checks
 from settlediff.domain.matching import match_activity
 from settlediff.domain.models import ArtifactType, EvidenceArtifact, MachineReport, PurchaseIntent
-from settlediff.domain.normalize import normalize_activity, normalize_contract, normalize_execution
+from settlediff.domain.normalize import (
+    normalize_activity,
+    normalize_contract,
+    normalize_execution,
+    normalize_receipt,
+)
 from settlediff.domain.verdict import derive_verdict
 
 _EMAIL = re.compile(r"\b[^\s@]+@[^\s@]+\.[^\s@]+\b")
@@ -47,9 +52,14 @@ def replay_fixture(path: Path) -> MachineReport:
     intent = PurchaseIntent.model_validate_json(intent_text)
     contract = normalize_contract(_artifact(path, "contract.json", ArtifactType.SERVICE_CONTRACT))
     execution = normalize_execution(_artifact(path, "execution.json", ArtifactType.EXECUTION))
+    receipt = (
+        normalize_receipt(_artifact(path, "receipt.json", ArtifactType.PAYMENT_RECEIPT))
+        if "receipt.json" in manifest.artifacts
+        else None
+    )
     activity = normalize_activity(_artifact(path, "activity.json", ArtifactType.ACTIVITY))
     match = match_activity(execution, activity)
-    findings = run_checks(intent, contract, execution, match)
+    findings = run_checks(intent, contract, execution, match, receipt=receipt)
     report = MachineReport(
         run_id=intent.run_id,
         intent=intent,
@@ -58,6 +68,7 @@ def replay_fixture(path: Path) -> MachineReport:
         ledger=match.matched,
         findings=findings,
         verdict=derive_verdict(findings),
+        receipt=receipt,
     )
     if report.verdict.value != manifest.expected_verdict:
         raise ValueError(

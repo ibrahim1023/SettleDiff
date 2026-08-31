@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -41,3 +43,37 @@ def test_replay_returns_expected_deterministic_report(
     assert report.verdict is verdict
     assert all(finding.finding_id.startswith("check:") for finding in report.findings)
     assert statuses.items() >= expected_statuses.items()
+
+
+def test_replay_includes_provider_receipt_when_declared(
+    tmp_path: Path,
+) -> None:
+    scenario = tmp_path / "receipt-success"
+    shutil.copytree(FIXTURES / "clean-success", scenario)
+    manifest = json.loads((scenario / "manifest.json").read_text())
+    manifest["scenario"] = "receipt-success"
+    manifest["artifacts"].append("receipt.json")
+    (scenario / "manifest.json").write_text(json.dumps(manifest))
+    execution = json.loads((scenario / "execution.json").read_text())
+    (scenario / "receipt.json").write_text(
+        json.dumps(
+            {
+                "amount": execution["charge"],
+                "asset": execution["asset"],
+                "protocol": execution["protocol"],
+                "chain": execution["chain"],
+                "recipient": execution["recipient"],
+                "settlement_status": "settled",
+                "transaction_id": execution["transaction_id"],
+                "session_id": execution["session_id"],
+                "transaction_hash": execution["transaction_hash"],
+                "issued_at": execution["executed_at"],
+            }
+        )
+    )
+
+    report = replay_fixture(scenario)
+
+    assert report.receipt is not None
+    assert report.receipt.settlement_status.value == "settled"
+    assert report.verdict is Verdict.VERIFIED

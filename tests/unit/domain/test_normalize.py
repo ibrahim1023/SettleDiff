@@ -10,6 +10,7 @@ from pydantic import JsonValue
 
 from settlediff.domain.models import (
     ArtifactType,
+    AssetIdentity,
     EvidenceArtifact,
     ExecutionRecord,
     ExpectedContract,
@@ -187,6 +188,127 @@ def test_normalize_receipt_maps_only_consistency_fields() -> None:
     assert receipt.chain == "tempo"
     assert receipt.issued_at == NOW
     assert "opaqueReceiptMaterial" in raw.data  # type: ignore[operator]
+
+
+def test_normalize_canonical_v2_payment_evidence() -> None:
+    identity_data: dict[str, JsonValue] = {
+        "schema_version": 1,
+        "symbol": "USDC",
+        "network": "eip155:84532",
+        "reference": "syn_usdc_base_sepolia",
+        "decimals": 6,
+    }
+    identity = AssetIdentity.model_validate(identity_data)
+    contract = normalize_contract(
+        artifact(
+            "artifact_contract_v2",
+            ArtifactType.SERVICE_CONTRACT,
+            {
+                "url": "https://example.invalid/weather",
+                "price": {"amount": "0.001", "unit": "USDC"},
+                "asset": "USDC",
+                "protocol": "x402",
+                "chain": None,
+                "request_schema": {},
+                "scheme": "exact",
+                "network": "eip155:84532",
+                "asset_identity": identity_data,
+                "recipient": "syn_recipient",
+            },
+        )
+    )
+    execution = normalize_execution(
+        artifact(
+            "artifact_execution_v2",
+            ArtifactType.EXECUTION,
+            {
+                "upstream_http_status": 200,
+                "charge": {"amount": "0.001", "unit": "USDC"},
+                "asset": "USDC",
+                "protocol": "x402",
+                "chain": None,
+                "recipient": "syn_recipient",
+                "scheme": "exact",
+                "network": "eip155:84532",
+                "asset_identity": identity_data,
+                "settlement_status": "unknown",
+            },
+        )
+    )
+    receipt = normalize_receipt(
+        artifact(
+            "artifact_receipt_v2",
+            ArtifactType.PAYMENT_RECEIPT,
+            {
+                "amount": {"amount": "0.001", "unit": "USDC"},
+                "asset": "USDC",
+                "protocol": "x402",
+                "chain": None,
+                "recipient": "syn_recipient",
+                "scheme": "exact",
+                "network": "eip155:84532",
+                "asset_identity": identity_data,
+                "settlement_status": "settled",
+            },
+        )
+    )
+    ledger = normalize_activity(
+        artifact(
+            "artifact_activity_v2",
+            ArtifactType.ACTIVITY,
+            [
+                {
+                    "ledger_id": "syn_ledger",
+                    "amount": {"amount": "0.001", "unit": "USDC"},
+                    "asset": "USDC",
+                    "protocol": "x402",
+                    "chain": None,
+                    "recipient": "syn_recipient",
+                    "scheme": "exact",
+                    "network": "eip155:84532",
+                    "asset_identity": identity_data,
+                    "status": "confirmed",
+                    "occurred_at": "2026-08-12T12:00:00Z",
+                }
+            ],
+        )
+    )[0]
+
+    assert contract.protocol == execution.protocol == receipt.protocol == ledger.protocol == "x402"
+    assert contract.scheme == execution.scheme == receipt.scheme == ledger.scheme == "exact"
+    assert contract.network == execution.network == receipt.network == ledger.network
+    assert contract.asset_identity == execution.asset_identity == receipt.asset_identity == identity
+    assert ledger.asset_identity == identity
+    assert contract.recipient == "syn_recipient"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("network", "base-sepolia"),
+        (
+            "asset_identity",
+            {
+                "schema_version": 1,
+                "symbol": "USDC",
+                "network": "base-sepolia",
+                "reference": "syn_usdc",
+                "decimals": 6,
+            },
+        ),
+    ],
+)
+def test_normalize_rejects_invalid_v2_identity_fields(field: str, value: JsonValue) -> None:
+    data: dict[str, JsonValue] = {
+        "url": "https://example.invalid/weather",
+        "request_schema": {},
+        field: value,
+    }
+
+    with pytest.raises(ArtifactParseError, match=field):
+        normalize_contract(
+            artifact("artifact_contract_invalid_v2", ArtifactType.SERVICE_CONTRACT, data)
+        )
 
 
 def test_normalize_activity_maps_each_candidate_without_matching_it() -> None:

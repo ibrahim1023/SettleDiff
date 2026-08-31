@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from hashlib import sha384
 from pathlib import Path
 from unittest.mock import patch
@@ -12,12 +13,19 @@ from settlediff.application.replay import replay_fixture
 from settlediff.application.run import RunState, RunTimeline
 from settlediff.domain.models import (
     ArtifactType,
+    AssetIdentity,
+    CheckStatus,
     EvidenceArtifact,
     ExplanationRecord,
     ExplanationSource,
+    Finding,
     InvestigationExplanation,
     MachineReport,
+    PaymentReceipt,
+    SettlementStatus,
+    Severity,
 )
+from settlediff.domain.money import Money
 from settlediff.storage.sqlite import SQLiteReportRepository
 
 
@@ -193,6 +201,109 @@ def test_evidence_diff_uses_persisted_findings_and_links_citations(tmp_path: Pat
     assert 'href="#evidence-chain"' in detail.text
     assert 'id="evidence-price"' not in detail.text
     assert "Showing persisted non-pass findings only" in detail.text
+    repository.close()
+
+
+def test_run_detail_renders_rail_neutral_payment_evidence(tmp_path: Path) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    assert report.contract is not None
+    assert report.execution is not None
+    assert report.ledger is not None
+    identity = AssetIdentity(
+        symbol="USDC",
+        network="eip155:84532",
+        reference="syn_usdc_base_sepolia",
+        decimals=6,
+    )
+    receipt = PaymentReceipt(
+        amount=Money(amount=Decimal("0.001"), unit="USDC"),
+        asset="USDC",
+        protocol="x402",
+        chain=None,
+        recipient="syn_recipient",
+        scheme="exact",
+        network="eip155:84532",
+        asset_identity=identity,
+        settlement_status=SettlementStatus.SETTLED,
+        transaction_id=None,
+        session_id=None,
+        transaction_hash="syn_hash",
+        issued_at=datetime(2026, 8, 31, tzinfo=UTC),
+    )
+    network_finding = Finding(
+        finding_id="check:network",
+        check_id="network",
+        severity=Severity.INFO,
+        status=CheckStatus.PASS,
+        expected="eip155:84532",
+        observed="eip155:84532",
+        message="Network values agree across available evidence.",
+        artifact_ids=("contract", "receipt", "activity"),
+        field_paths=("contract.network", "receipt.network", "activity.network"),
+    )
+    identity_finding = Finding(
+        finding_id="check:asset_identity",
+        check_id="asset_identity",
+        severity=Severity.INFO,
+        status=CheckStatus.PASS,
+        expected=identity.model_dump(mode="json"),
+        observed=identity.model_dump(mode="json"),
+        message="Asset identities agree across available evidence.",
+        artifact_ids=("contract", "receipt", "activity"),
+        field_paths=(
+            "contract.asset_identity",
+            "receipt.asset_identity",
+            "activity.asset_identity",
+        ),
+    )
+    report = report.model_copy(
+        update={
+            "contract": report.contract.model_copy(
+                update={
+                    "protocol": "x402",
+                    "chain": None,
+                    "scheme": "exact",
+                    "network": "eip155:84532",
+                    "asset_identity": identity,
+                    "recipient": "syn_recipient",
+                }
+            ),
+            "execution": report.execution.model_copy(
+                update={
+                    "protocol": "x402",
+                    "chain": None,
+                    "scheme": "exact",
+                    "network": "eip155:84532",
+                    "asset_identity": identity,
+                    "settlement_status": SettlementStatus.UNKNOWN,
+                }
+            ),
+            "receipt": receipt,
+            "ledger": report.ledger.model_copy(
+                update={
+                    "protocol": "x402",
+                    "chain": None,
+                    "scheme": "exact",
+                    "network": "eip155:84532",
+                    "asset_identity": identity,
+                }
+            ),
+            "findings": (*report.findings, network_finding, identity_finding),
+        }
+    )
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    repository.save(report)
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert 'id="evidence-network"' in detail.text
+    assert 'id="evidence-asset_identity"' in detail.text
+    assert "eip155:84532" in detail.text
+    assert "USDC · eip155:84532 · syn_…olia" in detail.text
+    assert "Provider receipt: settled" in detail.text
+    assert "Independent record: confirmed" in detail.text
     repository.close()
 
 

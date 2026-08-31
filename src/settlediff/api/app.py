@@ -18,7 +18,13 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from settlediff import __version__
 from settlediff.application.run import RunEvent, RunState
 from settlediff.contextdev.client import CONTEXTDEV_API_PATH
-from settlediff.domain.models import CheckStatus, EvidenceArtifact, MachineReport, Verdict
+from settlediff.domain.models import (
+    AssetIdentity,
+    CheckStatus,
+    EvidenceArtifact,
+    MachineReport,
+    Verdict,
+)
 from settlediff.domain.money import Money
 from settlediff.domain.redaction import mask_identifier
 from settlediff.storage.sqlite import SQLiteReportRepository
@@ -299,43 +305,66 @@ def _evidence_rows(report: MachineReport) -> tuple[EvidenceRow, ...]:
             recorded=recorded,
         )
 
-    return (
+    provider = report.receipt if report.receipt is not None else report.execution
+    axis = "network" if "network" in findings else "chain"
+    rows = [
         row(
             "Price",
             "price",
             _display(report.contract.price if report.contract else None),
-            _display(report.execution.charge if report.execution else None),
+            _display(
+                report.receipt.amount
+                if report.receipt is not None
+                else report.execution.charge
+                if report.execution is not None
+                else None
+            ),
             _display(report.ledger.amount if report.ledger else None),
         ),
         row(
             "Protocol",
             "protocol",
             _display(_value(report.contract, "protocol")),
-            _display(_value(report.execution, "protocol")),
+            _display(_value(provider, "protocol")),
             _display(_value(report.ledger, "protocol")),
         ),
         row(
-            "Chain",
-            "chain",
-            _display(_value(report.contract, "chain")),
-            _display(_value(report.execution, "chain")),
-            _display(_value(report.ledger, "chain")),
+            axis.title(),
+            axis,
+            _display(_value(report.contract, axis)),
+            _display(_value(provider, axis)),
+            _display(_value(report.ledger, axis)),
         ),
-        row(
-            "Recipient",
-            "recipient",
-            None,
-            _display(_value(report.execution, "recipient"), identifier=True),
-            _display(_value(report.ledger, "recipient"), identifier=True),
-        ),
-        row(
-            "Settlement",
-            "settlement",
-            None,
-            _display(_value(report.execution, "settlement_status")),
-            _display(_value(report.ledger, "status")),
-        ),
+    ]
+    if "asset_identity" in findings:
+        rows.append(
+            row(
+                "Asset identity",
+                "asset_identity",
+                _display_asset_identity(_value(report.contract, "asset_identity")),
+                _display_asset_identity(_value(provider, "asset_identity")),
+                _display_asset_identity(_value(report.ledger, "asset_identity")),
+            )
+        )
+    rows.extend(
+        (
+            row(
+                "Recipient",
+                "recipient",
+                _display(_value(report.contract, "recipient"), identifier=True),
+                _display(_value(provider, "recipient"), identifier=True),
+                _display(_value(report.ledger, "recipient"), identifier=True),
+            ),
+            row(
+                "Settlement",
+                "settlement",
+                None,
+                _display(_value(provider, "settlement_status")),
+                _display(_value(report.ledger, "status")),
+            ),
+        )
     )
+    return tuple(rows)
 
 
 def _event_rows(events: tuple[RunEvent, ...]) -> tuple[dict[str, object], ...]:
@@ -364,6 +393,12 @@ def _duration(seconds: float) -> str:
 
 def _value(record: object | None, field: str) -> object | None:
     return getattr(record, field) if record is not None else None
+
+
+def _display_asset_identity(value: object | None) -> str | None:
+    if not isinstance(value, AssetIdentity):
+        return None
+    return f"{value.symbol} · {value.network} · {mask_identifier(value.reference)}"
 
 
 def _display(value: object | None, *, identifier: bool = False) -> str | None:

@@ -28,12 +28,10 @@ def require_utc(value: datetime) -> datetime:
 
 UtcDatetime = Annotated[datetime, AfterValidator(require_utc)]
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+CAIP2_NETWORK_PATTERN = r"^[a-z0-9-]{3,8}:[A-Za-z0-9_-]{1,32}$"
 Caip2Network = Annotated[
     str,
-    StringConstraints(
-        strip_whitespace=True,
-        pattern=r"^[a-z0-9-]{3,8}:[A-Za-z0-9_-]{1,32}$",
-    ),
+    StringConstraints(strip_whitespace=True, pattern=CAIP2_NETWORK_PATTERN),
 ]
 EvidenceValue = Money | JsonValue
 

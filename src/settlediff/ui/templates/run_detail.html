@@ -49,7 +49,12 @@
   <section class="panel outcome-panel">
     <div class="section-heading">
       <div><p class="eyebrow">Service outcome</p><h2>{% if report.execution %}HTTP {{ report.execution.upstream_http_status or "unknown" }}{% else %}No execution evidence{% endif %}</h2></div>
-      <p>Payment: {% if report.execution %}{{ report.execution.settlement_status.value }}{% else %}unknown{% endif %}</p>
+      {% if report.receipt %}
+        <p>Provider receipt: {{ report.receipt.settlement_status.value }}</p>
+        <p>Independent record: {% if report.ledger %}{{ report.ledger.status.value }}{% else %}unknown{% endif %}</p>
+      {% else %}
+        <p>Payment: {% if report.execution %}{{ report.execution.settlement_status.value }}{% else %}unknown{% endif %}</p>
+      {% endif %}
     </div>
     {% if report.verdict.value == "PAID_FAILURE" %}
       <p class="paid-failure-copy"><strong>Paid failure.</strong> Payment settled successfully, but the purchased operation failed.</p>

@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Final, cast
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from settlediff.domain.models import (
+    CAIP2_NETWORK_PATTERN,
     ArtifactType,
+    AssetIdentity,
     EvidenceArtifact,
     ExecutionRecord,
     ExpectedContract,
@@ -24,7 +27,7 @@ from settlediff.domain.money import Money
 
 _RECOGNIZED_ASSETS: Final = frozenset({"USDC", "USDT"})
 _MINOR_UNIT_EXPONENTS: Final = {"USDC": 6, "USDT": 6}
-_RECOGNIZED_PROTOCOLS: Final = frozenset({"mpp"})
+_RECOGNIZED_PROTOCOLS: Final = frozenset({"mpp", "x402"})
 _RECOGNIZED_CHAINS: Final = frozenset({"base", "tempo"})
 
 
@@ -50,6 +53,10 @@ def normalize_contract(raw: EvidenceArtifact) -> ExpectedContract:
         protocol=_normalized_name(data, raw, "protocol", _RECOGNIZED_PROTOCOLS, str.lower, notes),
         chain=_normalized_name(data, raw, "chain", _RECOGNIZED_CHAINS, str.lower, notes),
         request_schema=_required_schema(data, raw),
+        scheme=_optional_string(data, raw, "scheme"),
+        network=_optional_network(data, raw),
+        asset_identity=_optional_asset_identity(data, raw),
+        recipient=_optional_string(data, raw, "recipient"),
         normalization_notes=tuple(notes),
     )
 
@@ -67,6 +74,9 @@ def normalize_execution(raw: EvidenceArtifact) -> ExecutionRecord:
         protocol=_normalized_name(data, raw, "protocol", _RECOGNIZED_PROTOCOLS, str.lower, notes),
         chain=_normalized_name(data, raw, "chain", _RECOGNIZED_CHAINS, str.lower, notes),
         recipient=_optional_string(data, raw, "recipient"),
+        scheme=_optional_string(data, raw, "scheme"),
+        network=_optional_network(data, raw),
+        asset_identity=_optional_asset_identity(data, raw),
         settlement_status=_settlement_status(data, raw, notes),
         transaction_id=_optional_string(data, raw, "transaction_id"),
         session_id=_optional_string(data, raw, "session_id"),
@@ -87,6 +97,9 @@ def normalize_receipt(raw: EvidenceArtifact) -> PaymentReceipt:
         protocol=_normalized_name(data, raw, "protocol", _RECOGNIZED_PROTOCOLS, str.lower, notes),
         chain=_normalized_name(data, raw, "chain", _RECOGNIZED_CHAINS, str.lower, notes),
         recipient=_optional_string(data, raw, "recipient"),
+        scheme=_optional_string(data, raw, "scheme"),
+        network=_optional_network(data, raw),
+        asset_identity=_optional_asset_identity(data, raw),
         settlement_status=_settlement_status(data, raw, notes),
         transaction_id=_optional_string(data, raw, "transaction_id"),
         session_id=_optional_string(data, raw, "session_id"),
@@ -149,6 +162,9 @@ def normalize_activity(raw: EvidenceArtifact) -> tuple[LedgerRecord, ...]:
                     prefix=f"data[{index}].",
                 ),
                 recipient=_optional_string(data, raw, "recipient", prefix=f"data[{index}]."),
+                scheme=_optional_string(data, raw, "scheme", prefix=f"data[{index}]."),
+                network=_optional_network(data, raw, prefix=f"data[{index}]."),
+                asset_identity=_optional_asset_identity(data, raw, prefix=f"data[{index}]."),
                 status=_ledger_status(data, raw, notes, prefix=f"data[{index}]."),
                 error_reason=_optional_string(data, raw, "error_reason", prefix=f"data[{index}]."),
                 transaction_id=_optional_string(
@@ -256,6 +272,31 @@ def _optional_string(
     if not isinstance(value, str) or not value.strip():
         raise ArtifactParseError(raw.artifact_id, f"{prefix}{field}", "string or null")
     return value.strip()
+
+
+def _optional_network(
+    data: dict[str, JsonValue], raw: EvidenceArtifact, *, prefix: str = "data."
+) -> str | None:
+    value = _field(data, raw, "network", prefix=prefix)
+    if value is None:
+        return None
+    if not isinstance(value, str) or re.fullmatch(CAIP2_NETWORK_PATTERN, value.strip()) is None:
+        raise ArtifactParseError(raw.artifact_id, f"{prefix}network", "valid CAIP-2 network")
+    return value.strip()
+
+
+def _optional_asset_identity(
+    data: dict[str, JsonValue], raw: EvidenceArtifact, *, prefix: str = "data."
+) -> AssetIdentity | None:
+    value = _field(data, raw, "asset_identity", prefix=prefix)
+    if value is None:
+        return None
+    try:
+        return AssetIdentity.model_validate(value, strict=True)
+    except ValidationError as error:
+        raise ArtifactParseError(
+            raw.artifact_id, f"{prefix}asset_identity", "valid asset identity"
+        ) from error
 
 
 def _required_schema(data: dict[str, JsonValue], raw: EvidenceArtifact) -> dict[str, JsonValue]:
