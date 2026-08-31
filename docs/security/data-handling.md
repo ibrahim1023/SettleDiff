@@ -9,7 +9,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - local user input;
 - Hyperfusion model API;
 - Perflo executable and backend;
-- x402 resource/facilitator headers and future external signer;
+- x402 resource/facilitator headers and independently owned external signer;
 - Context.dev live evidence service;
 - local SQLite/filesystem;
 - browser rendering;
@@ -47,6 +47,8 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Enforce encoded-header, decoded-JSON, and nesting-depth limits before strict validation.
 - Support only x402 v2 `exact` on Base Sepolia test USDC until another contract is accepted.
 - Treat `PAYMENT-SIGNATURE`, nested signatures, and reusable payment payloads as secret-bearing ephemeral material; never persist, display, export, log, or emit them through telemetry.
+- Invoke an independently owned signer at most once through the versioned bounded JSON contract. SettleDiff passes a controlled environment that does not inherit private-key variables; the signer must obtain authority independently without returning it.
+- Reject oversized signer input before launch; treat timeout, malformed/secret-bearing output, output overflow, and non-proven post-launch failure as submission uncertainty.
 - A provider settlement response remains provider-asserted evidence and cannot replace independent settlement verification.
 
 ### Data minimization

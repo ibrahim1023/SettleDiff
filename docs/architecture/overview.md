@@ -74,8 +74,12 @@ Perflo implements this boundary through `perflo/adapter.py`; its command envelop
 and aliases no longer cross into application services. The verdict, check, and
 matching layers contain no adapter-specific branching. The x402 package now provides
 bounded offline v2 challenge/settlement-response parsing and explicit Base Sepolia test
-USDC normalization. The production adapter, signer, RPC verifier, and live CLI path are
-not implemented yet.
+USDC normalization. It also defines the versioned request/result contract for an
+independently owned signer and a shell-free, one-shot, bounded subprocess client. The
+client launches with a controlled environment that does not inherit wallet keys; the
+external signer is responsible for acquiring signing authority without returning secret
+material. The production adapter, signer implementation, RPC verifier, and live CLI path
+are not implemented yet.
 
 ## Components
 

@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from typing import cast
+
+mode = sys.argv[1]
+count_path = Path(sys.argv[2])
+count = int(count_path.read_text()) if count_path.exists() else 0
+count_path.write_text(str(count + 1))
+request = cast(dict[str, object], json.loads(sys.stdin.read()))
+
+if mode == "timeout":
+    time.sleep(1)
+if mode == "invalid":
+    print("not-json")
+    raise SystemExit(0)
+if mode == "oversized":
+    print("x" * 10_000)
+    raise SystemExit(0)
+
+result: dict[str, object] = {
+    "schema_version": 1,
+    "adapter": "x402",
+    "submission_state": "submitted_confirmed",
+    "challenge": {"x402Version": 2},
+    "provider_settlement": {"success": True},
+    "service_response": {
+        "status": 200,
+        "body": {
+            "body_digest": request["body_digest"],
+            "private_key_visible": "X402_PRIVATE_KEY" in os.environ,
+        },
+    },
+    "payment_reference": "syn_payment",
+    "transaction_reference": "syn_transaction",
+    "notes": [],
+}
+if mode == "secret":
+    result["challenge"] = {"PAYMENT-SIGNATURE": "syn_signature"}
+if mode == "uncertain":
+    result["submission_state"] = "submission_uncertain"
+    result["provider_settlement"] = None
+    result["transaction_reference"] = "syn_uncertain_transaction"
+if mode == "nonzero":
+    result["submission_state"] = "not_submitted"
+    result["provider_settlement"] = None
+
+print(json.dumps(result))
+if mode == "nonzero":
+    print("synthetic signer diagnostic", file=sys.stderr)
+    raise SystemExit(2)

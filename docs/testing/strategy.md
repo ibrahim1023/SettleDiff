@@ -106,7 +106,10 @@ and mislabeled adapter/artifact evidence fails closed. Provider contract tests p
 - x402 v2 headers enforce encoded/decoded/depth limits and strict `exact`, Base Sepolia,
   address, amount, resource URL, and settlement-outcome contracts;
 - signed x402 authorization headers and nested payment payloads are redacted before any
-  persistence boundary.
+  persistence boundary;
+- the external signer client uses one shell-free invocation, bounded stdin/stdout/stderr,
+  a controlled environment without wallet keys, and uncertainty-safe timeout, malformed,
+  secret-bearing, oversized, and post-launch failure behavior.
 
 ## Interface tests
 

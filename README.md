@@ -125,8 +125,10 @@ A payment integration is responsible for translating rail-specific evidence into
 canonical forms. The application now exposes a rail-neutral adapter contract, and Perflo
 implements it as the first adapter. Canonical x402 v2 evidence fields are versioned and
 supported by the verifier, and the bounded offline parser/normalizer handles the captured
-v2 challenge and specified settlement-response shapes. The production x402 adapter,
-signer, RPC verifier, and live CLI path are not implemented yet. Direct MPP clients and other payment rails remain
+v2 challenge and specified settlement-response shapes. A versioned external-signer
+contract and bounded one-shot subprocess client are implemented; the independently
+installed signer owns key loading. The production x402 adapter, signer implementation,
+RPC verifier, and live CLI path are not implemented yet. Direct MPP clients and other payment rails remain
 architectural extension points.
 
 ## Offline demo scenarios
