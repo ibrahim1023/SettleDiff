@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import cast
 
@@ -80,21 +81,31 @@ def mask_identifier(value: str) -> str:
     return f"{value[:4]}…{value[-4:]}"
 
 
-def redact_value(value: JsonValue, *, key: str | None = None) -> JsonValue:
+def redact_value(
+    value: JsonValue,
+    *,
+    key: str | None = None,
+    mask_keyed_identifiers: bool = True,
+) -> JsonValue:
     normalized_key = normalize_key(key) if key is not None else None
     if normalized_key in SECRET_KEYS:
         return REDACTED
-    if normalized_key in IDENTIFIER_KEYS:
+    if mask_keyed_identifiers and normalized_key in IDENTIFIER_KEYS:
         return mask_identifier(value) if isinstance(value, str) else REDACTED
 
     if isinstance(value, dict):
         mapping = cast(dict[str, JsonValue], value)
         return {
-            child_key: redact_value(child, key=child_key) for child_key, child in mapping.items()
+            child_key: redact_value(
+                child,
+                key=child_key,
+                mask_keyed_identifiers=mask_keyed_identifiers,
+            )
+            for child_key, child in mapping.items()
         }
     if isinstance(value, list):
         items = cast(list[JsonValue], value)
-        return [redact_value(item) for item in items]
+        return [redact_value(item, mask_keyed_identifiers=mask_keyed_identifiers) for item in items]
     if isinstance(value, str):
         return redact_embedded_identifiers(value)
     return value
@@ -106,11 +117,7 @@ def redact_artifact(artifact: EvidenceArtifact) -> EvidenceArtifact:
 
 
 def redact_report(report: MachineReport) -> MachineReport:
-    """Redact nested service response data without changing deterministic results."""
-    execution = report.execution
-    if execution is None or execution.response_body is None:
-        return report
-    redacted_execution = execution.model_copy(
-        update={"response_body": redact_value(execution.response_body)}
-    )
-    return report.model_copy(update={"execution": redacted_execution})
+    """Redact secrets and embedded identifiers without changing deterministic results."""
+    payload = cast(JsonValue, report.model_dump(mode="json"))
+    redacted = redact_value(payload, mask_keyed_identifiers=False)
+    return MachineReport.model_validate_json(json.dumps(redacted), strict=True)

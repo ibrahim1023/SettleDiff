@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -81,7 +81,7 @@ def test_export_load_verify_round_trip(tmp_path: Path) -> None:
     assert loaded.explanation == explanation
     assert loaded.compatibility == CompatibilityMetadata(
         settlediff_version="0.1.0",
-        report_schema_version=1,
+        report_schema_version=2,
         database_schema_version=3,
         contextdev_api_path="/web/scrape/markdown",
         hyperfusion_model=None,
@@ -89,6 +89,37 @@ def test_export_load_verify_round_trip(tmp_path: Path) -> None:
     )
     assert all(artifact.redacted for artifact in loaded.artifacts)
     assert verify_bundle(loaded) == report
+    repository.close()
+
+
+def test_current_bundle_reads_schema_v1_report_without_v2_fields(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(FIXTURES / "clean-success")
+    repository.save(report)
+    payload = _json(export_bundle(repository, report.run_id))
+    report_payload = cast(dict[str, Any], payload["report"])
+    report_payload["schema_version"] = 1
+    report_payload.pop("receipt", None)
+    for name in ("contract", "execution", "ledger"):
+        record = cast(dict[str, Any], report_payload[name])
+        record["schema_version"] = 1
+        for field in ("scheme", "network", "asset_identity"):
+            record.pop(field, None)
+    contract = cast(dict[str, Any], report_payload["contract"])
+    contract.pop("recipient", None)
+    compatibility = cast(dict[str, Any], payload["compatibility"])
+    compatibility["report_schema_version"] = 1
+    unsigned = {key: value for key, value in payload.items() if key != "integrity"}
+    encoded = json.dumps(
+        unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    payload["integrity"] = sha256(encoded).hexdigest()
+
+    bundle = load_bundle(json.dumps(payload).encode())
+
+    assert bundle.report.schema_version == 1
+    assert bundle.report.receipt is None
+    assert verify_bundle(bundle) == bundle.report
     repository.close()
 
 
@@ -160,7 +191,7 @@ def test_verify_rejects_unredacted_artifact() -> None:
         artifacts=(artifact,),
         compatibility=CompatibilityMetadata(
             settlediff_version="0.1.0",
-            report_schema_version=1,
+            report_schema_version=report.schema_version,
             database_schema_version=3,
             contextdev_api_path="/web/scrape/markdown",
             hyperfusion_model=None,

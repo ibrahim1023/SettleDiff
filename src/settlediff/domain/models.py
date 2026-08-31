@@ -28,6 +28,13 @@ def require_utc(value: datetime) -> datetime:
 
 UtcDatetime = Annotated[datetime, AfterValidator(require_utc)]
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+Caip2Network = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        pattern=r"^[a-z0-9-]{3,8}:[A-Za-z0-9_-]{1,32}$",
+    ),
+]
 EvidenceValue = Money | JsonValue
 
 
@@ -86,6 +93,20 @@ class CanonicalModel(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
 
+def require_v2_fields(schema_version: int, fields: tuple[tuple[str, object | None], ...]) -> None:
+    present = tuple(name for name, value in fields if value is not None)
+    if schema_version < 2 and present:
+        raise ValueError(f"schema version {schema_version} cannot contain {', '.join(present)}")
+
+
+class AssetIdentity(CanonicalModel):
+    schema_version: int = Field(default=1, ge=1)
+    symbol: NonEmptyStr
+    network: Caip2Network
+    reference: NonEmptyStr
+    decimals: int = Field(ge=0, le=255)
+
+
 class PurchaseIntent(CanonicalModel):
     schema_version: int = Field(default=1, ge=1)
     run_id: NonEmptyStr
@@ -96,7 +117,7 @@ class PurchaseIntent(CanonicalModel):
 
 
 class ExpectedContract(CanonicalModel):
-    schema_version: int = Field(default=1, ge=1)
+    schema_version: int = Field(default=2, ge=1)
     vendor_slug: NonEmptyStr | None
     url: NonEmptyStr
     price: Money | None
@@ -104,11 +125,28 @@ class ExpectedContract(CanonicalModel):
     protocol: NonEmptyStr | None
     chain: NonEmptyStr | None
     request_schema: dict[str, JsonValue]
+    scheme: NonEmptyStr | None = None
+    network: Caip2Network | None = None
+    asset_identity: AssetIdentity | None = None
+    recipient: NonEmptyStr | None = None
     normalization_notes: tuple[NonEmptyStr, ...] = ()
+
+    @model_validator(mode="after")
+    def require_compatible_schema(self) -> Self:
+        require_v2_fields(
+            self.schema_version,
+            (
+                ("scheme", self.scheme),
+                ("network", self.network),
+                ("asset_identity", self.asset_identity),
+                ("recipient", self.recipient),
+            ),
+        )
+        return self
 
 
 class ExecutionRecord(CanonicalModel):
-    schema_version: int = Field(default=1, ge=1)
+    schema_version: int = Field(default=2, ge=1)
     vendor_slug: NonEmptyStr | None
     upstream_http_status: int | None = Field(default=None, ge=100, le=599)
     charge: Money | None
@@ -116,6 +154,9 @@ class ExecutionRecord(CanonicalModel):
     protocol: NonEmptyStr | None
     chain: NonEmptyStr | None
     recipient: NonEmptyStr | None
+    scheme: NonEmptyStr | None = None
+    network: Caip2Network | None = None
+    asset_identity: AssetIdentity | None = None
     settlement_status: SettlementStatus
     transaction_id: NonEmptyStr | None
     session_id: NonEmptyStr | None
@@ -124,14 +165,29 @@ class ExecutionRecord(CanonicalModel):
     executed_at: UtcDatetime | None
     normalization_notes: tuple[NonEmptyStr, ...] = ()
 
+    @model_validator(mode="after")
+    def require_compatible_schema(self) -> Self:
+        require_v2_fields(
+            self.schema_version,
+            (
+                ("scheme", self.scheme),
+                ("network", self.network),
+                ("asset_identity", self.asset_identity),
+            ),
+        )
+        return self
+
 
 class PaymentReceipt(CanonicalModel):
-    schema_version: int = Field(default=1, ge=1)
+    schema_version: int = Field(default=2, ge=1)
     amount: Money | None
     asset: NonEmptyStr | None
     protocol: NonEmptyStr | None
     chain: NonEmptyStr | None
     recipient: NonEmptyStr | None
+    scheme: NonEmptyStr | None = None
+    network: Caip2Network | None = None
+    asset_identity: AssetIdentity | None = None
     settlement_status: SettlementStatus
     transaction_id: NonEmptyStr | None
     session_id: NonEmptyStr | None
@@ -139,9 +195,21 @@ class PaymentReceipt(CanonicalModel):
     issued_at: UtcDatetime | None
     normalization_notes: tuple[NonEmptyStr, ...] = ()
 
+    @model_validator(mode="after")
+    def require_compatible_schema(self) -> Self:
+        require_v2_fields(
+            self.schema_version,
+            (
+                ("scheme", self.scheme),
+                ("network", self.network),
+                ("asset_identity", self.asset_identity),
+            ),
+        )
+        return self
+
 
 class LedgerRecord(CanonicalModel):
-    schema_version: int = Field(default=1, ge=1)
+    schema_version: int = Field(default=2, ge=1)
     ledger_id: NonEmptyStr
     vendor_slug: NonEmptyStr | None
     amount: Money | None
@@ -149,6 +217,9 @@ class LedgerRecord(CanonicalModel):
     protocol: NonEmptyStr | None
     chain: NonEmptyStr | None
     recipient: NonEmptyStr | None
+    scheme: NonEmptyStr | None = None
+    network: Caip2Network | None = None
+    asset_identity: AssetIdentity | None = None
     status: LedgerStatus
     error_reason: str | None
     transaction_id: NonEmptyStr | None
@@ -156,6 +227,18 @@ class LedgerRecord(CanonicalModel):
     transaction_hash: NonEmptyStr | None
     occurred_at: UtcDatetime
     normalization_notes: tuple[NonEmptyStr, ...] = ()
+
+    @model_validator(mode="after")
+    def require_compatible_schema(self) -> Self:
+        require_v2_fields(
+            self.schema_version,
+            (
+                ("scheme", self.scheme),
+                ("network", self.network),
+                ("asset_identity", self.asset_identity),
+            ),
+        )
+        return self
 
 
 class EvidenceArtifact(CanonicalModel):
@@ -188,7 +271,7 @@ class Finding(CanonicalModel):
 
 
 class MachineReport(CanonicalModel):
-    schema_version: int = Field(default=1, ge=1)
+    schema_version: int = Field(default=2, ge=1)
     run_id: NonEmptyStr
     intent: PurchaseIntent
     contract: ExpectedContract | None
@@ -196,6 +279,12 @@ class MachineReport(CanonicalModel):
     ledger: LedgerRecord | None
     findings: tuple[Finding, ...]
     verdict: Verdict
+    receipt: PaymentReceipt | None = None
+
+    @model_validator(mode="after")
+    def require_compatible_schema(self) -> Self:
+        require_v2_fields(self.schema_version, (("receipt", self.receipt),))
+        return self
 
 
 class InvestigationExplanation(CanonicalModel):

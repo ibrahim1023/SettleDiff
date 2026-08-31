@@ -10,6 +10,7 @@ from settlediff.domain.matching import (
 )
 from settlediff.domain.models import (
     ArtifactType,
+    AssetIdentity,
     CheckStatus,
     EvidenceArtifact,
     ExecutionRecord,
@@ -33,6 +34,7 @@ from settlediff.domain.verdict import PRECEDENCE, derive_verdict
 
 __all__ = [
     "ArtifactType",
+    "AssetIdentity",
     "CheckStatus",
     "EvidenceArtifact",
     "ExecutionRecord",

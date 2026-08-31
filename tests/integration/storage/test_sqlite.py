@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
@@ -12,11 +13,15 @@ from settlediff.application.replay import replay_fixture
 from settlediff.application.run import RunState, RunTimeline
 from settlediff.domain.models import (
     ArtifactType,
+    AssetIdentity,
     EvidenceArtifact,
     ExplanationRecord,
     ExplanationSource,
     InvestigationExplanation,
+    PaymentReceipt,
+    SettlementStatus,
 )
+from settlediff.domain.money import Money
 from settlediff.domain.redaction import redact_report
 from settlediff.storage.sqlite import SQLiteReportRepository
 
@@ -66,6 +71,91 @@ def test_nested_response_secrets_are_redacted_without_mutating_report(tmp_path: 
     assert CANARY not in stored_json
     assert stored_json.count("[REDACTED]") == 2
     assert CANARY in report.model_dump_json()
+    repository.close()
+
+
+def test_network_asset_and_receipt_identifiers_are_redacted_before_storage(
+    tmp_path: Path,
+) -> None:
+    recipient = "0x1111111111111111111111111111111111111111"
+    asset_reference = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    transaction_hash = "0x2222222222222222222222222222222222222222222222222222222222222222"
+    identity = AssetIdentity(
+        symbol="USDC",
+        network="eip155:84532",
+        reference=asset_reference,
+        decimals=6,
+    )
+    original = replay_fixture(Path("fixtures/clean-success"))
+    assert original.contract is not None
+    assert original.execution is not None
+    assert original.ledger is not None
+    receipt = PaymentReceipt(
+        amount=Money(amount=Decimal("0.001"), unit="USDC"),
+        asset="USDC",
+        asset_identity=identity,
+        protocol="x402",
+        scheme="exact",
+        chain=None,
+        network="eip155:84532",
+        recipient=recipient,
+        settlement_status=SettlementStatus.SETTLED,
+        transaction_id=None,
+        session_id=None,
+        transaction_hash=transaction_hash,
+        issued_at=datetime(2026, 8, 31, tzinfo=UTC),
+    )
+    report = original.model_copy(
+        update={
+            "contract": original.contract.model_copy(
+                update={
+                    "asset_identity": identity,
+                    "network": "eip155:84532",
+                    "recipient": recipient,
+                    "scheme": "exact",
+                }
+            ),
+            "execution": original.execution.model_copy(
+                update={
+                    "asset_identity": identity,
+                    "network": "eip155:84532",
+                    "recipient": recipient,
+                }
+            ),
+            "receipt": receipt,
+            "ledger": original.ledger.model_copy(
+                update={
+                    "asset_identity": identity,
+                    "network": "eip155:84532",
+                    "recipient": recipient,
+                    "transaction_hash": transaction_hash,
+                }
+            ),
+        }
+    )
+    database = tmp_path / "reports.sqlite3"
+    repository = SQLiteReportRepository(database)
+
+    repository.save(report)
+
+    with closing(sqlite3.connect(database)) as connection:
+        stored_json = cast(
+            str,
+            connection.execute(
+                "SELECT report_json FROM reports WHERE run_id = ?", (report.run_id,)
+            ).fetchone()[0],
+        )
+    loaded = repository.get(report.run_id)
+    assert loaded is not None
+    assert recipient not in stored_json
+    assert asset_reference not in stored_json
+    assert transaction_hash not in stored_json
+    assert loaded.contract is not None
+    assert loaded.contract.recipient == "0x1111…1111"
+    assert loaded.contract.asset_identity is not None
+    assert loaded.contract.asset_identity.reference == "0x036C…CF7e"
+    assert loaded.receipt is not None
+    assert loaded.receipt.transaction_hash == "0x2222…2222"
     repository.close()
 
 

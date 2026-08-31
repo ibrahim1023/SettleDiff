@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
 
 from settlediff.domain.models import (
     ArtifactType,
+    AssetIdentity,
     CheckStatus,
     EvidenceArtifact,
     ExecutionRecord,
@@ -311,6 +314,152 @@ def test_finding_money_round_trips_as_money_not_generic_json() -> None:
     assert isinstance(restored.observed, Money)
 
 
+def test_asset_identity_requires_lossless_network_bound_identity() -> None:
+    identity = AssetIdentity(
+        symbol="USDC",
+        network="eip155:84532",
+        reference="0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        decimals=6,
+    )
+
+    assert identity.schema_version == 1
+    assert AssetIdentity.model_validate_json(identity.model_dump_json()) == identity
+    for invalid_network in ("base-sepolia", "eip155:", ":84532", "EIP155:84532"):
+        with pytest.raises(ValidationError):
+            AssetIdentity(
+                symbol="USDC",
+                network=invalid_network,
+                reference="0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                decimals=6,
+            )
+    for invalid_decimals in (-1, 256, 6.0, True):
+        with pytest.raises(ValidationError):
+            AssetIdentity(
+                symbol="USDC",
+                network="eip155:84532",
+                reference="0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                decimals=invalid_decimals,  # type: ignore[arg-type]
+            )
+    with pytest.raises(ValidationError):
+        AssetIdentity.model_validate({**identity.model_dump(), "invented": True})
+
+
+def test_schema_v2_records_carry_rail_neutral_payment_evidence() -> None:
+    identity = AssetIdentity(
+        symbol="USDC",
+        network="eip155:84532",
+        reference="0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        decimals=6,
+    )
+    contract = ExpectedContract.model_validate(
+        {
+            **contract_fixture().model_dump(),
+            "schema_version": 2,
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "asset_identity": identity,
+            "recipient": "0x1111111111111111111111111111111111111111",
+        }
+    )
+    execution = ExecutionRecord.model_validate(
+        {
+            **execution_fixture().model_dump(),
+            "schema_version": 2,
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "asset_identity": identity,
+        }
+    )
+    ledger = LedgerRecord.model_validate(
+        {
+            **ledger_fixture().model_dump(),
+            "schema_version": 2,
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "asset_identity": identity,
+        }
+    )
+    receipt = PaymentReceipt(
+        amount=Money(amount=Decimal("0.001"), unit="USDC"),
+        asset="USDC",
+        asset_identity=identity,
+        protocol="x402",
+        scheme="exact",
+        chain=None,
+        network="eip155:84532",
+        recipient="0x1111111111111111111111111111111111111111",
+        settlement_status=SettlementStatus.SETTLED,
+        transaction_id=None,
+        session_id=None,
+        transaction_hash="0x2222222222222222222222222222222222222222222222222222222222222222",
+        issued_at=NOW,
+    )
+    report = MachineReport(
+        run_id="run_syn_001",
+        intent=intent_fixture(),
+        contract=contract,
+        execution=execution,
+        receipt=receipt,
+        ledger=ledger,
+        findings=(finding_fixture(),),
+        verdict=Verdict.VERIFIED_WITH_WARNINGS,
+    )
+
+    assert contract.schema_version == 2
+    assert contract.network == "eip155:84532"
+    assert contract.asset_identity == identity
+    assert contract.recipient == "0x1111111111111111111111111111111111111111"
+    assert execution.network == "eip155:84532"
+    assert execution.asset_identity == identity
+    assert ledger.network == "eip155:84532"
+    assert ledger.asset_identity == identity
+    assert receipt.schema_version == 2
+    assert report.schema_version == 2
+    assert report.receipt == receipt
+
+
+def test_schema_v1_report_remains_readable_without_v2_fields() -> None:
+    legacy = machine_report_fixture().model_dump(mode="json")
+    legacy["schema_version"] = 1
+    legacy.pop("receipt", None)
+    for name in ("contract", "execution", "ledger"):
+        record = cast(dict[str, object], legacy[name])
+        record["schema_version"] = 1
+        for field in ("scheme", "network", "asset_identity"):
+            record.pop(field, None)
+    contract = cast(dict[str, object], legacy["contract"])
+    contract.pop("recipient", None)
+
+    restored = MachineReport.model_validate_json(json.dumps(legacy))
+
+    assert restored.schema_version == 1
+    assert restored.receipt is None
+    assert restored.contract is not None
+    assert restored.contract.network is None
+    assert restored.contract.asset_identity is None
+    assert restored.contract.recipient is None
+
+    invalid_contract = dict(contract)
+    invalid_contract["network"] = "eip155:84532"
+    with pytest.raises(ValidationError, match="schema version 1"):
+        ExpectedContract.model_validate_json(json.dumps(invalid_contract))
+    invalid_report = dict(legacy)
+    invalid_report["receipt"] = PaymentReceipt(
+        amount=None,
+        asset=None,
+        protocol="x402",
+        chain=None,
+        recipient=None,
+        settlement_status=SettlementStatus.UNKNOWN,
+        transaction_id=None,
+        session_id=None,
+        transaction_hash=None,
+        issued_at=None,
+    ).model_dump(mode="json")
+    with pytest.raises(ValidationError, match="schema version 1"):
+        MachineReport.model_validate_json(json.dumps(invalid_report))
+
+
 def test_payment_receipt_is_a_strict_versioned_canonical_record() -> None:
     receipt = PaymentReceipt(
         amount=Money(amount=Decimal("0.01"), unit="USDC"),
@@ -326,7 +475,7 @@ def test_payment_receipt_is_a_strict_versioned_canonical_record() -> None:
         normalization_notes=(),
     )
 
-    assert receipt.schema_version == 1
+    assert receipt.schema_version == 2
     assert PaymentReceipt.model_validate_json(receipt.model_dump_json()) == receipt
     with pytest.raises(ValidationError):
         PaymentReceipt.model_validate({**receipt.model_dump(), "invented": True})

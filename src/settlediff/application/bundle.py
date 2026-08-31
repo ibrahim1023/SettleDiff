@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from hashlib import sha256
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
@@ -65,8 +65,28 @@ def _canonical_json(value: Mapping[str, object]) -> bytes:
     ).encode("utf-8")
 
 
+def _bundle_payload(bundle: EvidenceBundle, *, include_integrity: bool) -> dict[str, object]:
+    exclude: set[str] = set() if include_integrity else {"integrity"}
+    payload = cast(dict[str, object], bundle.model_dump(mode="json", exclude=exclude))
+    report = cast(dict[str, object], payload["report"])
+    if report["schema_version"] == 1:
+        report.pop("receipt", None)
+        for name in ("contract", "execution", "ledger"):
+            record_value = report.get(name)
+            if not isinstance(record_value, dict):
+                continue
+            record = cast(dict[str, object], record_value)
+            for field in ("scheme", "network", "asset_identity"):
+                record.pop(field, None)
+        contract_value = report.get("contract")
+        if isinstance(contract_value, dict):
+            contract = cast(dict[str, object], contract_value)
+            contract.pop("recipient", None)
+    return payload
+
+
 def _payload(bundle: EvidenceBundle) -> dict[str, object]:
-    return bundle.model_dump(mode="json", exclude={"integrity"})
+    return _bundle_payload(bundle, include_integrity=False)
 
 
 def _digest(bundle: EvidenceBundle) -> str:
@@ -136,7 +156,7 @@ def verify_bundle(bundle: EvidenceBundle) -> MachineReport:
 
 def serialize_bundle(bundle: EvidenceBundle) -> bytes:
     """Serialize a bundle as compact, sorted UTF-8 JSON."""
-    return _canonical_json(bundle.model_dump(mode="json"))
+    return _canonical_json(_bundle_payload(bundle, include_integrity=True))
 
 
 def load_bundle(data: bytes) -> EvidenceBundle:
