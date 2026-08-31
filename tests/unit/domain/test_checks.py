@@ -3,18 +3,23 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
 from settlediff.domain.checks import run_checks
 from settlediff.domain.matching import MatchConfidence, MatchResult, MatchStatus, MatchStrategy
 from settlediff.domain.models import (
+    AssetIdentity,
     ExecutionRecord,
     ExpectedContract,
     Finding,
     LedgerRecord,
     LedgerStatus,
+    PaymentReceipt,
     PurchaseIntent,
     SettlementStatus,
 )
 from settlediff.domain.money import Money
+from settlediff.domain.verdict import derive_verdict
 
 NOW = datetime(2026, 8, 12, 12, tzinfo=UTC)
 
@@ -274,6 +279,194 @@ def test_ledger_outcome_flags_settlement_contradiction() -> None:
     assert settled_vs_unknown["ledger_outcome"].status.value == "PASS"
 
     assert findings_for(execution, confirmed_ledger)["ledger_outcome"].status.value == "PASS"
+
+
+def x402_evidence(
+    *,
+    receipt_status: SettlementStatus = SettlementStatus.SETTLED,
+    ledger_status: LedgerStatus = LedgerStatus.CONFIRMED,
+    service_status: int = 200,
+    ledger_network: str = "eip155:84532",
+    ledger_reference: str = "syn_usdc_base_sepolia",
+) -> tuple[
+    PurchaseIntent,
+    ExpectedContract,
+    ExecutionRecord,
+    MatchResult,
+    PaymentReceipt,
+]:
+    amount = Money(amount=Decimal("0.001"), unit="USDC")
+    identity = AssetIdentity(
+        symbol="USDC",
+        network="eip155:84532",
+        reference="syn_usdc_base_sepolia",
+        decimals=6,
+    )
+    observed_identity = AssetIdentity(
+        symbol="USDC",
+        network=ledger_network,
+        reference=ledger_reference,
+        decimals=6,
+    )
+    intent = PurchaseIntent(
+        run_id="syn_x402_run",
+        task="synthetic x402 request",
+        max_budget=amount,
+        requested_service=None,
+        created_at=NOW,
+    )
+    contract = ExpectedContract(
+        vendor_slug=None,
+        url="https://example.invalid/weather",
+        price=amount,
+        asset="USDC",
+        protocol="x402",
+        chain=None,
+        request_schema={},
+        scheme="exact",
+        network="eip155:84532",
+        asset_identity=identity,
+        recipient="syn_recipient",
+    )
+    execution = ExecutionRecord(
+        vendor_slug=None,
+        upstream_http_status=service_status,
+        charge=amount,
+        asset="USDC",
+        protocol="x402",
+        chain=None,
+        recipient="syn_recipient",
+        scheme="exact",
+        network="eip155:84532",
+        asset_identity=identity,
+        settlement_status=SettlementStatus.UNKNOWN,
+        transaction_id=None,
+        session_id=None,
+        transaction_hash="syn_hash",
+        response_body=None,
+        executed_at=NOW,
+    )
+    receipt = PaymentReceipt(
+        amount=amount,
+        asset="USDC",
+        protocol="x402",
+        chain=None,
+        recipient="syn_recipient",
+        scheme="exact",
+        network="eip155:84532",
+        asset_identity=identity,
+        settlement_status=receipt_status,
+        transaction_id=None,
+        session_id=None,
+        transaction_hash="syn_hash",
+        issued_at=NOW,
+    )
+    ledger = LedgerRecord(
+        ledger_id="syn_ledger",
+        vendor_slug=None,
+        amount=amount,
+        asset="USDC",
+        protocol="x402",
+        chain=None,
+        recipient="syn_recipient",
+        scheme="exact",
+        network=ledger_network,
+        asset_identity=observed_identity,
+        status=ledger_status,
+        error_reason=None,
+        transaction_id=None,
+        session_id=None,
+        transaction_hash="syn_hash",
+        occurred_at=NOW,
+    )
+    match = MatchResult(
+        MatchStatus.MATCHED,
+        MatchStrategy.TRANSACTION_HASH,
+        MatchConfidence.HIGH,
+        ledger,
+        (ledger.ledger_id,),
+    )
+    return intent, contract, execution, match, receipt
+
+
+def test_provider_receipt_and_independent_ledger_agree() -> None:
+    intent, contract, execution, match, receipt = x402_evidence()
+
+    findings = run_checks(intent, contract, execution, match, receipt=receipt)
+    statuses = {finding.check_id: finding.status.value for finding in findings}
+
+    assert "chain" not in statuses
+    assert statuses["network"] == "PASS"
+    assert statuses["asset_identity"] == "PASS"
+    assert statuses["recipient"] == "PASS"
+    assert statuses["settlement"] == "PASS"
+    assert statuses["ledger_outcome"] == "PASS"
+    assert derive_verdict(findings).value == "VERIFIED"
+
+
+def test_provider_receipt_without_confirmed_independent_evidence_is_unknown() -> None:
+    intent, contract, execution, match, receipt = x402_evidence(ledger_status=LedgerStatus.PENDING)
+
+    findings = run_checks(intent, contract, execution, match, receipt=receipt)
+    statuses = {finding.check_id: finding.status.value for finding in findings}
+
+    assert statuses["settlement"] == "UNKNOWN"
+    assert derive_verdict(findings).value == "UNVERIFIABLE"
+
+
+@pytest.mark.parametrize(
+    ("receipt_status", "ledger_status"),
+    [
+        (SettlementStatus.SETTLED, LedgerStatus.FAILED),
+        (SettlementStatus.FAILED, LedgerStatus.CONFIRMED),
+    ],
+)
+def test_provider_and_independent_settlement_contradiction_is_unverifiable(
+    receipt_status: SettlementStatus, ledger_status: LedgerStatus
+) -> None:
+    intent, contract, execution, match, receipt = x402_evidence(
+        receipt_status=receipt_status,
+        ledger_status=ledger_status,
+    )
+
+    findings = run_checks(intent, contract, execution, match, receipt=receipt)
+    statuses = {finding.check_id: finding.status.value for finding in findings}
+
+    assert statuses["settlement"] == "UNKNOWN"
+    assert statuses["ledger_outcome"] == "FAIL"
+    ledger_outcome = next(finding for finding in findings if finding.check_id == "ledger_outcome")
+    assert ledger_outcome.artifact_ids == ("receipt", "activity")
+    assert ledger_outcome.field_paths == (
+        "receipt.settlement_status",
+        "activity.status",
+    )
+    assert derive_verdict(findings).value == "UNVERIFIABLE"
+
+
+def test_independently_settled_x402_service_failure_is_paid_failure() -> None:
+    intent, contract, execution, match, receipt = x402_evidence(service_status=500)
+
+    findings = run_checks(intent, contract, execution, match, receipt=receipt)
+    statuses = {finding.check_id: finding.status.value for finding in findings}
+
+    assert statuses["settlement"] == "PASS"
+    assert statuses["service_execution"] == "FAIL"
+    assert statuses["paid_failure"] == "FAIL"
+    assert derive_verdict(findings).value == "PAID_FAILURE"
+
+
+def test_network_and_asset_identity_disagreement_are_diffs() -> None:
+    intent, contract, execution, match, receipt = x402_evidence(
+        ledger_network="eip155:8453",
+        ledger_reference="syn_usdc_base_mainnet",
+    )
+
+    findings = run_checks(intent, contract, execution, match, receipt=receipt)
+    statuses = {finding.check_id: finding.status.value for finding in findings}
+
+    assert statuses["network"] == "DIFF"
+    assert statuses["asset_identity"] == "DIFF"
+    assert derive_verdict(findings).value == "VERIFIED_WITH_WARNINGS"
 
 
 def test_missing_evidence_is_unknown_not_a_pass() -> None:

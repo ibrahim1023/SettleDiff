@@ -10,6 +10,7 @@ from settlediff.domain.models import (
     ExpectedContract,
     Finding,
     LedgerStatus,
+    PaymentReceipt,
     PurchaseIntent,
     SettlementStatus,
     Severity,
@@ -22,19 +23,45 @@ def run_checks(
     contract: ExpectedContract | None,
     execution: ExecutionRecord | None,
     match: MatchResult,
+    *,
+    receipt: PaymentReceipt | None = None,
 ) -> tuple[Finding, ...]:
     """Run the fixed verification suite without I/O, model calls, or check dependencies."""
+    network_present = any(
+        value is not None
+        for value in (
+            contract.network if contract is not None else None,
+            execution.network if execution is not None else None,
+            receipt.network if receipt is not None else None,
+            match.matched.network if match.matched is not None else None,
+        )
+    )
+    identity_present = any(
+        value is not None
+        for value in (
+            contract.asset_identity if contract is not None else None,
+            execution.asset_identity if execution is not None else None,
+            receipt.asset_identity if receipt is not None else None,
+            match.matched.asset_identity if match.matched is not None else None,
+        )
+    )
+    field_findings = (
+        _field_consistency("asset", contract, execution, match, receipt),
+        *((_asset_identity(contract, execution, match, receipt),) if identity_present else ()),
+        _field_consistency("protocol", contract, execution, match, receipt),
+        _field_consistency(
+            "network" if network_present else "chain", contract, execution, match, receipt
+        ),
+    )
     return (
         _budget(intent, execution, match),
         _price(contract, execution, match),
-        _field_consistency("asset", contract, execution, match),
-        _field_consistency("protocol", contract, execution, match),
-        _field_consistency("chain", contract, execution, match),
-        _recipient(execution, match),
-        _settlement(execution),
+        *field_findings,
+        _recipient(contract, execution, match, receipt),
+        _settlement(execution, match, receipt),
         _service_execution(execution),
-        _paid_failure(execution),
-        _ledger_outcome(execution, match),
+        _paid_failure(execution, match, receipt),
+        _ledger_outcome(execution, match, receipt),
         _activity_persistence(match),
     )
 
@@ -124,13 +151,15 @@ def _field_consistency(
     contract: ExpectedContract | None,
     execution: ExecutionRecord | None,
     match: MatchResult,
+    receipt: PaymentReceipt | None,
 ) -> Finding:
     expected = getattr(contract, field) if contract is not None else None
     observed = getattr(execution, field) if execution is not None else None
+    receipt_value = getattr(receipt, field) if receipt is not None else None
     ledger_value = getattr(match.matched, field) if match.matched is not None else None
     values = tuple(
         value
-        for value in (expected, observed, ledger_value)
+        for value in (expected, observed, receipt_value, ledger_value)
         if value is not None and value != "unknown"
     )
     if len(values) < 2:
@@ -141,30 +170,127 @@ def _field_consistency(
         for name, value in (
             ("contract", expected),
             ("execution", observed),
+            ("receipt", receipt_value),
             ("activity", ledger_value),
         )
         if value is not None
+    )
+    observed_value = (
+        observed
+        if observed is not None
+        else receipt_value
+        if receipt_value is not None
+        else ledger_value
     )
     return _finding(
         field,
         Severity.WARNING if status is CheckStatus.DIFF else Severity.INFO,
         status,
         expected,
-        observed,
+        observed_value,
         f"{field.title()} values agree across available evidence."
         if status is CheckStatus.PASS
         else f"{field.title()} values differ across available evidence.",
         artifact_ids,
-        (f"contract.{field}", f"execution.{field}", f"activity.{field}"),
+        (
+            f"contract.{field}",
+            f"execution.{field}",
+            f"receipt.{field}",
+            f"activity.{field}",
+        ),
     )
 
 
-def _recipient(execution: ExecutionRecord | None, match: MatchResult) -> Finding:
-    expected = execution.recipient if execution is not None else None
-    observed = match.matched.recipient if match.matched is not None else None
-    if expected is None or observed is None:
-        return _unknown("recipient", "Execution or Activity recipient is unavailable.")
-    status = CheckStatus.PASS if expected.casefold() == observed.casefold() else CheckStatus.WARN
+def _asset_identity(
+    contract: ExpectedContract | None,
+    execution: ExecutionRecord | None,
+    match: MatchResult,
+    receipt: PaymentReceipt | None,
+) -> Finding:
+    expected = contract.asset_identity if contract is not None else None
+    observed = execution.asset_identity if execution is not None else None
+    receipt_value = receipt.asset_identity if receipt is not None else None
+    ledger_value = match.matched.asset_identity if match.matched is not None else None
+    values = tuple(
+        value for value in (expected, observed, receipt_value, ledger_value) if value is not None
+    )
+    if len(values) < 2:
+        return _unknown("asset_identity", "Insufficient asset identity evidence is available.")
+    status = CheckStatus.PASS if len(set(values)) == 1 else CheckStatus.DIFF
+    artifact_ids = tuple(
+        name
+        for name, value in (
+            ("contract", expected),
+            ("execution", observed),
+            ("receipt", receipt_value),
+            ("activity", ledger_value),
+        )
+        if value is not None
+    )
+    observed_value = (
+        observed
+        if observed is not None
+        else receipt_value
+        if receipt_value is not None
+        else ledger_value
+    )
+    return _finding(
+        "asset_identity",
+        Severity.WARNING if status is CheckStatus.DIFF else Severity.INFO,
+        status,
+        expected.model_dump(mode="json") if expected is not None else None,
+        observed_value.model_dump(mode="json") if observed_value is not None else None,
+        "Asset identities agree across available evidence."
+        if status is CheckStatus.PASS
+        else "Asset identities differ across available evidence.",
+        artifact_ids,
+        (
+            "contract.asset_identity",
+            "execution.asset_identity",
+            "receipt.asset_identity",
+            "activity.asset_identity",
+        ),
+    )
+
+
+def _recipient(
+    contract: ExpectedContract | None,
+    execution: ExecutionRecord | None,
+    match: MatchResult,
+    receipt: PaymentReceipt | None,
+) -> Finding:
+    contract_value = contract.recipient if contract is not None else None
+    execution_value = execution.recipient if execution is not None else None
+    receipt_value = receipt.recipient if receipt is not None else None
+    ledger_value = match.matched.recipient if match.matched is not None else None
+    values = tuple(
+        value
+        for value in (contract_value, execution_value, receipt_value, ledger_value)
+        if value is not None
+    )
+    if len(values) < 2:
+        return _unknown("recipient", "Insufficient recipient evidence is available.")
+    status = (
+        CheckStatus.PASS if len({value.casefold() for value in values}) == 1 else CheckStatus.WARN
+    )
+    expected = contract_value if contract_value is not None else execution_value
+    observed = (
+        ledger_value
+        if ledger_value is not None
+        else receipt_value
+        if receipt_value is not None
+        else execution_value
+    )
+    artifact_ids = tuple(
+        name
+        for name, value in (
+            ("contract", contract_value),
+            ("execution", execution_value),
+            ("receipt", receipt_value),
+            ("activity", ledger_value),
+        )
+        if value is not None
+    )
     return _finding(
         "recipient",
         Severity.WARNING if status is CheckStatus.WARN else Severity.INFO,
@@ -174,35 +300,78 @@ def _recipient(execution: ExecutionRecord | None, match: MatchResult) -> Finding
         "Recipient values match."
         if status is CheckStatus.PASS
         else "Recipient representations differ; no provider defect is inferred.",
-        ("execution", "activity"),
-        ("execution.recipient", "activity.recipient"),
+        artifact_ids,
+        (
+            "contract.recipient",
+            "execution.recipient",
+            "receipt.recipient",
+            "activity.recipient",
+        ),
     )
 
 
-def _settlement(execution: ExecutionRecord | None) -> Finding:
-    if execution is None or execution.settlement_status is SettlementStatus.UNKNOWN:
-        return _unknown("settlement", "Financial settlement evidence is unavailable.")
-    if execution.settlement_status is SettlementStatus.SETTLED:
+def _effective_settlement_status(
+    execution: ExecutionRecord | None,
+    match: MatchResult,
+    receipt: PaymentReceipt | None,
+) -> SettlementStatus:
+    if receipt is None:
+        return execution.settlement_status if execution is not None else SettlementStatus.UNKNOWN
+    ledger_status = match.matched.status if match.matched is not None else LedgerStatus.UNKNOWN
+    if ledger_status is LedgerStatus.CONFIRMED:
+        return (
+            SettlementStatus.UNKNOWN
+            if receipt.settlement_status is SettlementStatus.FAILED
+            else SettlementStatus.SETTLED
+        )
+    if ledger_status is LedgerStatus.FAILED:
+        return (
+            SettlementStatus.UNKNOWN
+            if receipt.settlement_status is SettlementStatus.SETTLED
+            else SettlementStatus.FAILED
+        )
+    return SettlementStatus.UNKNOWN
+
+
+def _settlement(
+    execution: ExecutionRecord | None,
+    match: MatchResult,
+    receipt: PaymentReceipt | None,
+) -> Finding:
+    status = _effective_settlement_status(execution, match, receipt)
+    if status is SettlementStatus.UNKNOWN:
+        return _unknown("settlement", "Financial settlement evidence is unavailable or conflicts.")
+    artifact_ids = (
+        ("receipt", "activity")
+        if receipt is not None and match.matched is not None
+        else ("execution",)
+    )
+    field_paths = (
+        ("receipt.settlement_status", "activity.status")
+        if receipt is not None and match.matched is not None
+        else ("execution.settlement_status",)
+    )
+    if status is SettlementStatus.SETTLED:
         return _finding(
             "settlement",
             Severity.INFO,
             CheckStatus.PASS,
             SettlementStatus.SETTLED,
-            execution.settlement_status,
+            status,
             "Payment settled.",
-            ("execution",),
-            ("execution.settlement_status",),
+            artifact_ids,
+            field_paths,
         )
-    if execution.settlement_status is SettlementStatus.FAILED:
+    if status is SettlementStatus.FAILED:
         return _finding(
             "settlement",
             Severity.ERROR,
             CheckStatus.FAIL,
             SettlementStatus.SETTLED,
-            execution.settlement_status,
+            status,
             "Payment failed.",
-            ("execution",),
-            ("execution.settlement_status",),
+            artifact_ids,
+            field_paths,
         )
     return _unknown("settlement", "Payment settlement is still pending.")
 
@@ -225,15 +394,30 @@ def _service_execution(execution: ExecutionRecord | None) -> Finding:
     )
 
 
-def _paid_failure(execution: ExecutionRecord | None) -> Finding:
+def _paid_failure(
+    execution: ExecutionRecord | None,
+    match: MatchResult,
+    receipt: PaymentReceipt | None,
+) -> Finding:
+    settlement_status = _effective_settlement_status(execution, match, receipt)
     if (
         execution is None
         or execution.upstream_http_status is None
-        or execution.settlement_status is SettlementStatus.UNKNOWN
+        or settlement_status is SettlementStatus.UNKNOWN
     ):
         return _unknown("paid_failure", "Settlement or service outcome is unavailable.")
     failed_service = not 200 <= execution.upstream_http_status < 300
-    if execution.settlement_status is SettlementStatus.SETTLED and failed_service:
+    artifact_ids = ("execution", "receipt", "activity") if receipt is not None else ("execution",)
+    field_paths = (
+        (
+            "receipt.settlement_status",
+            "activity.status",
+            "execution.upstream_http_status",
+        )
+        if receipt is not None
+        else ("execution.settlement_status", "execution.upstream_http_status")
+    )
+    if settlement_status is SettlementStatus.SETTLED and failed_service:
         return _finding(
             "paid_failure",
             Severity.HIGH,
@@ -241,8 +425,8 @@ def _paid_failure(execution: ExecutionRecord | None) -> Finding:
             SettlementStatus.SETTLED,
             execution.upstream_http_status,
             "Financial settlement succeeded, but the purchased service failed.",
-            ("execution",),
-            ("execution.settlement_status", "execution.upstream_http_status"),
+            artifact_ids,
+            field_paths,
         )
     return _finding(
         "paid_failure",
@@ -251,36 +435,47 @@ def _paid_failure(execution: ExecutionRecord | None) -> Finding:
         SettlementStatus.SETTLED,
         execution.upstream_http_status,
         "No settled payment with a failed service response was observed.",
-        ("execution",),
-        ("execution.settlement_status", "execution.upstream_http_status"),
+        artifact_ids,
+        field_paths,
     )
 
 
-def _ledger_outcome(execution: ExecutionRecord | None, match: MatchResult) -> Finding:
+def _ledger_outcome(
+    execution: ExecutionRecord | None,
+    match: MatchResult,
+    receipt: PaymentReceipt | None,
+) -> Finding:
     if execution is None or execution.upstream_http_status is None or match.matched is None:
         return _unknown("ledger_outcome", "Activity record or service outcome is unavailable.")
+    provider_status = (
+        receipt.settlement_status if receipt is not None else execution.settlement_status
+    )
     settled_vs_failed = (
-        execution.settlement_status is SettlementStatus.SETTLED
-        and match.matched.status is LedgerStatus.FAILED
+        provider_status is SettlementStatus.SETTLED and match.matched.status is LedgerStatus.FAILED
     )
     failed_vs_confirmed = (
-        execution.settlement_status is SettlementStatus.FAILED
+        provider_status is SettlementStatus.FAILED
         and match.matched.status is LedgerStatus.CONFIRMED
     )
     if settled_vs_failed or failed_vs_confirmed:
+        provider_name = "Receipt" if receipt is not None else "Execution"
+        provider_artifact = "receipt" if receipt is not None else "execution"
+        provider_path = (
+            "receipt.settlement_status" if receipt is not None else "execution.settlement_status"
+        )
         return _finding(
             "ledger_outcome",
             Severity.ERROR,
             CheckStatus.FAIL,
-            execution.settlement_status,
+            provider_status,
             match.matched.status,
-            "Execution reports settlement, but the persisted Activity record marks the "
+            f"{provider_name} reports settlement, but the persisted Activity record marks the "
             "payment failed."
             if settled_vs_failed
-            else "Execution reports payment failure, but the persisted Activity record "
+            else f"{provider_name} reports payment failure, but the persisted Activity record "
             "confirms settlement.",
-            ("execution", "activity"),
-            ("execution.settlement_status", "activity.status"),
+            (provider_artifact, "activity"),
+            (provider_path, "activity.status"),
         )
     if (
         match.matched.status is LedgerStatus.CONFIRMED
