@@ -133,7 +133,10 @@ and mislabeled adapter/artifact evidence fails closed. Provider contract tests p
   missing receipts, invalid evidence, and RPC failure;
 - confirmed and reverted receipts classify as submitted; only explicit non-submission
   proof classifies as not submitted, and all ambiguous trajectories remain unresolved;
-- every post-launch signer failure is one-shot and cannot be launched again.
+- every post-launch signer failure is one-shot and cannot be launched again;
+- x402 adapter tests perform two unsigned challenge observations, reject pre-launch drift without invoking the signer, preserve post-launch contradictory references as uncertain, keep provider receipt and independent ledger evidence separate, and expose no second mutation path;
+- CLI/config tests require explicit rail selection and both testnet gates, preserve GET-without-body and POST JSON semantics, reject missing/secret-bearing configuration, and prove interactive decline prevents signer invocation;
+- storage, bundle, JSON, and local UI tests retain adapter identity and label provider versus independent settlement without recomputing findings.
 
 ## Interface tests
 

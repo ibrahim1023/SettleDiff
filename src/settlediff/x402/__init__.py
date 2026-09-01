@@ -1,11 +1,13 @@
 """x402 v2 evidence parsing and canonical normalization."""
 
+from settlediff.x402.adapter import X402Adapter
 from settlediff.x402.client import X402ClientError, X402ExternalClient, X402SubmissionUncertainError
 from settlediff.x402.client_contract import (
     ExternalSignerRequest,
     ExternalSignerResult,
     SignerSubmissionState,
 )
+from settlediff.x402.http import X402ResourceClient, X402ResourceError, X402ResourceResponse
 from settlediff.x402.models import PaymentRequired, PaymentRequirements, SettlementResponse
 from settlediff.x402.normalize import (
     X402NormalizationError,
@@ -30,11 +32,15 @@ __all__ = [
     "PaymentRequirements",
     "SettlementResponse",
     "SignerSubmissionState",
+    "X402Adapter",
     "X402ClientError",
     "X402ExternalClient",
     "X402NormalizationError",
     "X402ProtocolError",
     "X402RecoveryDiagnostic",
+    "X402ResourceClient",
+    "X402ResourceError",
+    "X402ResourceResponse",
     "X402RpcClient",
     "X402RpcError",
     "X402SettlementError",

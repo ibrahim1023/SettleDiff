@@ -89,7 +89,9 @@ Any changed term requires a new preflight and fresh explicit authorization.
 Add optional `receipt: PaymentReceipt` to `MachineReport` for provider-reported
 settlement evidence. Retain `ledger: LedgerRecord` for independently observed
 settlement evidence, including a validated network transaction and token
-transfer.
+transfer. `MachineReport.adapter_id` is optional provenance metadata for CLI/UI
+presentation and bundle diagnostics only; deterministic checks and verdicts must
+not branch on it.
 
 - A provider receipt is evidence, not independent truth.
 - Transaction existence or receipt success alone does not prove the expected

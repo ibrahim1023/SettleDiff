@@ -57,6 +57,89 @@ def test_otlp_endpoint_rejects_insecure_or_credentialed_urls(endpoint: str) -> N
         offline_settings(otlp_endpoint=endpoint)
 
 
+def test_x402_configuration_is_required_only_for_selected_live_rail() -> None:
+    settings = offline_settings()
+
+    assert settings.x402_signer_command is None
+    assert settings.x402_rpc_url is None
+    assert not hasattr(settings, "x402_private_key")
+    with pytest.raises(ValueError, match="x402 configuration is incomplete"):
+        settings.require_x402()
+
+
+def test_x402_configuration_loads_json_command_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SETTLEDIFF_X402_SIGNER_COMMAND", '["/opt/syn-x402-signer"]')
+    monkeypatch.setenv("SETTLEDIFF_X402_RPC_URL", "https://rpc.example.invalid")
+    monkeypatch.setenv("SETTLEDIFF_X402_TESTNET_ENABLED", "true")
+
+    config = offline_settings().require_x402()
+
+    assert config.signer_command == ("/opt/syn-x402-signer",)
+    assert config.testnet_enabled is True
+
+
+def test_x402_configuration_contains_only_non_secret_process_and_rpc_settings() -> None:
+    settings = offline_settings(
+        x402_signer_command=("/opt/syn-x402-signer", "--profile", "testnet"),
+        x402_rpc_url="https://rpc.example.invalid/syn-rpc-key",
+        x402_testnet_enabled=True,
+    )
+
+    config = settings.require_x402()
+    assert config.signer_command == ("/opt/syn-x402-signer", "--profile", "testnet")
+    assert config.rpc_url.get_secret_value() == "https://rpc.example.invalid/syn-rpc-key"
+    assert config.testnet_enabled is True
+    assert "syn-rpc-key" not in repr(config)
+    assert "syn-rpc-key" not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://rpc.example.invalid",
+        "ftp://rpc.example.invalid",
+        "https://user:secret@rpc.example.invalid",
+        "https://rpc.example.invalid/path?token=secret",
+    ],
+)
+def test_x402_rpc_rejects_insecure_or_credentialed_urls(url: str) -> None:
+    with pytest.raises(ValueError, match="x402 RPC"):
+        offline_settings(
+            x402_signer_command=("/opt/syn-x402-signer",), x402_rpc_url=url
+        ).require_x402()
+
+
+def test_invalid_x402_rpc_diagnostic_masks_credential_bearing_url() -> None:
+    with pytest.raises(ValueError) as error:
+        offline_settings(
+            x402_signer_command=("/opt/syn-x402-signer",),
+            x402_rpc_url="http://rpc.example.invalid/syn-rpc-secret",
+        ).require_x402()
+
+    assert "syn-rpc-secret" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        (),
+        ("/opt/signer", "--private-key", "syn-secret"),
+        ("/opt/signer", "--mnemonic=synthetic"),
+        ("/opt/signer", ""),
+    ],
+)
+def test_x402_signer_command_rejects_empty_or_secret_bearing_arguments(
+    command: tuple[str, ...],
+) -> None:
+    with pytest.raises(ValueError, match="x402 signer"):
+        offline_settings(
+            x402_signer_command=command,
+            x402_rpc_url="https://rpc.example.invalid",
+        ).require_x402()
+
+
 def test_contextdev_base_url_can_be_replaced_for_contract_testing() -> None:
     config = offline_settings(
         contextdev_base_url="https://contextdev.example.invalid/v1",

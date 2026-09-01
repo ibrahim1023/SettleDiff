@@ -31,7 +31,7 @@ The repository starts documentation-only. Source, tests, fixtures, and configura
 │   ├── contextdev/                 # required live independent evidence adapter
 │   ├── domain/                     # pure models, normalization, checks
 │   ├── perflo/                     # neutral adapter, subprocess client, envelope parsers
-│   ├── x402/                       # v2 parser, signer contract, bounded RPC, settlement verifier
+│   ├── x402/                       # v2 adapter, unsigned HTTP, signer contract, RPC/recovery
 │   ├── storage/                    # repositories and SQLite implementation
 │   ├── telemetry/                  # structured logging and OTel wiring
 │   └── ui/                         # Jinja templates and static assets

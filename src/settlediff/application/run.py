@@ -63,7 +63,12 @@ from settlediff.domain.models import (
     PurchaseIntent,
 )
 from settlediff.domain.money import Money
-from settlediff.domain.normalize import normalize_activity, normalize_contract, normalize_execution
+from settlediff.domain.normalize import (
+    normalize_activity,
+    normalize_contract,
+    normalize_execution,
+    normalize_receipt,
+)
 from settlediff.domain.redaction import redact_artifact, redact_embedded_identifiers
 from settlediff.domain.verdict import derive_verdict
 
@@ -199,6 +204,7 @@ class LiveEvidenceCollector:
         self._payment_terms: PaymentTerms | None = None
         self._schema: EvidenceArtifact | None = None
         self._execution: EvidenceArtifact | None = None
+        self._receipt: EvidenceArtifact | None = None
         self._activity: EvidenceArtifact | None = None
         self._context: EvidenceArtifact | None = None
         self._recovery: EvidenceArtifact | None = None
@@ -222,6 +228,7 @@ class LiveEvidenceCollector:
                 self._contract,
                 self._schema,
                 self._execution,
+                self._receipt,
                 self._activity,
                 self._context,
                 self._recovery,
@@ -320,6 +327,15 @@ class LiveEvidenceCollector:
             expected_operation="execute",
             adapter_id=self._adapter.adapter_id,
         )
+        if execution_evidence.provider_receipt is not None:
+            self._receipt = EvidenceArtifact(
+                artifact_id=f"{request.run_id}:{ArtifactType.PAYMENT_RECEIPT.value}",
+                artifact_type=ArtifactType.PAYMENT_RECEIPT,
+                source=f"{execution_evidence.source}.provider_settlement",
+                collected_at=execution_evidence.observed_at or datetime.now(UTC),
+                redacted=False,
+                data=execution_evidence.provider_receipt,
+            )
         self._transaction_reference = execution_evidence.transaction_reference
         if execution_evidence.submission_uncertain:
             raise SubmissionUncertainError(
@@ -399,6 +415,7 @@ class LiveEvidenceCollector:
             )
         contract = normalize_contract(self._contract)
         execution = normalize_execution(self._execution) if self._execution is not None else None
+        receipt = normalize_receipt(self._receipt) if self._receipt is not None else None
         with self._span(
             "settlediff.match_activity", {"run_id": request.run_id, "component": "matching"}
         ):
@@ -411,7 +428,7 @@ class LiveEvidenceCollector:
             requested_service=contract.vendor_slug,
             created_at=datetime.now(UTC),
         )
-        findings = run_checks(intent, contract, execution, matched)
+        findings = run_checks(intent, contract, execution, matched, receipt=receipt)
         report = MachineReport(
             run_id=request.run_id,
             intent=intent,
@@ -420,6 +437,8 @@ class LiveEvidenceCollector:
             ledger=matched.matched,
             findings=findings,
             verdict=derive_verdict(findings),
+            receipt=receipt,
+            adapter_id=self._adapter.adapter_id,
         )
         if execution is not None:
             await self._collect_context(request, execution)

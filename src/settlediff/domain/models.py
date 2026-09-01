@@ -280,6 +280,7 @@ class MachineReport(CanonicalModel):
     findings: tuple[Finding, ...]
     verdict: Verdict
     receipt: PaymentReceipt | None = None
+    adapter_id: NonEmptyStr | None = None
 
     @model_validator(mode="after")
     def require_compatible_schema(self) -> Self:

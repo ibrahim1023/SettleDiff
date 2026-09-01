@@ -147,6 +147,22 @@ def test_all_fixture_reports_render_without_recomputing(tmp_path: Path) -> None:
             assert f"<th>{heading}</th>" in detail.text
 
 
+def test_x402_detail_labels_adapter_and_separate_settlement_evidence(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/x402-clean-success")).model_copy(
+        update={"adapter_id": "x402"}
+    )
+    repository.save(report)
+
+    detail = TestClient(create_app(repository)).get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert "Payment rail: x402" in detail.text
+    assert "Provider receipt: settled" in detail.text
+    assert "Independent record: confirmed" in detail.text
+    repository.close()
+
+
 def test_runs_support_search_verdict_filter_and_deterministic_sort(tmp_path: Path) -> None:
     repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
     clean = replay_fixture(Path("fixtures/clean-success"))

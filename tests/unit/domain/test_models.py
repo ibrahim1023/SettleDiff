@@ -424,6 +424,7 @@ def test_schema_v1_report_remains_readable_without_v2_fields() -> None:
     legacy = machine_report_fixture().model_dump(mode="json")
     legacy["schema_version"] = 1
     legacy.pop("receipt", None)
+    legacy.pop("adapter_id", None)
     for name in ("contract", "execution", "ledger"):
         record = cast(dict[str, object], legacy[name])
         record["schema_version"] = 1
@@ -437,6 +438,7 @@ def test_schema_v1_report_remains_readable_without_v2_fields() -> None:
 
     assert restored.schema_version == 1
     assert restored.receipt is None
+    assert restored.adapter_id is None
     assert restored.contract is not None
     assert restored.contract.network is None
     assert restored.contract.asset_identity is None

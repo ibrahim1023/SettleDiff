@@ -7,6 +7,7 @@
       <p class="eyebrow">Investigation report</p>
       <h1>{{ report.intent.task }}</h1>
       <p class="run-id">{{ report.run_id }}</p>
+      {% if report.adapter_id %}<p>Payment rail: {{ report.adapter_id }}</p>{% endif %}
     </div>
     <span class="verdict verdict-{{ report.verdict.value|lower }}">{{ report.verdict.value }}</span>
   </section>

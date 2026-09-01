@@ -127,11 +127,12 @@ implements it as the first adapter. Canonical x402 v2 evidence fields are versio
 supported by the verifier, and the bounded offline parser/normalizer handles the captured
 v2 challenge and specified settlement-response shapes. A versioned external-signer
 contract and bounded one-shot subprocess client are implemented; the independently
-installed signer owns key loading. The production x402 adapter, signer implementation,
-live RPC configuration, production x402 adapter, signer implementation, and live CLI
-path are not implemented yet. Offline settlement verification is implemented against a
-bounded read-only RPC port and validates Base Sepolia chain identity plus the exact USDC
-transfer log rather than trusting transaction-receipt existence. Submission recovery is
+installed signer owns key loading. The x402 adapter and explicit CLI composition are
+implemented and tested offline: two unsigned challenges bracket authorization, the
+signer-returned challenge is checked against the selected terms, provider receipt stays
+separate from bounded read-only Base Sepolia verification, and the exact USDC transfer
+log—not receipt existence—establishes settlement. This path has not yet completed an
+authorized live testnet cycle. Submission recovery is
 read-only: confirmed and reverted receipts both prove transmission, while missing,
 pending, malformed, or unavailable evidence remains unresolved. Only explicit
 pre-transmission proof can establish non-submission. Direct MPP clients and other payment rails remain
@@ -176,10 +177,16 @@ transaction but is not treated as proof of settlement.
 Then open `http://127.0.0.1:8765/runs` to inspect the persisted Expected, Executed, and
 Recorded evidence. This demo never contacts a model, Perflo, or a paid service.
 
-For a live call, `settlediff run --url URL --body JSON --budget AMOUNT` inspects provider
-metadata, shows the exact target/resource, method, canonical body digest, adapter,
-protocol version, scheme, network, asset, recipient, quoted price, payment-terms digest,
-and USDC budget, then requires an interactive yes/no authorization. It is never part of the default test suite.
+For a live call, `settlediff run --url URL --body JSON --budget AMOUNT` retains Perflo as
+the temporary default. Select x402 explicitly with `--rail x402 --allow-testnet`; configure
+`SETTLEDIFF_X402_SIGNER_COMMAND` as a JSON argument array,
+`SETTLEDIFF_X402_RPC_URL`, and `SETTLEDIFF_X402_TESTNET_ENABLED=true`. SettleDiff has no
+private-key setting: wallet authority belongs to the separately installed signer. GET uses
+`--method GET` with no body; POST requires `--body` and preserves the JSON value exactly.
+Both rails show the exact target/resource, method, canonical body digest, adapter,
+protocol version, scheme, network, asset, masked recipient, quote, payment-terms digest,
+and budget before the mandatory interactive authorization. Environment flags never
+bypass confirmation, and live/paid calls are never part of the default test suite.
 
 ## Live findings become offline regression tests
 

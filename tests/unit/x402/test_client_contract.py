@@ -57,6 +57,7 @@ def test_signer_request_binds_body_and_selected_terms() -> None:
     assert value.schema_version == 1
     assert value.adapter == "x402"
     assert value.x402_version == 2
+    assert value.selected_requirement == 0
     assert value.body_digest == body_digest_for(BODY)
     assert value.payment_terms_digest == TERMS_DIGEST
     assert value.network == "eip155:84532"
@@ -68,6 +69,7 @@ def test_signer_request_binds_body_and_selected_terms() -> None:
     [
         {"adapter": "perflo"},
         {"x402_version": 1},
+        {"selected_requirement": 1},
         {"target": "http://example.invalid/paid"},
         {"target": "https://user@example.invalid/paid"},
         {"target": "https://example.invalid/paid#fragment"},

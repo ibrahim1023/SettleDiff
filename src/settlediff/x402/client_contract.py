@@ -52,6 +52,7 @@ class ExternalSignerRequest(SignerContractModel):
     adapter: Literal["x402"] = "x402"
     run_id: NonEmptyStr
     x402_version: Literal[2] = 2
+    selected_requirement: Literal[0] = 0
     target: NonEmptyStr
     method: Literal["GET", "POST"]
     body: JsonValue | None

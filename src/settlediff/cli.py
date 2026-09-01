@@ -3,13 +3,16 @@
 import asyncio
 import json
 import re
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from enum import StrEnum
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlparse
 from uuid import uuid4
 
+import httpx
 import typer
 import uvicorn
 from pydantic import JsonValue, ValidationError
@@ -36,6 +39,7 @@ from settlediff.application.bundle import (
     serialize_bundle,
     verify_bundle,
 )
+from settlediff.application.payment_rails import PaymentRailAdapter
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
     InvestigationOutcome,
@@ -57,6 +61,24 @@ from settlediff.perflo.adapter import PerfloAdapter
 from settlediff.perflo.client import PerfloClient, PerfloClientError
 from settlediff.storage.sqlite import SQLiteReportRepository
 from settlediff.telemetry.setup import TelemetryRuntime, configure_telemetry
+from settlediff.x402.adapter import X402Adapter
+from settlediff.x402.client import X402ClientError, X402ExternalClient
+from settlediff.x402.http import X402ResourceClient
+from settlediff.x402.rpc import X402RpcClient
+
+
+class PaymentRail(StrEnum):
+    PERFLO = "perflo"
+    X402 = "x402"
+
+
+class HttpMethod(StrEnum):
+    GET = "GET"
+    POST = "POST"
+
+
+AdapterCloser = Callable[[], Awaitable[None]]
+
 
 app = typer.Typer(
     name="settlediff",
@@ -68,6 +90,9 @@ JSON_OPTION = typer.Option(False, "--json")
 OPTIONAL_DATABASE_OPTION = typer.Option(None, "--database")
 BUNDLE_OUTPUT_OPTION = typer.Option(..., "--output")
 BUNDLE_FORCE_OPTION = typer.Option(False, "--force", help="Replace an existing output file.")
+RAIL_OPTION = typer.Option(PaymentRail.PERFLO, "--rail")
+METHOD_OPTION = typer.Option(HttpMethod.POST, "--method")
+ALLOW_TESTNET_OPTION = typer.Option(False, "--allow-testnet")
 
 
 def _version_callback(value: bool) -> None:
@@ -106,6 +131,8 @@ def _render(
         }
         typer.echo(json.dumps(payload, separators=(",", ":")))
         return
+    if report.adapter_id is not None:
+        typer.echo(f"Payment rail: {report.adapter_id}")
     typer.echo(report.verdict.value)
     for finding in report.findings:
         typer.echo(f"{finding.status}: {finding.message}")
@@ -172,12 +199,13 @@ async def _execute_live_run(
     collector: LiveEvidenceCollector,
     budget: InvestigationBudgetState,
     telemetry: TelemetryRuntime,
+    adapter_close: AdapterCloser | None = None,
 ) -> InvestigationOutcome:
     """Keep every async live boundary on one event loop."""
     try:
         try:
             await collector.preflight(request)
-        except (PerfloClientError, ValueError) as error:
+        except (PerfloClientError, X402ClientError, ValueError) as error:
             typer.echo(f"Live preflight failed: {error}", err=True)
             raise typer.Exit(code=2) from error
 
@@ -206,7 +234,9 @@ async def _execute_live_run(
             f"{payment_terms.quoted_price.unit}\n"
             f"Budget: {request.budget.amount} {request.budget.unit}\n"
             f"Asset: {asset_label or 'unknown'}\n"
-            f"Recipient: {recipient_label}"
+            f"Recipient: {recipient_label}\n"
+            f"External signer: "
+            f"{'configured' if payment_terms.adapter_id == 'x402' else 'not applicable'}"
         )
         typer.echo(
             "Investigation budget: Context.dev calls: 1, "
@@ -239,6 +269,8 @@ async def _execute_live_run(
             )
         )
     finally:
+        if adapter_close is not None:
+            await adapter_close()
         await contextdev.aclose()
 
 
@@ -262,23 +294,72 @@ def verify_fixture(
     _render(report, json_mode)
 
 
+def _build_payment_adapter(
+    rail: PaymentRail, settings: Settings
+) -> tuple[PaymentRailAdapter, AdapterCloser | None]:
+    if rail is PaymentRail.PERFLO:
+        return PerfloAdapter(PerfloClient()), None
+    config = settings.require_x402()
+    resource_http = httpx.AsyncClient(follow_redirects=False)
+    rpc_http = httpx.AsyncClient(base_url=config.rpc_url.get_secret_value(), follow_redirects=False)
+    adapter = X402Adapter(
+        X402ResourceClient(
+            resource_http,
+            timeout_seconds=config.resource_timeout_seconds,
+        ),
+        X402ExternalClient(
+            command=config.signer_command,
+            timeout_seconds=config.signer_timeout_seconds,
+        ),
+        X402RpcClient(
+            rpc_http,
+            timeout_seconds=config.rpc_timeout_seconds,
+        ),
+    )
+
+    async def close() -> None:
+        await resource_http.aclose()
+        await rpc_http.aclose()
+
+    return adapter, close
+
+
 @app.command()
 def run(
     url: str = typer.Option(...),
-    body: str = typer.Option(...),
     budget: str = typer.Option(...),
+    body: str | None = typer.Option(None),
+    rail: PaymentRail = RAIL_OPTION,
+    method: HttpMethod = METHOD_OPTION,
+    allow_testnet: bool = ALLOW_TESTNET_OPTION,
     database: Path | None = OPTIONAL_DATABASE_OPTION,
     json_mode: bool = JSON_OPTION,
 ) -> None:
     """Run one explicit paid request after interactive authorization."""
     try:
-        parsed_body = json.loads(body)
-        if not isinstance(parsed_body, dict):
-            raise ValueError("body must be a JSON object")
+        parsed_body: JsonValue | None
+        if method is HttpMethod.GET:
+            if body is not None:
+                raise ValueError("GET requests must omit --body")
+            parsed_body = None
+        else:
+            if body is None:
+                raise ValueError("POST requests require --body")
+            parsed_body = cast(JsonValue, json.loads(body))
+            if rail is PaymentRail.PERFLO and not isinstance(parsed_body, dict):
+                raise ValueError("Perflo body must be a JSON object")
+        if rail is PaymentRail.PERFLO and method is not HttpMethod.POST:
+            raise ValueError("Perflo supports POST requests only")
         amount = Decimal(budget)
         parsed_url = urlparse(url)
-        if parsed_url.scheme != "https" or not parsed_url.netloc:
-            raise ValueError("url must be an absolute HTTPS URL")
+        if (
+            parsed_url.scheme != "https"
+            or not parsed_url.netloc
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+            or parsed_url.fragment
+        ):
+            raise ValueError("url must be absolute HTTPS without credentials or fragment")
         if amount <= 0:
             raise ValueError("budget must be greater than zero")
     except (json.JSONDecodeError, InvalidOperation, ValueError) as error:
@@ -287,6 +368,13 @@ def run(
     try:
         settings = Settings()
         contextdev_config = settings.require_contextdev()
+        if rail is PaymentRail.X402:
+            x402_config = settings.require_x402()
+            if not allow_testnet or not x402_config.testnet_enabled:
+                raise ValueError(
+                    "x402 testnet execution requires --allow-testnet and "
+                    "SETTLEDIFF_X402_TESTNET_ENABLED=true"
+                )
     except ValueError as error:
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error
@@ -299,7 +387,8 @@ def run(
     request = PaidExecutionRequest(
         run_id=f"live_{uuid4().hex}",
         target=url,
-        body=cast(dict[str, JsonValue], parsed_body),
+        method=method.value,
+        body=parsed_body,
         budget=Money(amount=amount, unit="USDC"),
     )
     budget_state = InvestigationBudgetState(
@@ -312,8 +401,9 @@ def run(
             output_tokens=INVESTIGATION_OUTPUT_TOKEN_LIMIT,
         )
     )
+    adapter, adapter_close = _build_payment_adapter(rail, settings)
     collector = LiveEvidenceCollector(
-        PerfloAdapter(PerfloClient()),
+        adapter,
         contextdev=contextdev,
         budget=budget_state,
         telemetry=telemetry,
@@ -328,9 +418,10 @@ def run(
                     collector,
                     budget_state,
                     telemetry,
+                    adapter_close,
                 )
             )
-        except (PerfloClientError, ValueError) as error:
+        except (PerfloClientError, X402ClientError, ValueError) as error:
             typer.echo(f"Live investigation failed: {error}", err=True)
             raise typer.Exit(code=2) from error
         if database is not None:

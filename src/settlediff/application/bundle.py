@@ -71,6 +71,7 @@ def _bundle_payload(bundle: EvidenceBundle, *, include_integrity: bool) -> dict[
     report = cast(dict[str, object], payload["report"])
     if report["schema_version"] == 1:
         report.pop("receipt", None)
+        report.pop("adapter_id", None)
         for name in ("contract", "execution", "ledger"):
             record_value = report.get(name)
             if not isinstance(record_value, dict):

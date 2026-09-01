@@ -39,6 +39,19 @@ result: dict[str, object] = {
     "transaction_reference": "syn_transaction",
     "notes": [],
 }
+if mode == "pipeline":
+    transaction = "0x" + "2" * 64
+    result["challenge"] = json.loads(Path(sys.argv[3]).read_text())
+    result["provider_settlement"] = {
+        "success": True,
+        "errorReason": None,
+        "payer": "0x3333333333333333333333333333333333333333",
+        "transaction": transaction,
+        "network": "eip155:84532",
+        "amount": "1000",
+        "extensions": {},
+    }
+    result["transaction_reference"] = transaction
 if mode == "secret":
     result["challenge"] = {"PAYMENT-SIGNATURE": "syn_signature"}
 if mode == "uncertain":

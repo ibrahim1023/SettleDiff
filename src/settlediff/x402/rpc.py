@@ -44,7 +44,7 @@ class X402RpcClient:
             request_id = self._requests
         try:
             response = await self._client.post(
-                "/",
+                "",
                 json={"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
                 timeout=self._timeout_seconds,
             )

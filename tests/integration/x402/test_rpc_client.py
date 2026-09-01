@@ -14,6 +14,7 @@ async def test_rpc_client_uses_bounded_read_only_json_rpc_calls() -> None:
 
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
+        assert request.url.path == "/base-sepolia/syn-key/"
         assert request.extensions["timeout"]["read"] == 0.25
         requests.append(payload)
         result = "0x14a34" if payload["method"] == "eth_chainId" else None
@@ -24,7 +25,7 @@ async def test_rpc_client_uses_bounded_read_only_json_rpc_calls() -> None:
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(handler),
-        base_url="https://rpc.example.invalid",
+        base_url="https://rpc.example.invalid/base-sepolia/syn-key",
     ) as http:
         client = X402RpcClient(http, max_requests=2, timeout_seconds=0.25)
 

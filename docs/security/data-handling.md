@@ -54,6 +54,9 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Receipt success alone is insufficient: require the expected Base Sepolia chain plus exactly one matching USDC transfer event for token, payer when supplied, recipient, and amount. The facilitator transaction sender is not the payer.
 - A mined reverted transaction proves submission, not non-submission. Missing/pending receipts, malformed evidence, and RPC failure remain unresolved; only an explicit pre-transmission result or separately proven non-submission may set the non-submission state.
 - Once an external signer process launches, that client instance cannot launch again, including after timeout, overflow, malformed output, or another uncertain failure.
+- SettleDiff configuration contains only a signer command and RPC URL, never a wallet key; both fields are hidden from configuration representations, the potentially credential-bearing RPC URL uses `SecretStr`, secret-bearing command arguments are rejected, and no private-key setting exists.
+- x402 live composition requires explicit rail selection, environment and CLI testnet gates, and the same interactive exact-request authorization. No gate bypasses confirmation.
+- The resource client does not follow redirects. It repeats the unsigned challenge immediately before signing; pre-launch drift fails without signer invocation, while post-launch signer/provider contradictions preserve the transaction reference and force settlement unknown.
 
 ### Data minimization
 

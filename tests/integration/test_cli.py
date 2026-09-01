@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
@@ -15,9 +16,14 @@ from typer.testing import CliRunner
 from settlediff import __version__
 from settlediff.agent.grounding import fallback_explanation
 from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
+from settlediff.application.payment_rails import AdapterEvidence
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import RunEvent, RunState
-from settlediff.cli import app
+from settlediff.cli import (
+    PaymentRail,
+    _build_payment_adapter,  # pyright: ignore[reportPrivateUsage]
+    app,
+)
 from settlediff.config import Settings
 from settlediff.domain.models import (
     ArtifactType,
@@ -29,6 +35,7 @@ from settlediff.domain.money import Money
 from settlediff.perflo.adapter import PerfloAdapter, PerfloClientPort
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 from settlediff.storage.sqlite import SQLiteReportRepository
+from settlediff.x402.adapter import X402Adapter
 
 runner = CliRunner()
 
@@ -43,6 +50,61 @@ def live_settings() -> Settings:
         _env_file=None,  # pyright: ignore[reportCallIssue]
         contextdev_api_key=SecretStr("syn-contextdev-key"),
     )
+
+
+def x402_live_settings(*, enabled: bool = True) -> Settings:
+    return Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        contextdev_api_key=SecretStr("syn-contextdev-key"),
+        x402_signer_command=("/opt/syn-x402-signer",),
+        x402_rpc_url="https://rpc.example.invalid",
+        x402_testnet_enabled=enabled,
+    )
+
+
+class DeclineX402Adapter:
+    adapter_id = "x402"
+
+    def __init__(self, requests: list[PaidExecutionRequest]) -> None:
+        self.requests = requests
+
+    async def inspect(self, request: PaidExecutionRequest) -> AdapterEvidence:
+        self.requests.append(request)
+        return AdapterEvidence(
+            adapter_id=self.adapter_id,
+            protocol_version="2",
+            operation="inspect",
+            source="x402.synthetic.challenge",
+            artifact_type=ArtifactType.SERVICE_CONTRACT,
+            data={
+                "schema_version": 2,
+                "vendor_slug": None,
+                "url": request.target,
+                "price": {"amount": "0.001", "unit": "USDC"},
+                "asset": "USDC",
+                "protocol": "x402",
+                "chain": None,
+                "request_schema": {"type": "null" if request.body is None else "object"},
+                "scheme": "exact",
+                "network": "eip155:84532",
+                "asset_identity": {
+                    "schema_version": 1,
+                    "symbol": "USDC",
+                    "network": "eip155:84532",
+                    "reference": "syn_usdc_base_sepolia",
+                    "decimals": 6,
+                },
+                "recipient": "syn_x402_recipient",
+                "max_timeout_seconds": 300,
+                "normalization_notes": [],
+            },
+        )
+
+    async def execute_once(self, *_args: object) -> AdapterEvidence:
+        raise AssertionError("declined x402 authorization must not execute")
+
+    async def collect_activity(self) -> AdapterEvidence:
+        raise AssertionError("declined x402 authorization must not collect activity")
 
 
 def test_version_option_reports_package_version_without_running_a_command() -> None:
@@ -70,12 +132,154 @@ def test_fixture_replay_can_persist_for_show(tmp_path: Path) -> None:
     assert '"run_id":"syn_run_clean"' in shown.stdout
 
 
+def test_show_renders_x402_adapter_and_separate_settlement_evidence(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/x402-clean-success")).model_copy(
+        update={"adapter_id": "x402"}
+    )
+    repository = SQLiteReportRepository(database)
+    repository.save(report)
+    repository.close()
+
+    json_result = runner.invoke(app, ["show", report.run_id, "--database", str(database), "--json"])
+    human_result = runner.invoke(app, ["show", report.run_id, "--database", str(database)])
+
+    assert json_result.exit_code == 0
+    payload = json.loads(json_result.stdout)
+    assert payload["adapter_id"] == "x402"
+    assert payload["receipt"]["settlement_status"] == "settled"
+    assert payload["ledger"]["status"] == "confirmed"
+    assert human_result.exit_code == 0
+    assert "Payment rail: x402" in human_result.stdout
+
+
 def test_live_run_rejects_invalid_json_before_any_adapter_call() -> None:
     result = runner.invoke(
         app, ["run", "--url", "https://example.invalid", "--body", "no", "--budget", "1"]
     )
     assert result.exit_code == 2
     assert "Invalid live preflight" in result.stderr
+
+
+def test_x402_composition_builds_adapter_without_contacting_external_systems() -> None:
+    adapter, close = _build_payment_adapter(PaymentRail.X402, x402_live_settings())
+
+    assert isinstance(adapter, X402Adapter)
+    assert close is not None
+
+    async def close_adapter() -> None:
+        await close()
+
+    asyncio.run(close_adapter())
+
+
+def test_live_run_rejects_unknown_payment_rail() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--rail",
+            "unknown",
+            "--url",
+            "https://example.invalid",
+            "--body",
+            "{}",
+            "--budget",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.stderr
+
+
+def test_x402_run_requires_complete_non_secret_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--rail",
+            "x402",
+            "--allow-testnet",
+            "--url",
+            "https://example.invalid/paid",
+            "--body",
+            "{}",
+            "--budget",
+            "0.01",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "x402 configuration is incomplete" in result.stderr
+
+
+@pytest.mark.parametrize(("enabled", "allow_flag"), [(False, True), (True, False)])
+def test_x402_run_requires_environment_and_cli_testnet_gates(
+    monkeypatch: pytest.MonkeyPatch, enabled: bool, allow_flag: bool
+) -> None:
+    monkeypatch.setattr("settlediff.cli.Settings", lambda: x402_live_settings(enabled=enabled))
+    arguments = [
+        "run",
+        "--rail",
+        "x402",
+        "--url",
+        "https://example.invalid/paid",
+        "--body",
+        "{}",
+        "--budget",
+        "0.01",
+    ]
+    if allow_flag:
+        arguments.append("--allow-testnet")
+
+    result = runner.invoke(app, arguments)
+
+    assert result.exit_code == 2
+    assert "x402 testnet execution requires" in result.stderr
+
+
+def test_x402_get_decline_preserves_method_and_absent_body_without_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[PaidExecutionRequest] = []
+    adapter = DeclineX402Adapter(requests)
+    monkeypatch.setattr("settlediff.cli.Settings", x402_live_settings)
+
+    def build_adapter(_rail: PaymentRail, _settings: Settings) -> tuple[DeclineX402Adapter, None]:
+        return adapter, None
+
+    monkeypatch.setattr("settlediff.cli._build_payment_adapter", build_adapter)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--rail",
+            "x402",
+            "--allow-testnet",
+            "--method",
+            "GET",
+            "--url",
+            "https://example.invalid/paid",
+            "--budget",
+            "0.01",
+        ],
+        input="n\n",
+    )
+
+    assert result.exit_code == 1
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert requests[0].body is None
+    assert "Rail: x402" in result.stdout
+    assert "Version: 2" in result.stdout
+    assert "External signer: configured" in result.stdout
+    assert "Authorization declined" in result.stdout
 
 
 def test_live_run_requires_contextdev_configuration(monkeypatch: pytest.MonkeyPatch) -> None:

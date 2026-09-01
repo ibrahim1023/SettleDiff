@@ -67,8 +67,8 @@ execution, and independent activity collection. Schema and transaction lookup ar
 separate runtime-checkable capabilities, so an adapter is not forced to implement
 provider operations it does not support. Every operation returns strict
 `AdapterEvidence` carrying adapter, operation, source, artifact type, data,
-provider observation time when supplied, submission certainty, and available
-payment/transaction references.
+provider observation time when supplied, submission certainty, available
+payment/transaction references, and optional provider-receipt evidence.
 
 Perflo implements this boundary through `perflo/adapter.py`; its command envelopes
 and aliases no longer cross into application services. The verdict, check, and
@@ -85,8 +85,14 @@ is not treated as payer evidence. The x402 recovery classifier preserves the sig
 submission state and transaction reference, performs only bounded read-only verification,
 and emits canonical adapter evidence. Confirmed and reverted receipts prove submission;
 missing/pending evidence or validation/RPC failure remains unresolved, and only explicit
-pre-transmission proof establishes non-submission. Live RPC configuration, the production
-x402 adapter, signer implementation, and live CLI path are not implemented yet.
+pre-transmission proof establishes non-submission. The production x402 adapter composes
+an unsigned bounded resource client, the independently owned one-shot signer process, and
+the read-only RPC verifier. It re-fetches the challenge immediately before signer launch,
+pins requirement index zero in the signer contract, checks returned challenge terms after launch, and preserves structured uncertainty and
+transaction references. CLI composition requires explicit `--rail x402`, an environment
+testnet gate, a command-line testnet gate, and the ordinary interactive exact-request
+authorization. The adapter and composition are offline-tested but have not completed an
+authorized live testnet cycle; the signer implementation remains external.
 
 ## Components
 
@@ -103,6 +109,10 @@ Coordinate live investigations and fixture replay. They create run IDs, authoriz
 ### Perflo adapter
 
 Runs a narrow allowlist of Perflo CLI commands through argument-based subprocess execution. It captures raw envelopes before normalization and surfaces submission certainty on mutations.
+
+### x402 adapter
+
+Issues bounded unsigned GET/POST challenge requests without redirects, strictly parses x402 v2 exact/Base-Sepolia/test-USDC terms, revalidates them against the consumed capability, launches one independently owned signer process, normalizes provider settlement separately, and exposes bounded independent receipt/transfer evidence through the same application port.
 
 ### Investigation Agent
 

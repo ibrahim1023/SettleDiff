@@ -33,6 +33,7 @@ class AdapterEvidence(BaseModel):
     submission_uncertain: bool = False
     payment_reference: NonEmptyStr | None = None
     transaction_reference: NonEmptyStr | None = None
+    provider_receipt: JsonValue | None = None
 
 
 @runtime_checkable

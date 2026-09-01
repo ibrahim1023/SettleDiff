@@ -100,6 +100,7 @@ def test_current_bundle_reads_schema_v1_report_without_v2_fields(tmp_path: Path)
     report_payload = cast(dict[str, Any], payload["report"])
     report_payload["schema_version"] = 1
     report_payload.pop("receipt", None)
+    report_payload.pop("adapter_id", None)
     for name in ("contract", "execution", "ledger"):
         record = cast(dict[str, Any], report_payload[name])
         record["schema_version"] = 1
@@ -237,6 +238,26 @@ def test_load_rejects_unknown_schema_version(tmp_path: Path) -> None:
 
     with pytest.raises(BundleError, match="bundle"):
         load_bundle(json.dumps(payload).encode())
+    repository.close()
+
+
+def test_x402_report_round_trips_with_separate_settlement_evidence(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "x402.sqlite3")
+    report = replay_fixture(FIXTURES / "x402-clean-success").model_copy(
+        update={"adapter_id": "x402"}
+    )
+    repository.save(report)
+
+    verified = verify_bundle(
+        load_bundle(serialize_bundle(export_bundle(repository, report.run_id)))
+    )
+
+    assert verified == report
+    assert verified.adapter_id == "x402"
+    assert verified.receipt is not None
+    assert verified.ledger is not None
+    assert verified.receipt.settlement_status.value == "settled"
+    assert verified.ledger.status.value == "confirmed"
     repository.close()
 
 
