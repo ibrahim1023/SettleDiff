@@ -373,7 +373,7 @@ def test_normalize_current_activity_millisecond_timestamp() -> None:
     assert record.transaction_hash == "syn_hash_current"
 
 
-def test_unknown_enumerated_values_are_explicit_and_diagnostic() -> None:
+def test_unknown_bounded_values_are_diagnostic_without_restricting_protocols() -> None:
     raw = artifact(
         "artifact_execution_unknown",
         ArtifactType.EXECUTION,
@@ -389,12 +389,11 @@ def test_unknown_enumerated_values_are_explicit_and_diagnostic() -> None:
     execution = normalize_execution(raw)
 
     assert execution.asset == "unknown"
-    assert execution.protocol == "unknown"
+    assert execution.protocol == "syn-new-protocol"
     assert execution.chain == "unknown"
     assert execution.settlement_status is SettlementStatus.UNKNOWN
     assert execution.normalization_notes == (
         "unknown asset at data.asset",
-        "unknown protocol at data.protocol",
         "unknown chain at data.chain",
         "unknown settlement status at data.settlement_status",
     )

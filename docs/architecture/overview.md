@@ -96,6 +96,8 @@ Owns strict canonical models, normalization, activity matching, independent chec
 
 ### Application services
 
+The domain accepts canonical protocol identifiers without a provider registry and imports neither payment adapter. Provider-specific envelopes, versions, facilitator behavior, and transport branches remain inside adapter packages; the application core depends only on rail-neutral ports and canonical evidence.
+
 Coordinate live investigations and fixture replay. They create run IDs, authorization capabilities, evidence timelines, and invoke ports in a fixed safety order. After preflight they create a versioned canonical payment-terms descriptor covering adapter/version, scheme, network/legacy chain, asset identity, recipient, quote, timeout, resource, method, and body digest. Its SHA-256 digest is bound into the one-use capability and revalidated immediately before adapter execution. They do not duplicate verification rules.
 
 ### Perflo adapter

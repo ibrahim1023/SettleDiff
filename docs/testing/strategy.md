@@ -78,6 +78,10 @@ differences. These are explicitly synthetic reports modeled from captured protoc
 shapes and controlled local outcomes; challenge-only wire payloads remain contract-test
 fixtures and are never padded with fabricated execution or ledger evidence.
 
+## Cross-rail contract tests
+
+Semantic-equivalence tests compare canonical economic relations, evidence states, selected financial findings, verdicts, and uncertainty—not provider payloads, references, or nominal test amounts. Clean success, settled-payment/service-failure, and insufficient-settlement cases must remain equivalent across Perflo and x402. AST-based architecture tests prevent domain/application imports of adapter implementations and provider-specific branch terms. Well-formed provider settlement without independent evidence stays unknown, while malformed provider evidence is rejected before financial checks.
+
 ## Agent-loop tests
 
 Use `FunctionModel` when the exact next tool matters and `TestModel` when tool schema/output wiring is the subject.

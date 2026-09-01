@@ -27,7 +27,6 @@ from settlediff.domain.money import Money
 
 _RECOGNIZED_ASSETS: Final = frozenset({"USDC", "USDT"})
 _MINOR_UNIT_EXPONENTS: Final = {"USDC": 6, "USDT": 6}
-_RECOGNIZED_PROTOCOLS: Final = frozenset({"mpp", "x402"})
 _RECOGNIZED_CHAINS: Final = frozenset({"base", "tempo"})
 
 
@@ -50,7 +49,7 @@ def normalize_contract(raw: EvidenceArtifact) -> ExpectedContract:
         url=_required_string(data, raw, "url"),
         price=price,
         asset=_normalized_name(data, raw, "asset", _RECOGNIZED_ASSETS, str.upper, notes),
-        protocol=_normalized_name(data, raw, "protocol", _RECOGNIZED_PROTOCOLS, str.lower, notes),
+        protocol=_normalized_protocol(data, raw),
         chain=_normalized_name(data, raw, "chain", _RECOGNIZED_CHAINS, str.lower, notes),
         request_schema=_required_schema(data, raw),
         scheme=_optional_string(data, raw, "scheme"),
@@ -72,7 +71,7 @@ def normalize_execution(raw: EvidenceArtifact) -> ExecutionRecord:
         upstream_http_status=_optional_http_status(data, raw),
         charge=_money(data, raw, amount_field="amount_minor", unit_field="asset", required=False),
         asset=_normalized_name(data, raw, "asset", _RECOGNIZED_ASSETS, str.upper, notes),
-        protocol=_normalized_name(data, raw, "protocol", _RECOGNIZED_PROTOCOLS, str.lower, notes),
+        protocol=_normalized_protocol(data, raw),
         chain=_normalized_name(data, raw, "chain", _RECOGNIZED_CHAINS, str.lower, notes),
         recipient=_optional_string(data, raw, "recipient"),
         scheme=_optional_string(data, raw, "scheme"),
@@ -95,7 +94,7 @@ def normalize_receipt(raw: EvidenceArtifact) -> PaymentReceipt:
     return PaymentReceipt(
         amount=_money(data, raw, amount_field="amount", unit_field="asset", required=False),
         asset=_normalized_name(data, raw, "asset", _RECOGNIZED_ASSETS, str.upper, notes),
-        protocol=_normalized_name(data, raw, "protocol", _RECOGNIZED_PROTOCOLS, str.lower, notes),
+        protocol=_normalized_protocol(data, raw),
         chain=_normalized_name(data, raw, "chain", _RECOGNIZED_CHAINS, str.lower, notes),
         recipient=_optional_string(data, raw, "recipient"),
         scheme=_optional_string(data, raw, "scheme"),
@@ -144,15 +143,7 @@ def normalize_activity(raw: EvidenceArtifact) -> tuple[LedgerRecord, ...]:
                     notes,
                     prefix=f"data[{index}].",
                 ),
-                protocol=_normalized_name(
-                    data,
-                    raw,
-                    "protocol",
-                    _RECOGNIZED_PROTOCOLS,
-                    str.lower,
-                    notes,
-                    prefix=f"data[{index}].",
-                ),
+                protocol=_normalized_protocol(data, raw, prefix=f"data[{index}]."),
                 chain=_normalized_name(
                     data,
                     raw,
@@ -321,6 +312,13 @@ def _optional_json(
     data: dict[str, JsonValue], raw: EvidenceArtifact, field: str
 ) -> JsonValue | None:
     return _field(data, raw, field)
+
+
+def _normalized_protocol(
+    data: dict[str, JsonValue], raw: EvidenceArtifact, *, prefix: str = "data."
+) -> str | None:
+    value = _optional_string(data, raw, "protocol", prefix=prefix)
+    return value.lower() if value is not None else None
 
 
 def _normalized_name(
