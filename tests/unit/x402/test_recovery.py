@@ -10,14 +10,24 @@ from typing import cast
 import pytest
 from pydantic import JsonValue
 
+from settlediff.application.run import RecoveryState
 from settlediff.domain.models import LedgerStatus
 from settlediff.domain.money import Money
+from settlediff.x402.client_contract import (
+    ExternalSignerResult,
+    SignerServiceResponse,
+    SignerSubmissionState,
+)
 from settlediff.x402.parser import parse_payment_required
 from settlediff.x402.recovery import (
     TRANSFER_TOPIC,
+    X402RecoveryDiagnostic,
     X402SettlementError,
+    recover_x402_submission,
     verify_exact_usdc_settlement,
+    x402_recovery_evidence,
 )
+from settlediff.x402.rpc import X402RpcError
 
 FIXTURE = Path(__file__).parents[2] / "contract/x402/fixtures/payment-required-v2.json"
 PAYER = "0x3333333333333333333333333333333333333333"
@@ -56,6 +66,31 @@ def receipt() -> dict[str, JsonValue]:
             }
         ],
     }
+
+
+def signer_result(
+    state: SignerSubmissionState,
+    *,
+    transaction_reference: str | None = TX_HASH,
+) -> ExternalSignerResult:
+    provider: dict[str, JsonValue] | None = (
+        {"success": True} if state is SignerSubmissionState.SUBMITTED_CONFIRMED else None
+    )
+    if state in {
+        SignerSubmissionState.NOT_SUBMITTED,
+        SignerSubmissionState.PROVEN_NOT_SUBMITTED,
+    }:
+        transaction_reference = None
+    return ExternalSignerResult(
+        adapter="x402",
+        submission_state=state,
+        challenge={"x402Version": 2},
+        provider_settlement=provider,
+        service_response=SignerServiceResponse(status=200, body=None),
+        payment_reference=None,
+        transaction_reference=transaction_reference,
+        notes=(),
+    )
 
 
 class FakeRpc:
@@ -221,3 +256,143 @@ async def test_receipt_contradictions_and_malformed_evidence_fail_closed(
         await verify_exact_usdc_settlement(
             FakeRpc(value), TX_HASH, requirement(), expected_payer=PAYER, observed_at=NOW
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "state",
+    [
+        SignerSubmissionState.NOT_SUBMITTED,
+        SignerSubmissionState.PROVEN_NOT_SUBMITTED,
+    ],
+)
+async def test_pre_submission_result_proves_no_submission_without_rpc(
+    state: SignerSubmissionState,
+) -> None:
+    rpc = FakeRpc(receipt())
+
+    recovered = await recover_x402_submission(
+        signer_result(state), rpc, requirement(), expected_payer=PAYER, observed_at=NOW
+    )
+
+    assert recovered.state is RecoveryState.NOT_SUBMITTED
+    assert recovered.proof_of_non_submission is True
+    assert recovered.independent_settlement is None
+    assert recovered.diagnostic is None
+    assert rpc.calls == []
+    evidence = x402_recovery_evidence(recovered, observed_at=NOW)
+    assert evidence.operation == "transaction_status"
+    assert evidence.source == "x402.external_signer.recovery"
+    assert cast(dict[str, JsonValue], evidence.data) == {
+        "status": "not_submitted",
+        "proof_of_non_submission": True,
+        "source_submission_state": state.value,
+        "diagnostic": None,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "state",
+    [
+        SignerSubmissionState.SUBMITTED_CONFIRMED,
+        SignerSubmissionState.SUBMISSION_UNCERTAIN,
+    ],
+)
+@pytest.mark.parametrize("receipt_status", ["0x1", "0x0"])
+async def test_mined_receipt_proves_submission_even_when_transaction_reverted(
+    state: SignerSubmissionState,
+    receipt_status: str,
+) -> None:
+    value = receipt()
+    value["status"] = receipt_status
+    if receipt_status == "0x0":
+        value["logs"] = []
+
+    recovered = await recover_x402_submission(
+        signer_result(state),
+        FakeRpc(value),
+        requirement(),
+        expected_payer=PAYER,
+        observed_at=NOW,
+    )
+
+    assert recovered.state is RecoveryState.SUBMITTED
+    assert recovered.proof_of_non_submission is False
+    assert recovered.independent_settlement is not None
+    assert recovered.independent_settlement.status is (
+        LedgerStatus.CONFIRMED if receipt_status == "0x1" else LedgerStatus.FAILED
+    )
+    assert recovered.diagnostic is None
+    evidence = x402_recovery_evidence(recovered, observed_at=NOW)
+    assert evidence.source == "x402.base_sepolia.transaction_receipt"
+    assert evidence.transaction_reference == TX_HASH
+    assert cast(dict[str, JsonValue], evidence.data)["status"] == (
+        "confirmed" if receipt_status == "0x1" else "failed"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transaction_reference", [TX_HASH, None])
+async def test_uncertain_missing_reference_or_receipt_remains_unresolved(
+    transaction_reference: str | None,
+) -> None:
+    rpc = FakeRpc(None)
+
+    recovered = await recover_x402_submission(
+        signer_result(
+            SignerSubmissionState.SUBMISSION_UNCERTAIN,
+            transaction_reference=transaction_reference,
+        ),
+        rpc,
+        requirement(),
+        expected_payer=PAYER,
+        observed_at=NOW,
+    )
+
+    assert recovered.state is RecoveryState.UNRESOLVED
+    assert recovered.proof_of_non_submission is False
+    assert recovered.independent_settlement is None
+    assert recovered.diagnostic is None
+    assert len(rpc.calls) == (2 if transaction_reference is not None else 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("chain_id", "diagnostic"), [("0x1", "evidence_invalid")])
+async def test_invalid_independent_evidence_preserves_uncertainty(
+    chain_id: str,
+    diagnostic: str,
+) -> None:
+    recovered = await recover_x402_submission(
+        signer_result(SignerSubmissionState.SUBMISSION_UNCERTAIN),
+        FakeRpc(receipt(), chain_id=chain_id),
+        requirement(),
+        expected_payer=PAYER,
+        observed_at=NOW,
+    )
+
+    assert recovered.state is RecoveryState.UNRESOLVED
+    assert recovered.diagnostic is X402RecoveryDiagnostic(diagnostic)
+
+
+@pytest.mark.asyncio
+async def test_rpc_failure_preserves_uncertainty_without_exception_details() -> None:
+    class FailedRpc:
+        async def call(self, method: str, params: tuple[JsonValue, ...]) -> JsonValue:
+            del method, params
+            raise X402RpcError("synthetic secret RPC failure")
+
+    recovered = await recover_x402_submission(
+        signer_result(SignerSubmissionState.SUBMISSION_UNCERTAIN),
+        FailedRpc(),
+        requirement(),
+        expected_payer=PAYER,
+        observed_at=NOW,
+    )
+
+    assert recovered.state is RecoveryState.UNRESOLVED
+    assert recovered.diagnostic is X402RecoveryDiagnostic.RPC_UNAVAILABLE
+    assert "secret" not in recovered.model_dump_json()
+    evidence = x402_recovery_evidence(recovered, observed_at=NOW)
+    assert evidence.source == "x402.read_only_recovery"
+    assert cast(dict[str, JsonValue], evidence.data)["diagnostic"] == "rpc_unavailable"

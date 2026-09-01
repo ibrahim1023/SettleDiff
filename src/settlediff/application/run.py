@@ -350,9 +350,10 @@ class LiveEvidenceCollector:
             self._recovery = artifact
             if isinstance(artifact.data, dict):
                 status = cast(dict[str, JsonValue], artifact.data).get("status")
-                if status == "confirmed":
+                if status in {"confirmed", "failed"}:
                     return RecoveryState.SUBMITTED, (artifact,)
-                if status == "failed":
+                proof = cast(dict[str, JsonValue], artifact.data).get("proof_of_non_submission")
+                if status == "not_submitted" and proof is True:
                     return RecoveryState.NOT_SUBMITTED, (artifact,)
             return RecoveryState.UNRESOLVED, (artifact,)
 

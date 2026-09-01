@@ -250,7 +250,15 @@ async def test_recovery_state_distinguishes_submission_evidence(
     ("status_payload", "expected"),
     [
         ({"status": "confirmed", "transaction_hash": "syn_hash"}, RecoveryState.SUBMITTED),
-        ({"status": "failed", "transaction_hash": "syn_hash"}, RecoveryState.NOT_SUBMITTED),
+        ({"status": "failed", "transaction_hash": "syn_hash"}, RecoveryState.SUBMITTED),
+        (
+            {"status": "not_submitted", "proof_of_non_submission": True},
+            RecoveryState.NOT_SUBMITTED,
+        ),
+        (
+            {"status": "not_submitted", "proof_of_non_submission": False},
+            RecoveryState.UNRESOLVED,
+        ),
         ({"status": "pending", "transaction_hash": "syn_hash"}, RecoveryState.UNRESOLVED),
     ],
 )

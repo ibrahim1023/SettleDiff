@@ -109,6 +109,15 @@ class ExternalSignerResult(SignerContractModel):
             self.provider_settlement is None or self.transaction_reference is None
         ):
             raise ValueError("confirmed submission requires settlement and transaction evidence")
+        if self.submission_state is SignerSubmissionState.NOT_SUBMITTED and (
+            self.provider_settlement is not None or self.transaction_reference is not None
+        ):
+            raise ValueError("non-submission contradicts transaction or settlement evidence")
+        if (
+            self.submission_state is SignerSubmissionState.PROVEN_NOT_SUBMITTED
+            and self.provider_settlement is not None
+        ):
+            raise ValueError("proven non-submission contradicts settlement evidence")
         return self
 
 

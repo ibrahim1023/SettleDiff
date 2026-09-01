@@ -116,7 +116,13 @@ and mislabeled adapter/artifact evidence fails closed. Provider contract tests p
   wrong token/payer/recipient/amount, malformed logs, and missing/pending receipts are
   covered explicitly;
 - the RPC client permits only `eth_chainId` and `eth_getTransactionReceipt`, enforces
-  request/response limits, and does not retry or poll.
+  request/response limits, and does not retry or poll;
+- x402 recovery covers not submitted, proven not submitted, submitted confirmed,
+  submission uncertain with and without a transaction reference, mined reverts,
+  missing receipts, invalid evidence, and RPC failure;
+- confirmed and reverted receipts classify as submitted; only explicit non-submission
+  proof classifies as not submitted, and all ambiguous trajectories remain unresolved;
+- every post-launch signer failure is one-shot and cannot be launched again.
 
 ## Interface tests
 

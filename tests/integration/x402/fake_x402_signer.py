@@ -48,6 +48,7 @@ if mode == "uncertain":
 if mode == "nonzero":
     result["submission_state"] = "not_submitted"
     result["provider_settlement"] = None
+    result["transaction_reference"] = None
 
 print(json.dumps(result))
 if mode == "nonzero":

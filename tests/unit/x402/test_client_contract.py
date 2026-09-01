@@ -148,3 +148,30 @@ def test_nonconfirmed_result_does_not_require_provider_settlement(
     )
 
     assert value.submission_state is state
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "submission_state": SignerSubmissionState.NOT_SUBMITTED,
+            "provider_settlement": None,
+            "transaction_reference": "syn_transaction",
+        },
+        {
+            "submission_state": SignerSubmissionState.NOT_SUBMITTED,
+            "provider_settlement": {"success": True},
+            "transaction_reference": None,
+        },
+        {
+            "submission_state": SignerSubmissionState.PROVEN_NOT_SUBMITTED,
+            "provider_settlement": {"success": True},
+            "transaction_reference": "syn_transaction",
+        },
+    ],
+)
+def test_non_submission_result_rejects_contradictory_evidence(
+    updates: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="non-submission"):
+        result(**updates)

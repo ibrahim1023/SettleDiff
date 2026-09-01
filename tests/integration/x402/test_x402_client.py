@@ -134,6 +134,9 @@ async def test_post_launch_failures_are_uncertain_and_never_retried(
 
     assert count_path.read_text() == "1"
     assert "syn_signature" not in str(error.value)
+    with pytest.raises(X402ClientError, match="already launched"):
+        await signer.execute_once(request())
+    assert count_path.read_text() == "1"
 
 
 @pytest.mark.asyncio

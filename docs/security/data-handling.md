@@ -52,6 +52,8 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - A provider settlement response remains provider-asserted evidence and cannot replace independent settlement verification.
 - Independent x402 verification permits only `eth_chainId` and `eth_getTransactionReceipt`, with bounded request count and response size and no retry/poll loop.
 - Receipt success alone is insufficient: require the expected Base Sepolia chain plus exactly one matching USDC transfer event for token, payer when supplied, recipient, and amount. The facilitator transaction sender is not the payer.
+- A mined reverted transaction proves submission, not non-submission. Missing/pending receipts, malformed evidence, and RPC failure remain unresolved; only an explicit pre-transmission result or separately proven non-submission may set the non-submission state.
+- Once an external signer process launches, that client instance cannot launch again, including after timeout, overflow, malformed output, or another uncertain failure.
 
 ### Data minimization
 

@@ -131,7 +131,10 @@ installed signer owns key loading. The production x402 adapter, signer implement
 live RPC configuration, production x402 adapter, signer implementation, and live CLI
 path are not implemented yet. Offline settlement verification is implemented against a
 bounded read-only RPC port and validates Base Sepolia chain identity plus the exact USDC
-transfer log rather than trusting transaction-receipt existence. Direct MPP clients and other payment rails remain
+transfer log rather than trusting transaction-receipt existence. Submission recovery is
+read-only: confirmed and reverted receipts both prove transmission, while missing,
+pending, malformed, or unavailable evidence remains unresolved. Only explicit
+pre-transmission proof can establish non-submission. Direct MPP clients and other payment rails remain
 architectural extension points.
 
 ## Offline demo scenarios

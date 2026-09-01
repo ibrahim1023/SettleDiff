@@ -81,8 +81,12 @@ external signer is responsible for acquiring signing authority without returning
 material. Offline independent settlement verification uses a bounded read-only JSON-RPC
 port and requires the Base Sepolia chain ID plus exactly one matching USDC transfer event
 for the expected token, payer, recipient, and amount; the facilitator transaction sender
-is not treated as payer evidence. Live RPC configuration, the production x402 adapter,
-signer implementation, and live CLI path are not implemented yet.
+is not treated as payer evidence. The x402 recovery classifier preserves the signer
+submission state and transaction reference, performs only bounded read-only verification,
+and emits canonical adapter evidence. Confirmed and reverted receipts prove submission;
+missing/pending evidence or validation/RPC failure remains unresolved, and only explicit
+pre-transmission proof establishes non-submission. Live RPC configuration, the production
+x402 adapter, signer implementation, and live CLI path are not implemented yet.
 
 ## Components
 

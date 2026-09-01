@@ -13,7 +13,14 @@ from settlediff.x402.normalize import (
     normalize_payment_response,
 )
 from settlediff.x402.parser import X402ProtocolError, parse_payment_required, parse_payment_response
-from settlediff.x402.recovery import X402SettlementError, verify_exact_usdc_settlement
+from settlediff.x402.recovery import (
+    X402RecoveryDiagnostic,
+    X402SettlementError,
+    X402SubmissionRecovery,
+    recover_x402_submission,
+    verify_exact_usdc_settlement,
+    x402_recovery_evidence,
+)
 from settlediff.x402.rpc import X402RpcClient, X402RpcError
 
 __all__ = [
@@ -27,13 +34,17 @@ __all__ = [
     "X402ExternalClient",
     "X402NormalizationError",
     "X402ProtocolError",
+    "X402RecoveryDiagnostic",
     "X402RpcClient",
     "X402RpcError",
     "X402SettlementError",
+    "X402SubmissionRecovery",
     "X402SubmissionUncertainError",
     "normalize_payment_required",
     "normalize_payment_response",
     "parse_payment_required",
     "parse_payment_response",
+    "recover_x402_submission",
     "verify_exact_usdc_settlement",
+    "x402_recovery_evidence",
 ]
