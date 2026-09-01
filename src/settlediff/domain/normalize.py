@@ -57,6 +57,7 @@ def normalize_contract(raw: EvidenceArtifact) -> ExpectedContract:
         network=_optional_network(data, raw),
         asset_identity=_optional_asset_identity(data, raw),
         recipient=_optional_string(data, raw, "recipient"),
+        max_timeout_seconds=_optional_positive_int(data, raw, "max_timeout_seconds"),
         normalization_notes=tuple(notes),
     )
 
@@ -199,6 +200,7 @@ _ALIASES: Final[dict[str, tuple[str, ...]]] = {
     "ledger_id": ("ledger_id", "ledgerId", "id"),
     "error_reason": ("error_reason", "errorReason"),
     "occurred_at": ("occurred_at", "occurredAt", "createdAt", "timestamp"),
+    "max_timeout_seconds": ("max_timeout_seconds", "maxTimeoutSeconds"),
 }
 
 
@@ -341,6 +343,17 @@ def _normalized_name(
         notes.append(f"unknown {field} at {prefix}{field}")
         return "unknown"
     return normalized
+
+
+def _optional_positive_int(
+    data: dict[str, JsonValue], raw: EvidenceArtifact, field: str
+) -> int | None:
+    value = _field(data, raw, field)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= 86_400:
+        raise ArtifactParseError(raw.artifact_id, f"data.{field}", "positive bounded integer")
+    return value
 
 
 def _optional_http_status(data: dict[str, JsonValue], raw: EvidenceArtifact) -> int | None:

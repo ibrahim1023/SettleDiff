@@ -107,6 +107,7 @@ def test_current_bundle_reads_schema_v1_report_without_v2_fields(tmp_path: Path)
             record.pop(field, None)
     contract = cast(dict[str, Any], report_payload["contract"])
     contract.pop("recipient", None)
+    contract.pop("max_timeout_seconds", None)
     compatibility = cast(dict[str, Any], payload["compatibility"])
     compatibility["report_schema_version"] = 1
     unsigned = {key: value for key, value in payload.items() if key != "integrity"}

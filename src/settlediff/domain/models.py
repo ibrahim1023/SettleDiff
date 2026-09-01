@@ -127,6 +127,7 @@ class ExpectedContract(CanonicalModel):
     network: Caip2Network | None = None
     asset_identity: AssetIdentity | None = None
     recipient: NonEmptyStr | None = None
+    max_timeout_seconds: int | None = Field(default=None, gt=0, le=86_400)
     normalization_notes: tuple[NonEmptyStr, ...] = ()
 
     @model_validator(mode="after")
@@ -138,6 +139,7 @@ class ExpectedContract(CanonicalModel):
                 ("network", self.network),
                 ("asset_identity", self.asset_identity),
                 ("recipient", self.recipient),
+                ("max_timeout_seconds", self.max_timeout_seconds),
             ),
         )
         return self

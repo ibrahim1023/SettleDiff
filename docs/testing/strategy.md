@@ -83,7 +83,8 @@ Required trajectories:
 - ambiguous matching may request receipt inspection but cannot choose a candidate itself;
 - tool/request limits stop the loop with an explicit incomplete result;
 - paid execution is rejected without a matching capability;
-- the capability is consumed before calling the adapter;
+- adapter/version, scheme, network/chain, asset, recipient, quote, timeout, resource, method, body digest, budget, run, and target drift are rejected without consuming the exact capability;
+- the capability is consumed with the selected payment terms before calling the adapter;
 - a paid failure or uncertain submission never causes another execution tool call;
 - explanation references only existing finding and artifact IDs;
 - an explanation contradicting the machine verdict is rejected or replaced by a deterministic fallback.

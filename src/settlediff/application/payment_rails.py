@@ -24,6 +24,7 @@ class AdapterEvidence(BaseModel):
 
     schema_version: int = Field(default=1, ge=1)
     adapter_id: NonEmptyStr
+    protocol_version: NonEmptyStr | None = None
     operation: NonEmptyStr
     source: NonEmptyStr
     artifact_type: ArtifactType

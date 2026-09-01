@@ -52,6 +52,7 @@ from settlediff.domain.models import (
     MachineReport,
 )
 from settlediff.domain.money import Money
+from settlediff.domain.redaction import mask_identifier
 from settlediff.perflo.adapter import PerfloAdapter
 from settlediff.perflo.client import PerfloClient, PerfloClientError
 from settlediff.storage.sqlite import SQLiteReportRepository
@@ -180,12 +181,32 @@ async def _execute_live_run(
             typer.echo(f"Live preflight failed: {error}", err=True)
             raise typer.Exit(code=2) from error
 
+        payment_terms = collector.payment_terms
         capability = PaidExecutionCapability.issue(
-            request, expires_at=datetime.now(UTC) + timedelta(minutes=5)
+            request,
+            payment_terms=payment_terms,
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+        identity = payment_terms.asset
+        asset_label = identity.symbol if identity is not None else payment_terms.asset_symbol
+        recipient_label = (
+            mask_identifier(payment_terms.recipient) if payment_terms.recipient else "unknown"
         )
         typer.echo(
-            "Target: "
-            f"{request.target}\nBody digest: {capability.body_digest}\nBudget: {request.budget}"
+            f"Rail: {payment_terms.adapter_id}\n"
+            f"Version: {payment_terms.protocol_version or 'unknown'}\n"
+            f"Scheme: {payment_terms.scheme or 'unknown'}\n"
+            f"Network: {payment_terms.network or payment_terms.chain or 'unknown'}\n"
+            f"Target: {request.target}\n"
+            f"Resource: {payment_terms.resource_url}\n"
+            f"Method: {payment_terms.method}\n"
+            f"Body digest: {capability.body_digest}\n"
+            f"Payment terms digest: {capability.payment_terms_digest}\n"
+            f"Quoted price: {payment_terms.quoted_price.amount} "
+            f"{payment_terms.quoted_price.unit}\n"
+            f"Budget: {request.budget.amount} {request.budget.unit}\n"
+            f"Asset: {asset_label or 'unknown'}\n"
+            f"Recipient: {recipient_label}"
         )
         typer.echo(
             "Investigation budget: Context.dev calls: 1, "
@@ -210,7 +231,13 @@ async def _execute_live_run(
             budget=budget,
             recover=collector.recover_submission,
             transaction_hash=lambda: collector.transaction_reference,
-        ).execute(LiveRunCommand(request=request, capability=capability))
+        ).execute(
+            LiveRunCommand(
+                request=request,
+                capability=capability,
+                payment_terms=payment_terms,
+            )
+        )
     finally:
         await contextdev.aclose()
 

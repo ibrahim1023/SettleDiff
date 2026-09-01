@@ -53,6 +53,7 @@ def normalize_payment_required(
         network=requirement.network,
         asset_identity=identity,
         recipient=requirement.pay_to,
+        max_timeout_seconds=requirement.max_timeout_seconds,
         normalization_notes=notes,
     )
 

@@ -50,6 +50,17 @@ from settlediff.perflo.client import PerfloMutationUncertainError
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 
 
+async def authorize_collector(
+    collector: LiveEvidenceCollector, request: PaidExecutionRequest
+) -> ConsumedPaidAuthorization:
+    payment_terms = collector.payment_terms
+    return await PaidExecutionCapability.issue(
+        request,
+        payment_terms=payment_terms,
+        expires_at=datetime.now(UTC) + timedelta(minutes=1),
+    ).consume(request, payment_terms=payment_terms)
+
+
 def test_uncertain_execution_enters_evidence_only_recovery() -> None:
     timeline = RunTimeline()
     timeline.transition(RunState.AUTHORIZED)
@@ -462,16 +473,14 @@ async def test_execute_sends_the_preflight_quote_not_the_budget() -> None:
         PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
     )
     await collector.preflight(request)
-    authorization = await PaidExecutionCapability.issue(
-        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
-    ).consume(request)
+    authorization = await authorize_collector(collector, request)
     await collector.execute(authorization, request)
 
     assert sent == [Money(amount=Decimal("0.01"), unit="USDC")]
 
 
 @pytest.mark.asyncio
-async def test_execute_requires_a_preflight_quote() -> None:
+async def test_preflight_requires_a_quote_before_authorization() -> None:
     request = PaidExecutionRequest(
         run_id="syn_quote_missing",
         target="https://example.invalid/search",
@@ -498,13 +507,8 @@ async def test_execute_requires_a_preflight_quote() -> None:
     collector = LiveEvidenceCollector(
         PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
     )
-    await collector.preflight(request)
-    authorization = await PaidExecutionCapability.issue(
-        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
-    ).consume(request)
-
-    with pytest.raises(RunTransitionError, match="quote"):
-        await collector.execute(authorization, request)
+    with pytest.raises(RunTransitionError, match="quoted price"):
+        await collector.preflight(request)
 
 
 @pytest.mark.asyncio
@@ -566,9 +570,7 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
         StubContextDev(evidence=CONTEXT_EVIDENCE),
     )
     await collector.preflight(request)
-    authorization = await PaidExecutionCapability.issue(
-        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
-    ).consume(request)
+    authorization = await authorize_collector(collector, request)
     await collector.execute(authorization, request)
     collected = await collector.verify(request)
 
@@ -605,6 +607,7 @@ async def test_live_evidence_collector_accepts_a_non_perflo_adapter() -> None:
             assert request.target == "https://example.invalid/search"
             return AdapterEvidence(
                 adapter_id=self.adapter_id,
+                protocol_version="2",
                 operation="inspect",
                 source="synthetic.contract",
                 artifact_type=ArtifactType.SERVICE_CONTRACT,
@@ -639,9 +642,13 @@ async def test_live_evidence_collector_accepts_a_non_perflo_adapter() -> None:
 
     collector = LiveEvidenceCollector(SyntheticRail(), StubContextDev(evidence=CONTEXT_EVIDENCE))
     await collector.preflight(request)
-    authorization = await PaidExecutionCapability.issue(
-        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
-    ).consume(request)
+    assert collector.payment_terms.adapter_id == "synthetic"
+    assert collector.payment_terms.protocol_version == "2"
+    assert collector.payment_terms.quoted_price == Money(amount=Decimal("0.01"), unit="USDC")
+    assert collector.payment_terms.body_digest == PaidExecutionCapability.body_digest_for(
+        request.body
+    )
+    authorization = await authorize_collector(collector, request)
 
     await collector.execute(authorization, request)
     collected = await collector.verify(request)
@@ -758,9 +765,7 @@ async def test_collector_preserves_uncertain_execution_evidence_and_reference() 
 
     collector = LiveEvidenceCollector(UncertainRail(), cast(ContextEvidencePort, object()))
     await collector.preflight(request)
-    authorization = await PaidExecutionCapability.issue(
-        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
-    ).consume(request)
+    authorization = await authorize_collector(collector, request)
 
     with pytest.raises(SubmissionUncertainError):
         await collector.execute(authorization, request)
@@ -862,9 +867,7 @@ async def run_failing_collector(collector: LiveEvidenceCollector) -> MachineRepo
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     await collector.preflight(request)
-    authorization = await PaidExecutionCapability.issue(
-        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
-    ).consume(request)
+    authorization = await authorize_collector(collector, request)
     await collector.execute(authorization, request)
     return await collector.verify(request)
 
@@ -1030,9 +1033,7 @@ async def test_collector_never_calls_contextdev_for_a_successful_service() -> No
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     await collector.preflight(request)
-    authorization = await PaidExecutionCapability.issue(
-        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
-    ).consume(request)
+    authorization = await authorize_collector(collector, request)
     await collector.execute(authorization, request)
     await collector.verify(request)
 

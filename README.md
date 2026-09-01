@@ -165,8 +165,9 @@ Then open `http://127.0.0.1:8765/runs` to inspect the persisted Expected, Execut
 Recorded evidence. This demo never contacts a model, Perflo, or a paid service.
 
 For a live call, `settlediff run --url URL --body JSON --budget AMOUNT` inspects provider
-metadata, shows the exact target, canonical body digest, and USDC budget, then requires an
-interactive yes/no authorization. It is never part of the default test suite.
+metadata, shows the exact target/resource, method, canonical body digest, adapter,
+protocol version, scheme, network, asset, recipient, quoted price, payment-terms digest,
+and USDC budget, then requires an interactive yes/no authorization. It is never part of the default test suite.
 
 ## Live findings become offline regression tests
 

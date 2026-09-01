@@ -27,8 +27,8 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 ### Paid execution
 
 - Validate URL, JSON body, and explicit budget before authorization.
-- Bind authorization to target, canonical request-body digest, budget, and run ID.
-- Consume authorization before invoking a payment-rail adapter.
+- Bind authorization to run, target, method, canonical request-body digest, exact budget, and the versioned selected payment-terms digest (adapter/version, scheme, network/chain, asset, recipient, quote, timeout, and resource URL).
+- Consume authorization with the same payment terms and revalidate the terms immediately before invoking a payment-rail adapter.
 - Permit at most one paid execution per live run.
 - Never retry on uncertain submission; verify history/status and ask before a new run.
 - Keep fixture replay structurally unable to acquire a paid capability.

@@ -63,6 +63,7 @@ def test_adapter_evidence_is_strict_and_preserves_operation_identity() -> None:
     assert evidence.model_dump(mode="json") == {
         "schema_version": 1,
         "adapter_id": "synthetic",
+        "protocol_version": None,
         "operation": "inspect",
         "source": "synthetic.contract",
         "artifact_type": "service_contract",

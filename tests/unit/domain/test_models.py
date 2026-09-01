@@ -359,6 +359,7 @@ def test_schema_v2_records_carry_rail_neutral_payment_evidence() -> None:
             "network": "eip155:84532",
             "asset_identity": identity,
             "recipient": "0x1111111111111111111111111111111111111111",
+            "max_timeout_seconds": 300,
         }
     )
     execution = ExecutionRecord.model_validate(
@@ -409,6 +410,7 @@ def test_schema_v2_records_carry_rail_neutral_payment_evidence() -> None:
     assert contract.network == "eip155:84532"
     assert contract.asset_identity == identity
     assert contract.recipient == "0x1111111111111111111111111111111111111111"
+    assert contract.max_timeout_seconds == 300
     assert execution.network == "eip155:84532"
     assert execution.asset_identity == identity
     assert ledger.network == "eip155:84532"
@@ -429,6 +431,7 @@ def test_schema_v1_report_remains_readable_without_v2_fields() -> None:
             record.pop(field, None)
     contract = cast(dict[str, object], legacy["contract"])
     contract.pop("recipient", None)
+    contract.pop("max_timeout_seconds", None)
 
     restored = MachineReport.model_validate_json(json.dumps(legacy))
 

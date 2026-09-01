@@ -142,7 +142,14 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
     )
     assert result.exit_code == 1
     assert calls == ["check", "schema"]
+    assert "Rail: perflo" in result.stdout
+    assert "Version: unknown" in result.stdout
+    assert "Scheme: unknown" in result.stdout
+    assert "Network: tempo" in result.stdout
+    assert "Method: POST" in result.stdout
     assert "Body digest:" in result.stdout
+    assert "Payment terms digest:" in result.stdout
+    assert "Quoted price: 0.01 USDC" in result.stdout
     assert "Investigation budget:" in result.stdout
     assert "Context.dev calls: 1" in result.stdout
     assert "model requests: 4" in result.stdout

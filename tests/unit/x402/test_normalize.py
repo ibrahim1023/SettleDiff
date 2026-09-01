@@ -46,6 +46,7 @@ def test_normalize_payment_required_maps_exact_base_sepolia_usdc() -> None:
     assert contract.chain is None
     assert contract.network == "eip155:84532"
     assert contract.recipient == "0x1111111111111111111111111111111111111111"
+    assert contract.max_timeout_seconds == 300
     assert contract.asset_identity is not None
     assert contract.asset_identity.symbol == "USDC"
     assert contract.asset_identity.network == "eip155:84532"

@@ -27,6 +27,7 @@ from settlediff.application.auth import (
     ConsumedPaidAuthorization,
     PaidExecutionCapability,
     PaidExecutionRequest,
+    PaymentTerms,
 )
 from settlediff.application.budget import (
     InvestigationBudgetExceeded,
@@ -142,6 +143,7 @@ class RunTimeline:
 class LiveRunCommand:
     request: PaidExecutionRequest
     capability: PaidExecutionCapability
+    payment_terms: PaymentTerms | None = None
 
 
 @dataclass(frozen=True)
@@ -194,12 +196,19 @@ class LiveEvidenceCollector:
         self._telemetry = telemetry
         self._contract: EvidenceArtifact | None = None
         self._quote: Money | None = None
+        self._payment_terms: PaymentTerms | None = None
         self._schema: EvidenceArtifact | None = None
         self._execution: EvidenceArtifact | None = None
         self._activity: EvidenceArtifact | None = None
         self._context: EvidenceArtifact | None = None
         self._recovery: EvidenceArtifact | None = None
         self._transaction_reference: str | None = None
+
+    @property
+    def payment_terms(self) -> PaymentTerms:
+        if self._payment_terms is None:
+            raise RunTransitionError("payment terms are unavailable before a complete preflight")
+        return self._payment_terms
 
     @property
     def transaction_reference(self) -> str | None:
@@ -238,18 +247,34 @@ class LiveEvidenceCollector:
             adapter_id=self._adapter.adapter_id,
         )
         contract = normalize_contract(self._contract)
-        if contract.price is not None:
-            if contract.price.unit != request.budget.unit:
-                raise RunTransitionError(
-                    f"quote unit {contract.price.unit} does not match the authorized "
-                    f"budget unit {request.budget.unit}"
-                )
-            if not contract.price.is_within(request.budget):
-                raise RunTransitionError(
-                    f"quote {contract.price.amount} {contract.price.unit} exceeds the "
-                    f"authorized budget {request.budget.amount} {request.budget.unit}"
-                )
+        if contract.price is None:
+            raise RunTransitionError("payment terms require a quoted price before authorization")
+        if contract.price.unit != request.budget.unit:
+            raise RunTransitionError(
+                f"quote unit {contract.price.unit} does not match the authorized "
+                f"budget unit {request.budget.unit}"
+            )
+        if not contract.price.is_within(request.budget):
+            raise RunTransitionError(
+                f"quote {contract.price.amount} {contract.price.unit} exceeds the "
+                f"authorized budget {request.budget.amount} {request.budget.unit}"
+            )
         self._quote = contract.price
+        self._payment_terms = PaymentTerms(
+            adapter_id=self._adapter.adapter_id,
+            protocol_version=contract_evidence.protocol_version,
+            scheme=contract.scheme,
+            network=contract.network,
+            chain=contract.chain,
+            asset=contract.asset_identity,
+            asset_symbol=contract.asset,
+            recipient=contract.recipient,
+            quoted_price=contract.price,
+            max_timeout_seconds=contract.max_timeout_seconds,
+            resource_url=contract.url,
+            method=request.method,
+            body_digest=PaidExecutionCapability.body_digest_for(request.body),
+        )
         if contract.request_schema:
             self._schema = _artifact(
                 request.run_id,
@@ -286,6 +311,7 @@ class LiveEvidenceCollector:
             raise RunTransitionError(
                 "Payment-rail preflight did not capture a quote for this exact request"
             )
+        authorization.require_exact_payment_terms(self.payment_terms)
         execution_evidence = await self._adapter.execute_once(authorization, request, self._quote)
         self._execution = _adapter_artifact(
             request.run_id,
@@ -580,7 +606,9 @@ class RunInvestigation:
             with self._span(
                 "settlediff.authorize", {"run_id": run_id, "component": "authorization"}
             ):
-                authorization = await command.capability.consume(command.request)
+                authorization = await command.capability.consume(
+                    command.request, payment_terms=command.payment_terms
+                )
             await self._transition(timeline, RunState.EXECUTING, run_id)
             uncertain = False
             recovery: SubmissionRecovery | None = None

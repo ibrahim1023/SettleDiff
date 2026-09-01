@@ -82,6 +82,7 @@ def _bundle_payload(bundle: EvidenceBundle, *, include_integrity: bool) -> dict[
         if isinstance(contract_value, dict):
             contract = cast(dict[str, object], contract_value)
             contract.pop("recipient", None)
+            contract.pop("max_timeout_seconds", None)
     return payload
 
 

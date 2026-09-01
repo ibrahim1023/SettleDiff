@@ -4,7 +4,7 @@ These choices are intentionally unresolved. None blocks the documentation founda
 
 | Decision | Recommended default | Needed by |
 |---|---|---|
-| Live CLI confirmation behavior | Require an interactive confirmation showing target, canonical body digest, and budget. Add non-interactive authorization only when a concrete automation use case defines an equally explicit approval mechanism. | Implementation Task 10 |
+| Live CLI confirmation behavior | Interactive confirmation now shows target/resource, method, body and payment-terms digests, adapter/version, scheme, network/chain, asset, recipient, quote, and budget. Add non-interactive authorization only when a concrete automation use case defines an equally explicit approval mechanism. | Non-interactive post-MVP use case |
 | Local artifact retention | Keep reports until the developer deletes them, provide explicit per-run deletion, and do not collect raw sensitive payloads by default. Revisit time-based retention only if real usage requires it. | Implementation Task 11 |
 | Repository license | Choose the intended open-source or proprietary license before public launch; do not infer ownership terms. | Before external contributions or launch |
 | Hosted deployment target | Keep the MVP loopback-only. Choose hosting, authentication, retention, and secret management together in a new threat model and ADR. | Post-MVP deployment |
