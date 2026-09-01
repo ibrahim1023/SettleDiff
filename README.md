@@ -150,6 +150,12 @@ Every scenario replays deterministically with no credentials, external requests,
 | `recipient-diff` | recipient mismatch | `VERIFIED_WITH_WARNINGS` |
 | `missing-activity` | no reliable Activity match | `UNVERIFIABLE` |
 | `ambiguous-activity` | multiple plausible Activity matches | `UNVERIFIABLE` |
+| `x402-clean-success` | provider and independent Base Sepolia evidence agree | `VERIFIED` |
+| `x402-paid-failure` | x402 settlement confirmed, service returned HTTP 500 | `PAID_FAILURE` |
+| `x402-uncertain-submission` | possible transmission, no independent outcome | `UNVERIFIABLE` |
+| `x402-provider-success-independent-failure` | provider success contradicts reverted transaction | `UNVERIFIABLE` |
+| `x402-provider-failure-independent-confirmation` | provider failure contradicts confirmed transfer | `UNVERIFIABLE` |
+| `x402-wrong-{recipient,amount,asset,network}` | one canonical term differs | `VERIFIED_WITH_WARNINGS` |
 
 ## 60-second fixture demo
 
@@ -266,6 +272,7 @@ functional domain core and adapters around external systems:
 - `domain`: strict models, normalization, matching, checks, verdicts, and redaction;
 - `application`: live-run and fixture-replay use cases;
 - `perflo`: first paid-execution adapter — safe subprocess boundary and envelope parsing;
+- `x402`: strict v2 parsing, signer contract, bounded RPC, settlement and recovery evidence;
 - `agent`: PydanticAI investigator with typed, guarded tools;
 - `storage`: local SQLite reports and event timeline;
 - `api` and `ui`: FastAPI with server-rendered Jinja/HTMX;

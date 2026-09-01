@@ -1,0 +1,1 @@
+{"schema_version":1,"scenario":"x402-wrong-network","synthetic":true,"expected_verdict":"VERIFIED_WITH_WARNINGS","artifacts":["contract.json","execution.json","activity.json"]}

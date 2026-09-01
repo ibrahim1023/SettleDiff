@@ -1,0 +1,1 @@
+{"schema_version":1,"scenario":"x402-provider-failure-independent-confirmation","synthetic":true,"expected_verdict":"UNVERIFIABLE","artifacts":["contract.json","execution.json","receipt.json","activity.json"]}

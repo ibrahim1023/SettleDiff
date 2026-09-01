@@ -31,7 +31,18 @@ def test_complete_fixture_path_remains_offline(
     fixture_reports = tuple(
         (path, replay_fixture(path)) for path in sorted(Path("fixtures").iterdir()) if path.is_dir()
     )
-    assert len(fixture_reports) == 7
+    assert len(fixture_reports) == 16
+    assert {path.name for path, _report in fixture_reports} >= {
+        "x402-clean-success",
+        "x402-paid-failure",
+        "x402-uncertain-submission",
+        "x402-provider-success-independent-failure",
+        "x402-provider-failure-independent-confirmation",
+        "x402-wrong-recipient",
+        "x402-wrong-amount",
+        "x402-wrong-asset",
+        "x402-wrong-network",
+    }
 
     for fixture_path, report in fixture_reports:
         human = runner.invoke(

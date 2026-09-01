@@ -1,0 +1,1 @@
+{"schema_version":1,"scenario":"x402-paid-failure","synthetic":true,"expected_verdict":"PAID_FAILURE","artifacts":["contract.json","execution.json","receipt.json","activity.json"]}

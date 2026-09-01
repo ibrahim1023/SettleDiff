@@ -1,0 +1,1 @@
+{"schema_version":1,"scenario":"x402-uncertain-submission","synthetic":true,"expected_verdict":"UNVERIFIABLE","artifacts":["contract.json","execution.json","activity.json"]}

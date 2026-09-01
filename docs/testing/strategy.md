@@ -55,7 +55,7 @@ intent.json
 contract.json
 execution.json
 activity.json
-expected-report.json
+# optional receipt.json declared by manifest
 ```
 
 Optional artifacts such as `receipt.json` or `context-evidence.json` are declared by the manifest. Fixtures must use synthetic identifiers, fixed UTC timestamps, and no secrets. The sanitizer test rejects emails, likely API keys, unmasked addresses, private keys, and unexpected high-entropy strings.
@@ -70,6 +70,13 @@ Initial scenarios:
 - ambiguous Activity candidates;
 - payment failure;
 - malformed provider envelope preserved as unverifiable evidence.
+
+The x402 corpus adds complete schema-v2 canonical reports for clean success, confirmed
+settlement with service failure, uncertain submission, both directions of
+provider/independent settlement contradiction, and recipient/amount/asset/network
+differences. These are explicitly synthetic reports modeled from captured protocol
+shapes and controlled local outcomes; challenge-only wire payloads remain contract-test
+fixtures and are never padded with fabricated execution or ledger evidence.
 
 ## Agent-loop tests
 
