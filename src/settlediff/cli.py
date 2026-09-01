@@ -65,6 +65,7 @@ from settlediff.x402.adapter import X402Adapter
 from settlediff.x402.client import X402ClientError, X402ExternalClient
 from settlediff.x402.http import X402ResourceClient
 from settlediff.x402.rpc import X402RpcClient
+from settlediff.x402.urls import is_safe_x402_target
 
 
 class PaymentRail(StrEnum):
@@ -352,14 +353,21 @@ def run(
             raise ValueError("Perflo supports POST requests only")
         amount = Decimal(budget)
         parsed_url = urlparse(url)
-        if (
-            parsed_url.scheme != "https"
-            or not parsed_url.netloc
-            or parsed_url.username is not None
-            or parsed_url.password is not None
-            or parsed_url.fragment
-        ):
-            raise ValueError("url must be absolute HTTPS without credentials or fragment")
+        safe_url = (
+            is_safe_x402_target(url)
+            if rail is PaymentRail.X402
+            else (
+                parsed_url.scheme == "https"
+                and bool(parsed_url.netloc)
+                and parsed_url.username is None
+                and parsed_url.password is None
+                and not parsed_url.fragment
+            )
+        )
+        if not safe_url:
+            raise ValueError(
+                "url requires HTTPS, except loopback HTTP for x402, without credentials or fragment"
+            )
         if amount <= 0:
             raise ValueError("budget must be greater than zero")
     except (json.JSONDecodeError, InvalidOperation, ValueError) as error:

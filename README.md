@@ -183,7 +183,7 @@ the temporary default. Select x402 explicitly with `--rail x402 --allow-testnet`
 `SETTLEDIFF_X402_RPC_URL`, and `SETTLEDIFF_X402_TESTNET_ENABLED=true`. SettleDiff has no
 private-key setting: wallet authority belongs to the separately installed signer. GET uses
 `--method GET` with no body; POST requires `--body` and preserves the JSON value exactly.
-Both rails show the exact target/resource, method, canonical body digest, adapter,
+Remote targets require HTTPS; x402 alone permits HTTP on an IP/hostname proven to be loopback for the controlled local reference cycle. Both rails show the exact target/resource, method, canonical body digest, adapter,
 protocol version, scheme, network, asset, masked recipient, quote, payment-terms digest,
 and budget before the mandatory interactive authorization. Environment flags never
 bypass confirmation, and live/paid calls are never part of the default test suite.

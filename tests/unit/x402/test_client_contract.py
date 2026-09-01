@@ -89,6 +89,20 @@ def test_signer_request_rejects_unbound_or_unsupported_terms(
         ExternalSignerRequest.model_validate({**request().model_dump(), **updates})
 
 
+def test_signer_request_accepts_loopback_http_for_controlled_resource() -> None:
+    value = ExternalSignerRequest.model_validate(
+        {
+            **request().model_dump(),
+            "target": "http://127.0.0.1:4021/weather",
+            "method": "GET",
+            "body": None,
+            "body_digest": body_digest_for(None),
+        }
+    )
+
+    assert value.target == "http://127.0.0.1:4021/weather"
+
+
 def test_absent_body_has_one_canonical_digest() -> None:
     value = ExternalSignerRequest(
         run_id="syn_get",

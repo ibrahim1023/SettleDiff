@@ -58,6 +58,25 @@ async def test_resource_client_preserves_exact_method_body_and_timeout(
 
 
 @pytest.mark.asyncio
+async def test_resource_client_accepts_loopback_http_for_controlled_resource() -> None:
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(402, headers={"PAYMENT-REQUIRED": "syn_header"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = X402ResourceClient(http)
+        response = await client.challenge(
+            request().model_copy(update={"target": "http://127.0.0.1:4021/weather"})
+        )
+
+    assert response.status_code == 402
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "target",
     [

@@ -56,7 +56,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Once an external signer process launches, that client instance cannot launch again, including after timeout, overflow, malformed output, or another uncertain failure.
 - SettleDiff configuration contains only a signer command and RPC URL, never a wallet key; both fields are hidden from configuration representations, the potentially credential-bearing RPC URL uses `SecretStr`, secret-bearing command arguments are rejected, and no private-key setting exists.
 - x402 live composition requires explicit rail selection, environment and CLI testnet gates, and the same interactive exact-request authorization. No gate bypasses confirmation.
-- The resource client does not follow redirects. It repeats the unsigned challenge immediately before signing; pre-launch drift fails without signer invocation, while post-launch signer/provider contradictions preserve the transaction reference and force settlement unknown.
+- The resource client does not follow redirects. Remote targets require HTTPS; x402 permits HTTP only for parsed loopback hosts without credentials or fragments. It repeats the unsigned challenge immediately before signing; pre-launch drift fails without signer invocation, while post-launch signer/provider contradictions preserve the transaction reference and force settlement unknown.
 
 ### Data minimization
 

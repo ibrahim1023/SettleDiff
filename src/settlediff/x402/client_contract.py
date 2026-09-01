@@ -6,7 +6,6 @@ import hashlib
 import json
 from enum import StrEnum
 from typing import Annotated, Literal, Self, cast
-from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
@@ -20,6 +19,7 @@ from pydantic import (
 
 from settlediff.domain.models import NonEmptyStr
 from settlediff.domain.money import Money
+from settlediff.x402.urls import is_safe_x402_target
 
 Sha256Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 _FORBIDDEN_OUTPUT_KEYS = frozenset(
@@ -65,15 +65,10 @@ class ExternalSignerRequest(SignerContractModel):
     @field_validator("target")
     @classmethod
     def require_safe_target(cls, value: str) -> str:
-        parsed = urlsplit(value)
-        if (
-            parsed.scheme != "https"
-            or not parsed.netloc
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.fragment
-        ):
-            raise ValueError("signer target must be absolute HTTPS without credentials or fragment")
+        if not is_safe_x402_target(value):
+            raise ValueError(
+                "signer target requires HTTPS or loopback HTTP without credentials or fragment"
+            )
         return value
 
     @model_validator(mode="after")

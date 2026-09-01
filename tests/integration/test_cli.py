@@ -153,6 +153,24 @@ def test_show_renders_x402_adapter_and_separate_settlement_evidence(tmp_path: Pa
     assert "Payment rail: x402" in human_result.stdout
 
 
+def test_perflo_default_still_rejects_loopback_http() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--url",
+            "http://127.0.0.1:4021/weather",
+            "--body",
+            "{}",
+            "--budget",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "except loopback HTTP for x402" in result.stderr
+
+
 def test_live_run_rejects_invalid_json_before_any_adapter_call() -> None:
     result = runner.invoke(
         app, ["run", "--url", "https://example.invalid", "--body", "no", "--budget", "1"]
@@ -265,7 +283,7 @@ def test_x402_get_decline_preserves_method_and_absent_body_without_execution(
             "--method",
             "GET",
             "--url",
-            "https://example.invalid/paid",
+            "http://127.0.0.1:4021/weather",
             "--budget",
             "0.01",
         ],

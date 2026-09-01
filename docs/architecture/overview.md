@@ -112,7 +112,7 @@ Runs a narrow allowlist of Perflo CLI commands through argument-based subprocess
 
 ### x402 adapter
 
-Issues bounded unsigned GET/POST challenge requests without redirects, strictly parses x402 v2 exact/Base-Sepolia/test-USDC terms, revalidates them against the consumed capability, launches one independently owned signer process, normalizes provider settlement separately, and exposes bounded independent receipt/transfer evidence through the same application port.
+Issues bounded unsigned GET/POST challenge requests without redirects. Remote resources require HTTPS; HTTP is accepted only when URL parsing proves the host is loopback. It strictly parses x402 v2 exact/Base-Sepolia/test-USDC terms, revalidates them against the consumed capability, launches one independently owned signer process, normalizes provider settlement separately, and exposes bounded independent receipt/transfer evidence through the same application port.
 
 ### Investigation Agent
 

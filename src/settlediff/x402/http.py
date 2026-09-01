@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import Protocol, cast
-from urllib.parse import urlsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from settlediff.application.auth import PaidExecutionRequest
 from settlediff.domain.models import UtcDatetime
+from settlediff.x402.urls import is_safe_x402_target
 
 
 class X402ResourceError(ValueError):
@@ -46,16 +46,10 @@ class X402ResourceClient:
         self._max_response_bytes = max_response_bytes
 
     async def challenge(self, request: PaidExecutionRequest) -> X402ResourceResponse:
-        target = urlsplit(request.target)
-        if (
-            target.scheme != "https"
-            or not target.netloc
-            or target.username is not None
-            or target.password is not None
-            or target.fragment
-        ):
+        if not is_safe_x402_target(request.target):
             raise X402ResourceError(
-                "x402 resource target must be absolute HTTPS without credentials or fragment"
+                "x402 resource target requires HTTPS or loopback HTTP without "
+                "credentials or fragment"
             )
         try:
             response = await self._client.request(
