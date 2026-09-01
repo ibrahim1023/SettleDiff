@@ -138,6 +138,28 @@ async def test_confirmed_receipt_requires_exact_usdc_transfer_not_transaction_se
 
 
 @pytest.mark.asyncio
+async def test_unrelated_receipt_logs_do_not_create_transfer_ambiguity() -> None:
+    value = receipt()
+    logs = cast(list[JsonValue], value["logs"])
+    logs.insert(
+        0,
+        {
+            "address": "0x4444444444444444444444444444444444444444",
+            "topics": [TRANSFER_TOPIC, address_topic(PAYER), address_topic(requirement().pay_to)],
+            "data": "0x" + (1).to_bytes(32, "big").hex(),
+        },
+    )
+
+    ledger = await verify_exact_usdc_settlement(
+        FakeRpc(value), TX_HASH, requirement(), expected_payer=PAYER, observed_at=NOW
+    )
+
+    assert ledger is not None
+    assert ledger.status is LedgerStatus.CONFIRMED
+    assert ledger.amount == Money(amount=Decimal("1000"), unit="USDC", minor_units=6)
+
+
+@pytest.mark.asyncio
 async def test_reverted_receipt_records_failure_without_inventing_transfer() -> None:
     failed = receipt()
     failed["status"] = "0x0"

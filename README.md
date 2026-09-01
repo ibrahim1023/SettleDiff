@@ -131,8 +131,10 @@ installed signer owns key loading. The x402 adapter and explicit CLI composition
 implemented and tested offline: two unsigned challenges bracket authorization, the
 signer-returned challenge is checked against the selected terms, provider receipt stays
 separate from bounded read-only Base Sepolia verification, and the exact USDC transfer
-log—not receipt existence—establishes settlement. This path has not yet completed an
-authorized live testnet cycle. Submission recovery is
+log—not receipt existence—establishes settlement. One authorized `0.001 USDC` controlled
+Base Sepolia cycle completed with 12 passing checks and verdict `VERIFIED`; see the
+[x402 live-cycle report](docs/testing/x402-live-cycle.md). Validation against an unrelated
+public endpoint remains pending. Submission recovery is
 read-only: confirmed and reverted receipts both prove transmission, while missing,
 pending, malformed, or unavailable evidence remains unresolved. Only explicit
 pre-transmission proof can establish non-submission. Direct MPP clients and other payment rails remain

@@ -91,8 +91,9 @@ the read-only RPC verifier. It re-fetches the challenge immediately before signe
 pins requirement index zero in the signer contract, checks returned challenge terms after launch, and preserves structured uncertainty and
 transaction references. CLI composition requires explicit `--rail x402`, an environment
 testnet gate, a command-line testnet gate, and the ordinary interactive exact-request
-authorization. The adapter and composition are offline-tested but have not completed an
-authorized live testnet cycle; the signer implementation remains external.
+authorization. The adapter and composition are offline-tested and completed one controlled
+authorized Base Sepolia cycle; public-endpoint compatibility remains pending. The signer
+implementation remains independently owned and outside the tracked application.
 
 ## Components
 

@@ -148,6 +148,18 @@ def test_x402_provider_and_independent_settlement_remain_separate(
     assert report.ledger.status.value == independent_status
 
 
+def test_x402_clean_success_allows_provider_receipt_without_amount() -> None:
+    report = replay_fixture(FIXTURES / "x402-clean-success")
+
+    assert report.verdict is Verdict.VERIFIED
+    assert report.receipt is not None
+    assert report.receipt.amount is None
+    assert report.receipt.asset_identity is None
+    assert report.ledger is not None
+    assert report.ledger.amount is not None
+    assert str(report.ledger.amount.amount) == "0.001"
+
+
 def test_replay_includes_provider_receipt_when_declared(
     tmp_path: Path,
 ) -> None:
