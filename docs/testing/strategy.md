@@ -110,7 +110,13 @@ and mislabeled adapter/artifact evidence fails closed. Provider contract tests p
   persistence boundary;
 - the external signer client uses one shell-free invocation, bounded stdin/stdout/stderr,
   a controlled environment without wallet keys, and uncertainty-safe timeout, malformed,
-  secret-bearing, oversized, and post-launch failure behavior.
+  secret-bearing, oversized, and post-launch failure behavior;
+- x402 independent settlement requires the expected Base Sepolia chain ID and exactly
+  one matching USDC transfer log; receipt existence, facilitator transaction sender,
+  wrong token/payer/recipient/amount, malformed logs, and missing/pending receipts are
+  covered explicitly;
+- the RPC client permits only `eth_chainId` and `eth_getTransactionReceipt`, enforces
+  request/response limits, and does not retry or poll.
 
 ## Interface tests
 

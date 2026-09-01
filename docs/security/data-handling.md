@@ -50,6 +50,8 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Invoke an independently owned signer at most once through the versioned bounded JSON contract. SettleDiff passes a controlled environment that does not inherit private-key variables; the signer must obtain authority independently without returning it.
 - Reject oversized signer input before launch; treat timeout, malformed/secret-bearing output, output overflow, and non-proven post-launch failure as submission uncertainty.
 - A provider settlement response remains provider-asserted evidence and cannot replace independent settlement verification.
+- Independent x402 verification permits only `eth_chainId` and `eth_getTransactionReceipt`, with bounded request count and response size and no retry/poll loop.
+- Receipt success alone is insufficient: require the expected Base Sepolia chain plus exactly one matching USDC transfer event for token, payer when supplied, recipient, and amount. The facilitator transaction sender is not the payer.
 
 ### Data minimization
 

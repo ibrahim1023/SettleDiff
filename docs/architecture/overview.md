@@ -78,8 +78,11 @@ USDC normalization. It also defines the versioned request/result contract for an
 independently owned signer and a shell-free, one-shot, bounded subprocess client. The
 client launches with a controlled environment that does not inherit wallet keys; the
 external signer is responsible for acquiring signing authority without returning secret
-material. The production adapter, signer implementation, RPC verifier, and live CLI path
-are not implemented yet.
+material. Offline independent settlement verification uses a bounded read-only JSON-RPC
+port and requires the Base Sepolia chain ID plus exactly one matching USDC transfer event
+for the expected token, payer, recipient, and amount; the facilitator transaction sender
+is not treated as payer evidence. Live RPC configuration, the production x402 adapter,
+signer implementation, and live CLI path are not implemented yet.
 
 ## Components
 
