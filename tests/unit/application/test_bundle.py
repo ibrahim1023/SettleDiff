@@ -86,6 +86,9 @@ def test_export_load_verify_round_trip(tmp_path: Path) -> None:
         contextdev_api_path="/web/scrape/markdown",
         hyperfusion_model=None,
         perflo_cli_version=None,
+        payment_adapter_id=None,
+        x402_protocol_version=None,
+        x402_signer_schema_version=None,
     )
     assert all(artifact.redacted for artifact in loaded.artifacts)
     assert verify_bundle(loaded) == report
@@ -198,6 +201,9 @@ def test_verify_rejects_unredacted_artifact() -> None:
             contextdev_api_path="/web/scrape/markdown",
             hyperfusion_model=None,
             perflo_cli_version=None,
+            payment_adapter_id=None,
+            x402_protocol_version=None,
+            x402_signer_schema_version=None,
         ),
         integrity="0" * 64,
     )
@@ -258,6 +264,39 @@ def test_x402_report_round_trips_with_separate_settlement_evidence(tmp_path: Pat
     assert verified.ledger is not None
     assert verified.receipt.settlement_status.value == "settled"
     assert verified.ledger.status.value == "confirmed"
+    compatibility = export_bundle(repository, report.run_id).compatibility
+    assert compatibility.payment_adapter_id == "x402"
+    assert compatibility.x402_protocol_version == "2"
+    assert compatibility.x402_signer_schema_version == 1
+    repository.close()
+
+
+def test_current_bundle_reads_pre_x402_compatibility_metadata(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "x402.sqlite3")
+    report = replay_fixture(FIXTURES / "x402-clean-success").model_copy(
+        update={"adapter_id": "x402"}
+    )
+    repository.save(report)
+    payload = _json(export_bundle(repository, report.run_id))
+    compatibility = cast(dict[str, Any], payload["compatibility"])
+    for field in (
+        "payment_adapter_id",
+        "x402_protocol_version",
+        "x402_signer_schema_version",
+    ):
+        compatibility.pop(field, None)
+    unsigned = {key: value for key, value in payload.items() if key != "integrity"}
+    encoded = json.dumps(
+        unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    payload["integrity"] = sha256(encoded).hexdigest()
+
+    bundle = load_bundle(json.dumps(payload).encode())
+
+    assert bundle.compatibility.payment_adapter_id is None
+    assert bundle.compatibility.x402_protocol_version is None
+    assert bundle.compatibility.x402_signer_schema_version is None
+    assert verify_bundle(bundle) == report
     repository.close()
 
 

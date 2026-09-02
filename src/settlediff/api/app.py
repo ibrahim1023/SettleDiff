@@ -81,12 +81,14 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
     def diagnostics() -> str:
         return templates.get_template("diagnostics.html").render(
             version=__version__,
-            report_schema=1,
+            report_schema=2,
             database_schema=3,
             bundle_schema=2,
             contextdev_api_path=CONTEXTDEV_API_PATH,
             hyperfusion_model="Not recorded",
             perflo_version="Not recorded",
+            x402_protocol_version=2,
+            x402_signer_schema_version=1,
         )
 
     app.get("/diagnostics", response_class=HTMLResponse)(diagnostics)

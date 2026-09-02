@@ -31,6 +31,9 @@ class CompatibilityMetadata(BaseModel):
     contextdev_api_path: NonEmptyStr
     hyperfusion_model: NonEmptyStr | None
     perflo_cli_version: NonEmptyStr | None
+    payment_adapter_id: NonEmptyStr | None = None
+    x402_protocol_version: Literal["2"] | None = None
+    x402_signer_schema_version: Literal[1] | None = None
 
 
 class EvidenceBundle(BaseModel):
@@ -68,6 +71,14 @@ def _canonical_json(value: Mapping[str, object]) -> bytes:
 def _bundle_payload(bundle: EvidenceBundle, *, include_integrity: bool) -> dict[str, object]:
     exclude: set[str] = set() if include_integrity else {"integrity"}
     payload = cast(dict[str, object], bundle.model_dump(mode="json", exclude=exclude))
+    compatibility = cast(dict[str, object], payload["compatibility"])
+    for field in (
+        "payment_adapter_id",
+        "x402_protocol_version",
+        "x402_signer_schema_version",
+    ):
+        if field not in bundle.compatibility.model_fields_set:
+            compatibility.pop(field, None)
     report = cast(dict[str, object], payload["report"])
     if report["schema_version"] == 1:
         report.pop("receipt", None)
@@ -118,6 +129,9 @@ def export_bundle(repository: BundleRepository, run_id: str) -> EvidenceBundle:
             contextdev_api_path="/web/scrape/markdown",
             hyperfusion_model=None,
             perflo_cli_version=None,
+            payment_adapter_id=report.adapter_id,
+            x402_protocol_version="2" if report.adapter_id == "x402" else None,
+            x402_signer_schema_version=1 if report.adapter_id == "x402" else None,
         ),
         integrity="0" * 64,
     )

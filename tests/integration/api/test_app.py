@@ -61,10 +61,12 @@ def test_diagnostics_show_safe_contract_versions(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert "SettleDiff 0.1.0" in response.text
-    assert "Report schema" in response.text and ">1<" in response.text
+    assert "Report schema" in response.text and ">2<" in response.text
     assert "Database schema" in response.text and ">3<" in response.text
     assert "Bundle schema" in response.text and ">2<" in response.text
     assert "/web/scrape/markdown" in response.text
+    assert "x402 protocol" in response.text and ">2<" in response.text
+    assert "x402 signer schema" in response.text and ">1<" in response.text
     assert "Not recorded" in response.text
     repository.close()
 
