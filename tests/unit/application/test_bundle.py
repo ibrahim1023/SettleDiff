@@ -28,6 +28,7 @@ from settlediff.domain.models import (
     ExplanationSource,
     Verdict,
 )
+from settlediff.domain.redaction import redact_report
 from settlediff.storage.sqlite import SQLiteReportRepository
 
 FIXTURES = Path(__file__).parents[3] / "fixtures"
@@ -91,7 +92,7 @@ def test_export_load_verify_round_trip(tmp_path: Path) -> None:
         x402_signer_schema_version=None,
     )
     assert all(artifact.redacted for artifact in loaded.artifacts)
-    assert verify_bundle(loaded) == report
+    assert verify_bundle(loaded) == redact_report(report)
     repository.close()
 
 
@@ -258,7 +259,7 @@ def test_x402_report_round_trips_with_separate_settlement_evidence(tmp_path: Pat
         load_bundle(serialize_bundle(export_bundle(repository, report.run_id)))
     )
 
-    assert verified == report
+    assert verified == redact_report(report)
     assert verified.adapter_id == "x402"
     assert verified.receipt is not None
     assert verified.ledger is not None
@@ -310,7 +311,7 @@ def test_current_bundle_reads_pre_x402_compatibility_metadata(tmp_path: Path) ->
     assert bundle.compatibility.payment_adapter_id is None
     assert bundle.compatibility.x402_protocol_version is None
     assert bundle.compatibility.x402_signer_schema_version is None
-    assert verify_bundle(bundle) == report
+    assert verify_bundle(bundle) == redact_report(report)
     repository.close()
 
 
@@ -324,6 +325,6 @@ def test_verify_accepts_internally_consistent_unverifiable_fixture_report(
 
     verified = verify_bundle(export_bundle(repository, report.run_id))
 
-    assert verified == report
+    assert verified == redact_report(report)
     assert verified.verdict is Verdict.UNVERIFIABLE
     repository.close()

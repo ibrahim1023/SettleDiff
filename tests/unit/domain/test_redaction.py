@@ -97,6 +97,19 @@ def test_secret_like_keys_redact_non_string_values() -> None:
     }
 
 
+def test_absent_identifier_values_remain_absent() -> None:
+    artifact = EvidenceArtifact(
+        artifact_id="artifact_syn_absent",
+        artifact_type=ArtifactType.ACTIVITY,
+        source="synthetic_fixture",
+        collected_at=NOW,
+        redacted=False,
+        data={"transaction_id": None, "recipient": None},
+    )
+
+    assert redact_artifact(artifact).data == {"transaction_id": None, "recipient": None}
+
+
 def test_identifier_keys_redact_non_string_values() -> None:
     artifact = EvidenceArtifact(
         artifact_id="artifact_syn_003",

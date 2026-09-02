@@ -94,6 +94,8 @@ def redact_value(
     if normalized_key in SECRET_KEYS:
         return REDACTED
     if mask_keyed_identifiers and normalized_key in IDENTIFIER_KEYS:
+        if value is None:
+            return None
         return mask_identifier(value) if isinstance(value, str) else REDACTED
 
     if isinstance(value, dict):
@@ -122,5 +124,18 @@ def redact_artifact(artifact: EvidenceArtifact) -> EvidenceArtifact:
 def redact_report(report: MachineReport) -> MachineReport:
     """Redact secrets and embedded identifiers without changing deterministic results."""
     payload = cast(JsonValue, report.model_dump(mode="json"))
-    redacted = redact_value(payload, mask_keyed_identifiers=False)
+    redacted = redact_value(payload)
+    if isinstance(redacted, dict):
+        findings = redacted.get("findings")
+        if isinstance(findings, list):
+            for value in findings:
+                if not isinstance(value, dict):
+                    continue
+                check_id = value.get("check_id")
+                if not isinstance(check_id, str) or normalize_key(check_id) not in IDENTIFIER_KEYS:
+                    continue
+                for field in ("expected", "observed"):
+                    identifier = value.get(field)
+                    if isinstance(identifier, str):
+                        value[field] = mask_identifier(identifier)
     return MachineReport.model_validate_json(json.dumps(redacted), strict=True)

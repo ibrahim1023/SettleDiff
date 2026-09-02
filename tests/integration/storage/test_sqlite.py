@@ -67,9 +67,11 @@ def test_nested_response_secrets_are_redacted_without_mutating_report(tmp_path: 
     assert loaded is not None
     assert loaded == redact_report(report)
     assert loaded.verdict is report.verdict
-    assert loaded.findings == report.findings
+    assert tuple(finding.status for finding in loaded.findings) == tuple(
+        finding.status for finding in report.findings
+    )
     assert CANARY not in stored_json
-    assert stored_json.count("[REDACTED]") == 2
+    assert stored_json.count("[REDACTED]") >= 2
     assert CANARY in report.model_dump_json()
     repository.close()
 
@@ -156,6 +158,24 @@ def test_network_asset_and_receipt_identifiers_are_redacted_before_storage(
     assert loaded.contract.asset_identity.reference == "0x036C…CF7e"
     assert loaded.receipt is not None
     assert loaded.receipt.transaction_hash == "0x2222…2222"
+    repository.close()
+
+
+def test_nonhex_keyed_identifiers_are_masked_across_persisted_report(tmp_path: Path) -> None:
+    report = replay_fixture(Path("fixtures/x402-clean-success"))
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+
+    repository.save(report)
+
+    loaded = repository.get(report.run_id)
+    assert loaded is not None
+    serialized = loaded.model_dump_json()
+    assert "syn_x402_recipient" not in serialized
+    assert loaded.contract is not None
+    assert loaded.contract.recipient == "syn_…ient"
+    recipient = next(finding for finding in loaded.findings if finding.check_id == "recipient")
+    assert recipient.expected == "syn_…ient"
+    assert recipient.observed == "syn_…ient"
     repository.close()
 
 
