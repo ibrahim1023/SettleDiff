@@ -1276,7 +1276,7 @@ async def test_run_explains_only_after_machine_report_is_complete() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["raise", "contradict"])
+@pytest.mark.parametrize("failure", ["timeout", "contradict"])
 async def test_explanation_failure_returns_grounded_fallback(failure: str) -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
@@ -1300,8 +1300,8 @@ async def test_explanation_failure_returns_grounded_fallback(failure: str) -> No
     async def explain(
         _received_report: MachineReport, _artifact_ids: frozenset[str]
     ) -> ExplanationRecord:
-        if failure == "raise":
-            raise RuntimeError("synthetic provider failure")
+        if failure == "timeout":
+            raise TimeoutError("synthetic provider timeout")
         return ExplanationRecord(
             explanation=InvestigationExplanation(
                 run_id=report.run_id,
@@ -1321,7 +1321,7 @@ async def test_explanation_failure_returns_grounded_fallback(failure: str) -> No
 
     assert outcome.report is report
     assert outcome.explanation.source is ExplanationSource.FALLBACK
-    assert outcome.explanation.tool_calls == 0
+    assert outcome.explanation.tool_calls == (0 if failure == "timeout" else 1)
     assert outcome.explanation.explanation.deterministic_verdict is report.verdict
     assert outcome.explanation.explanation.finding_ids == tuple(
         finding.finding_id for finding in report.findings

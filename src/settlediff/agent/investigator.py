@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_ai import Agent, RunContext, UsageLimits
+from pydantic_ai.exceptions import AgentRunError
 from pydantic_ai.models import Model
 
 from settlediff.agent.grounding import (
@@ -144,7 +145,7 @@ async def investigate(
                     output_tokens_limit=INVESTIGATION_OUTPUT_TOKEN_LIMIT,
                 ),
             )
-    except (TimeoutError, RuntimeError):
+    except (TimeoutError, AgentRunError):
         return InvestigationResult(
             explanation=fallback_explanation(state.report, set(state.artifact_ids)),
             tool_calls=0,

@@ -750,13 +750,14 @@ class RunInvestigation:
         record: ExplanationRecord | None = None
         try:
             record = await self._explain(report, artifact_ids)
-            explanation = validate_explanation(record.explanation, report, set(artifact_ids))
             await self._consume_explanation_usage(report, record)
-        except (ExplanationGroundingError, RuntimeError, TimeoutError, ValueError):
+            explanation = validate_explanation(record.explanation, report, set(artifact_ids))
+        except (ExplanationGroundingError, InvestigationBudgetExceeded, TimeoutError):
             if record is None:
                 return fallback
             return fallback.model_copy(
                 update={
+                    "tool_calls": record.tool_calls,
                     "model_requests": record.model_requests,
                     "input_tokens": record.input_tokens,
                     "output_tokens": record.output_tokens,

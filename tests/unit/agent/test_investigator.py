@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models.test import TestModel
 
 from settlediff.agent.investigator import (
@@ -127,7 +128,7 @@ async def test_provider_exception_has_no_rejected_output() -> None:
     class FailingTestModel(TestModel):
         async def request(self, *args: object, **kwargs: object):
             del args, kwargs
-            raise RuntimeError("synthetic provider failure")
+            raise ModelAPIError("synthetic-model", "synthetic provider failure")
 
     report = replay_fixture(Path("fixtures/clean-success"))
     result = await investigate(
@@ -142,3 +143,19 @@ async def test_provider_exception_has_no_rejected_output() -> None:
     assert result.output_tokens == 0
     assert result.model_cost is None
     assert result.rejected_output is None
+
+
+@pytest.mark.asyncio
+async def test_untyped_runtime_error_is_not_hidden_by_fallback() -> None:
+    class BrokenTestModel(TestModel):
+        async def request(self, *args: object, **kwargs: object):
+            del args, kwargs
+            raise RuntimeError("synthetic programming defect")
+
+    report = replay_fixture(Path("fixtures/clean-success"))
+    with pytest.raises(RuntimeError, match="programming defect"):
+        await investigate(
+            InvestigationState(report=report, artifact_ids=frozenset()),
+            InvestigationDependencies(evidence, evidence, evidence),
+            BrokenTestModel(),
+        )
