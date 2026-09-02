@@ -83,6 +83,77 @@ def test_invalid_transition_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_authorization_failure_emits_refused_terminal_event() -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    request = PaidExecutionRequest(
+        run_id=report.run_id,
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+    capability = PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) - timedelta(seconds=1)
+    )
+    persisted: list[RunState] = []
+
+    async def execute(
+        _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
+    ) -> None:
+        raise AssertionError("refused authorization must not execute")
+
+    async def verify() -> MachineReport:
+        return report
+
+    async def persist(event: RunEvent) -> None:
+        persisted.append(event.state)
+
+    with pytest.raises(ValueError, match="expired"):
+        await RunInvestigation(execute, verify, persist).execute(
+            LiveRunCommand(request, capability)
+        )
+
+    assert persisted == [RunState.PREFLIGHT, RunState.REFUSED]
+
+
+@pytest.mark.asyncio
+async def test_execution_failure_emits_failed_terminal_event() -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    request = PaidExecutionRequest(
+        run_id=report.run_id,
+        target="https://example.invalid",
+        body={},
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+    capability = PaidExecutionCapability.issue(
+        request, expires_at=datetime.now(UTC) + timedelta(minutes=1)
+    )
+    persisted: list[RunState] = []
+
+    async def execute(
+        _authorization: ConsumedPaidAuthorization, _request: PaidExecutionRequest
+    ) -> None:
+        raise RuntimeError("synthetic execution failure")
+
+    async def verify() -> MachineReport:
+        return report
+
+    async def persist(event: RunEvent) -> None:
+        persisted.append(event.state)
+
+    with pytest.raises(RuntimeError, match="execution failure"):
+        await RunInvestigation(execute, verify, persist).execute(
+            LiveRunCommand(request, capability)
+        )
+
+    assert persisted == [
+        RunState.PREFLIGHT,
+        RunState.AUTHORIZED,
+        RunState.EXECUTING,
+        RunState.FAILED,
+    ]
+
+
+@pytest.mark.asyncio
 async def test_uncertain_execution_verifies_without_a_second_paid_attempt() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(

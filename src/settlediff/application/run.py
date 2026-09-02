@@ -24,6 +24,7 @@ from settlediff.agent.investigator import (
     INVESTIGATION_TOOL_CALL_LIMIT,
 )
 from settlediff.application.auth import (
+    AuthorizationError,
     ConsumedPaidAuthorization,
     PaidExecutionCapability,
     PaidExecutionRequest,
@@ -622,42 +623,53 @@ class RunInvestigation:
         with self._span("settlediff.run", {"run_id": run_id, "mode": "live"}):
             timeline = RunTimeline()
             await self._record(timeline.events[-1], run_id)
-            await self._transition(timeline, RunState.AUTHORIZED, run_id)
-            with self._span(
-                "settlediff.authorize", {"run_id": run_id, "component": "authorization"}
-            ):
-                authorization = await command.capability.consume(
-                    command.request, payment_terms=command.payment_terms
-                )
-            await self._transition(timeline, RunState.EXECUTING, run_id)
-            uncertain = False
-            recovery: SubmissionRecovery | None = None
             try:
                 with self._span(
-                    "settlediff.payment_rail.execute",
-                    {"run_id": run_id, "component": "payment_rail"},
+                    "settlediff.authorize", {"run_id": run_id, "component": "authorization"}
                 ):
-                    await self._execute_paid(authorization, command.request)
-            except SubmissionUncertainError:
-                uncertain = True
-                await self._transition(timeline, RunState.EVIDENCE_RECOVERY, run_id)
-                recovery = await self._recover_submission(run_id)
-            await self._transition(timeline, RunState.VERIFYING, run_id)
-            with self._span("settlediff.verify", {"run_id": run_id, "component": "domain"}):
-                report = await self._verify()
-            self._record_metrics(report)
-            await self._transition(timeline, RunState.EXPLAINING, run_id)
-            with self._span("settlediff.agent.explain", {"run_id": run_id, "component": "agent"}):
-                explanation = await self._explain_report(report)
-            self._record_explanation_metrics(explanation)
-            await self._transition(timeline, RunState.COMPLETE, run_id)
-            return InvestigationOutcome(
-                report=report,
-                explanation=explanation,
-                recovery=recovery,
-                events=timeline.events,
-                submission_uncertain=uncertain,
-            )
+                    authorization = await command.capability.consume(
+                        command.request, payment_terms=command.payment_terms
+                    )
+            except AuthorizationError:
+                await self._transition(timeline, RunState.REFUSED, run_id)
+                raise
+            await self._transition(timeline, RunState.AUTHORIZED, run_id)
+            try:
+                await self._transition(timeline, RunState.EXECUTING, run_id)
+                uncertain = False
+                recovery: SubmissionRecovery | None = None
+                try:
+                    with self._span(
+                        "settlediff.payment_rail.execute",
+                        {"run_id": run_id, "component": "payment_rail"},
+                    ):
+                        await self._execute_paid(authorization, command.request)
+                except SubmissionUncertainError:
+                    uncertain = True
+                    await self._transition(timeline, RunState.EVIDENCE_RECOVERY, run_id)
+                    recovery = await self._recover_submission(run_id)
+                await self._transition(timeline, RunState.VERIFYING, run_id)
+                with self._span("settlediff.verify", {"run_id": run_id, "component": "domain"}):
+                    report = await self._verify()
+                self._record_metrics(report)
+                await self._transition(timeline, RunState.EXPLAINING, run_id)
+                with self._span(
+                    "settlediff.agent.explain", {"run_id": run_id, "component": "agent"}
+                ):
+                    explanation = await self._explain_report(report)
+                self._record_explanation_metrics(explanation)
+                await self._transition(timeline, RunState.COMPLETE, run_id)
+                return InvestigationOutcome(
+                    report=report,
+                    explanation=explanation,
+                    recovery=recovery,
+                    events=timeline.events,
+                    submission_uncertain=uncertain,
+                )
+            except Exception:
+                if RunState.FAILED in _ALLOWED[timeline.state]:
+                    await self._transition(timeline, RunState.FAILED, run_id)
+                raise
 
     async def _transition(self, timeline: RunTimeline, state: RunState, run_id: str) -> None:
         await self._record(timeline.transition(state), run_id)
