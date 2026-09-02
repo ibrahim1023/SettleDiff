@@ -198,7 +198,7 @@ class PaidExecutionCapability:
         async with self._lock:
             if self._consumed:
                 raise AuthorizationError("authorization was already consumed")
-            if checked_at > self._expires_at:
+            if checked_at >= self._expires_at:
                 raise AuthorizationError("authorization expired")
             if request.run_id != self._run_id:
                 raise AuthorizationError("authorization does not cover this run")

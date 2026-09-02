@@ -89,11 +89,12 @@ async def test_mismatch_fails_without_consuming(override: dict[str, object], mes
 
 
 @pytest.mark.asyncio
-async def test_expired_authorization_fails_closed() -> None:
+@pytest.mark.parametrize("checked_at", [NOW + timedelta(minutes=5), NOW + timedelta(minutes=6)])
+async def test_expired_authorization_fails_closed(checked_at: datetime) -> None:
     authorized = capability()
 
     with pytest.raises(AuthorizationError, match="expired"):
-        await authorized.consume(request(), now=NOW + timedelta(minutes=6))
+        await authorized.consume(request(), now=checked_at)
 
 
 def test_canonical_body_digest_ignores_object_key_order() -> None:
