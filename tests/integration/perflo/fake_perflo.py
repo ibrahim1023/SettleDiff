@@ -20,22 +20,17 @@ def main() -> None:
         sys.stdout.write("x" * 4096)
     elif mode == "malformed":
         sys.stdout.write("not-json")
-    elif mode == "refusal":
-        sys.stdout.write(
-            json.dumps(
-                {
-                    "ok": False,
-                    "error": {
-                        "code": "GUARDRAIL_DENIED",
-                        "message": "synthetic refusal",
-                        "recoverable": False,
-                        "details": {"limit": "0.05"},
-                        "hint": "use a smaller synthetic amount",
-                        "submissionUncertain": False,
-                    },
-                }
-            )
-        )
+    elif mode in {"refusal", "uncertain", "unknown-certainty"}:
+        error: dict[str, object] = {
+            "code": "GUARDRAIL_DENIED" if mode == "refusal" else "UPSTREAM_UNAVAILABLE",
+            "message": "synthetic refusal" if mode == "refusal" else "synthetic uncertainty",
+            "recoverable": False,
+            "details": {"limit": "0.05"},
+            "hint": "use a smaller synthetic amount",
+        }
+        if mode != "unknown-certainty":
+            error["submissionUncertain"] = mode == "uncertain"
+        sys.stdout.write(json.dumps({"ok": False, "error": error}))
         raise SystemExit(1)
     else:
         sys.stderr.write("synthetic stderr")

@@ -152,6 +152,11 @@ class PerfloClient:
             raise PerfloClientError("Perflo read returned an invalid envelope") from error
 
         if isinstance(envelope, PerfloErrorEnvelope):
+            if mutation and envelope.error.submission_uncertain is not False:
+                raise PerfloMutationUncertainError(
+                    "Perflo mutation returned no proof of non-submission; "
+                    "verify status before retrying"
+                )
             raise PerfloCommandError(envelope.error)
         return envelope
 

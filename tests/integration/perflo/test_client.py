@@ -112,6 +112,16 @@ async def test_clean_refusal_preserves_typed_error_and_certainty() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["uncertain", "unknown-certainty"])
+async def test_mutation_error_without_explicit_non_submission_is_uncertain(mode: str) -> None:
+    request = paid_request()
+    authorization = await capability(request).consume(request, now=NOW)
+
+    with pytest.raises(PerfloMutationUncertainError):
+        await client(mode).execute(authorization, request, QUOTED_PRICE)
+
+
+@pytest.mark.asyncio
 async def test_timeout_is_uncertain_and_consumed_capability_cannot_retry(tmp_path: Path) -> None:
     request = paid_request()
     authorized = capability(request)
