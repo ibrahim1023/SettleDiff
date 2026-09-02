@@ -157,7 +157,7 @@ PREFLIGHT
   → COMPLETE
 ```
 
-Invalid transitions fail closed. Evidence recovery permits only status/activity inspection and never another paid execution. `REFUSED` and `FAILED` are reserved terminal states in the transition model; the current CLI reports pre-run refusal and propagated failures directly rather than persisting those states.
+Invalid transitions fail closed. Evidence recovery permits only status/activity inspection and never another paid execution. `RunInvestigation` emits `REFUSED` when capability consumption fails and `FAILED` when a post-authorization stage raises; configured event persistence receives those terminal events. Interactive CLI decline occurs before capability consumption and therefore remains a pre-run refusal.
 
 ## Data model principles
 
