@@ -135,6 +135,12 @@ def test_capability_rejects_payment_terms_inconsistent_with_request(
         )
 
 
+@pytest.mark.parametrize("amount", [Decimal("0"), Decimal("-0.01")])
+def test_payment_terms_reject_nonpositive_quote(amount: Decimal) -> None:
+    with pytest.raises(ValueError, match="positive"):
+        payment_terms(quoted_price=Money(amount=amount, unit="USDC"))
+
+
 def test_payment_terms_digest_is_canonical_and_covers_all_selected_terms() -> None:
     first = payment_terms()
     same = PaymentTerms.model_validate_json(first.model_dump_json())

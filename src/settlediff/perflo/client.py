@@ -77,6 +77,8 @@ class PerfloClient:
         quoted_price: Money,
     ) -> PerfloEnvelope:
         authorization.require_exact_request(request)
+        if quoted_price.amount <= 0:
+            raise ValueError("quote must be positive")
         if quoted_price.unit != request.budget.unit:
             raise ValueError(
                 f"quote unit {quoted_price.unit} does not match authorized budget unit "

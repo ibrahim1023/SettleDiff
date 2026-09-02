@@ -51,6 +51,8 @@ class PaymentTerms(BaseModel):
 
     @model_validator(mode="after")
     def require_consistent_asset(self) -> Self:
+        if self.quoted_price.amount <= 0:
+            raise ValueError("payment terms quote must be positive")
         if self.asset is not None:
             if self.network != self.asset.network:
                 raise ValueError("payment terms asset network must match the selected network")

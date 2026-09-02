@@ -79,6 +79,8 @@ async def test_arguments_are_preserved_without_shell_interpretation() -> None:
         Money(amount=Decimal("0.06"), unit="USDC"),
         Money(amount=Decimal("0.01"), unit="USD"),
         Money(amount=Decimal("0.0100001"), unit="USDC"),
+        Money(amount=Decimal("0"), unit="USDC"),
+        Money(amount=Decimal("-0.01"), unit="USDC"),
     ],
 )
 async def test_invalid_quote_fails_before_process_start(quoted_price: Money) -> None:
