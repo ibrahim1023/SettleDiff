@@ -152,7 +152,7 @@ Live tests are opt-in, and money-moving operations never run automatically in CI
 The first live paid cycle is recorded in
 [live-run-report-2026-08-21](live-run-report-2026-08-21.md); every materially new
 failure mode it exposed was distilled into a sanitized offline fixture (for example
-`fixtures/failed-broadcast/`). Raw live evidence bundles remain local and untracked. The first controlled x402 Base Sepolia cycle is recorded in [x402-live-cycle](x402-live-cycle.md); its provider-amount omission and unrelated receipt log were reduced to offline regressions. The separately authorized [public endpoint validation](x402-public-endpoint-validation.md) records GoPlausible compatibility and the mixed-network alternatives regression.
+`fixtures/failed-broadcast/`). Raw live evidence bundles remain local and untracked. The first controlled x402 Base Sepolia cycle is recorded in [x402-live-cycle](x402-live-cycle.md); its provider-amount omission and unrelated receipt log were reduced to offline regressions. The separately authorized [public endpoint validation](x402-public-endpoint-validation.md) records GoPlausible compatibility and the mixed-network alternatives regression. The opt-in [Context.dev compatibility record](contextdev-live-compatibility.md) establishes the strict positive Markdown scrape shape for one owner-approved public IANA claim; it made no payment or model call.
 
 ## Lessons from the first live cycle
 

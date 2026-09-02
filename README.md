@@ -260,16 +260,18 @@ documented `https://api.context.dev/v1/web/scrape/markdown` endpoint. The reques
 purchased service returns an HTTPS `status_url`. SettleDiff deterministically records source
 reachability and exact evidence presence; Context.dev cannot change findings or verdicts.
 
-The live Context.dev contract is skipped by default. An owner must export a valid
-`SETTLEDIFF_CONTEXTDEV_API_KEY` and supply both `SETTLEDIFF_LIVE_CONTEXTDEV_URL` and
-`SETTLEDIFF_LIVE_CONTEXTDEV_CLAIM`, then explicitly open the gate:
+The live Context.dev contract is skipped by default. An owner must configure a valid
+`SETTLEDIFF_CONTEXTDEV_API_KEY`, supply a safe public `SETTLEDIFF_LIVE_CONTEXTDEV_URL` and an exact
+claim known to be present as `SETTLEDIFF_LIVE_CONTEXTDEV_CLAIM`, then explicitly open the gate:
 
 ```bash
 SETTLEDIFF_LIVE_CONTEXTDEV=1 uv run pytest tests/contract/test_contextdev_live.py -m live_contextdev -q
 ```
 
 That test makes exactly one `ContextDevClient.verify` call and **consumes one Context.dev credit**.
-Do not run it as part of offline verification or without the owner's authorization and inputs.
+Do not run it as part of offline verification or without the owner's authorization and inputs. The
+[2026-09-02 live compatibility record](docs/testing/contextdev-live-compatibility.md) documents the
+observed positive response shape without retaining credentials or raw provider output.
 
 Set `SETTLEDIFF_OTLP_ENDPOINT` to export OpenTelemetry spans. Export is disabled by default.
 Prompts, request bodies, tool content, credentials, provider payloads, and local run IDs are not
