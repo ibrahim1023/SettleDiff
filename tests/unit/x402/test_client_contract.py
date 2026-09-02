@@ -20,6 +20,7 @@ BODY_DIGEST = hashlib.sha256(
     json.dumps(BODY, sort_keys=True, separators=(",", ":")).encode()
 ).hexdigest()
 TERMS_DIGEST = "a" * 64
+PAYER = "0x3333333333333333333333333333333333333333"
 
 
 def request() -> ExternalSignerRequest:
@@ -45,6 +46,7 @@ def result(**updates: object) -> ExternalSignerResult:
         "service_response": {"status": 200, "body": {"value": "synthetic"}},
         "payment_reference": "syn_payment",
         "transaction_reference": "syn_transaction",
+        "payer": PAYER,
         "notes": (),
     }
     values.update(updates)
@@ -54,7 +56,7 @@ def result(**updates: object) -> ExternalSignerResult:
 def test_signer_request_binds_body_and_selected_terms() -> None:
     value = request()
 
-    assert value.schema_version == 1
+    assert value.schema_version == 2
     assert value.adapter == "x402"
     assert value.x402_version == 2
     assert value.selected_requirement == 0
@@ -122,12 +124,18 @@ def test_absent_body_has_one_canonical_digest() -> None:
 def test_signer_result_is_strict_and_carries_no_payment_payload() -> None:
     value = result()
 
-    assert value.schema_version == 1
+    assert value.schema_version == 2
+    assert value.payer == PAYER
     assert value.submission_state is SignerSubmissionState.SUBMITTED_CONFIRMED
     assert not hasattr(value, "payment_payload")
     assert ExternalSignerResult.model_validate_json(value.model_dump_json()) == value
     with pytest.raises(ValidationError):
         ExternalSignerResult.model_validate({**value.model_dump(), "invented": True})
+
+
+def test_transaction_reference_requires_public_payer_attribution() -> None:
+    with pytest.raises(ValidationError, match="payer"):
+        result(payer=None)
 
 
 @pytest.mark.parametrize(

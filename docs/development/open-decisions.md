@@ -19,7 +19,7 @@ Resolved choices are recorded alongside the remaining gates so implemented testn
 | Decision | Accepted choice | Evidence |
 |---|---|---|
 | Live CLI confirmation | Display target/resource, method, body and payment-terms digests, adapter/version, scheme, network, asset, recipient, quote, timeout, and budget before consuming a one-use capability. | CLI contract and controlled/public x402 cycles |
-| x402 signer boundary | SettleDiff stores no wallet key. A separately installed signer owns authority and is invoked once through signer schema 1 with a controlled environment. | External signer contract and persistence scans |
+| x402 signer boundary | SettleDiff stores no wallet key. A separately installed signer owns authority and is invoked once through signer schema 2 with a controlled environment. | External signer contract and persistence scans |
 | First x402 network and asset | Support only x402 v2 `exact` on Base Sepolia (`eip155:84532`) canonical test USDC. Keep mainnet and alternative networks/assets unsupported. | Offline corpus, controlled cycle, public endpoint cycle |
 | Testnet facilitator compatibility | The official x402 testnet facilitator worked in the controlled and GoPlausible cycles. This is testnet evidence, not a production facilitator selection. | Sanitized live reports |
 | Context.dev live boundary | Require Context.dev configuration for live investigations and call it only for an eligible failed-service HTTPS status URL. Context evidence cannot decide financial truth. | Offline contracts and 2026-09-02 live compatibility record |

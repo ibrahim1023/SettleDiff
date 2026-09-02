@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from settlediff import __version__
+from settlediff.application.bundle import X402_PROTOCOL_VERSION, X402_SIGNER_SCHEMA_VERSION
 from settlediff.application.run import RunEvent, RunState
 from settlediff.contextdev.client import CONTEXTDEV_API_PATH
 from settlediff.domain.models import (
@@ -87,8 +88,8 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
             contextdev_api_path=CONTEXTDEV_API_PATH,
             hyperfusion_model="Not recorded",
             perflo_version="Not recorded",
-            x402_protocol_version=2,
-            x402_signer_schema_version=1,
+            x402_protocol_version=X402_PROTOCOL_VERSION,
+            x402_signer_schema_version=X402_SIGNER_SCHEMA_VERSION,
         )
 
     app.get("/diagnostics", response_class=HTMLResponse)(diagnostics)

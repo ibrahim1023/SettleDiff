@@ -90,6 +90,7 @@ def signer_result(
         service_response=SignerServiceResponse(status=200, body=None),
         payment_reference=None,
         transaction_reference=transaction_reference,
+        payer=PAYER if transaction_reference is not None else None,
         notes=(),
     )
 
@@ -158,6 +159,14 @@ async def test_unrelated_receipt_logs_do_not_create_transfer_ambiguity() -> None
     assert ledger is not None
     assert ledger.status is LedgerStatus.CONFIRMED
     assert ledger.amount == Money(amount=Decimal("1000"), unit="USDC", minor_units=6)
+
+
+@pytest.mark.asyncio
+async def test_confirmed_transfer_requires_expected_payer() -> None:
+    with pytest.raises(X402SettlementError, match="payer"):
+        await verify_exact_usdc_settlement(
+            FakeRpc(receipt()), TX_HASH, requirement(), expected_payer=None, observed_at=NOW
+        )
 
 
 @pytest.mark.asyncio

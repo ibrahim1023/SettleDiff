@@ -66,7 +66,7 @@ def test_diagnostics_show_safe_contract_versions(tmp_path: Path) -> None:
     assert "Bundle schema" in response.text and ">2<" in response.text
     assert "/web/scrape/markdown" in response.text
     assert "x402 protocol" in response.text and ">2<" in response.text
-    assert "x402 signer schema" in response.text and ">1<" in response.text
+    assert "<dt>x402 signer schema</dt><dd>2</dd>" in response.text
     assert "Not recorded" in response.text
     repository.close()
 

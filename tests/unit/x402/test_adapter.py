@@ -160,6 +160,7 @@ def signer_result(
         service_response=SignerServiceResponse(status=200, body={"result": "synthetic"}),
         payment_reference="syn_x402_payment",
         transaction_reference=TX_HASH,
+        payer=PAYER,
         notes=(),
     )
 
@@ -267,6 +268,26 @@ async def test_signer_returned_challenge_drift_is_submission_uncertain() -> None
     assert executed.provider_receipt is None
     assert cast(dict[str, JsonValue], executed.data)["settlement_status"] == "unknown"
     assert len(signer.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_and_signer_payer_mismatch_is_submission_uncertain() -> None:
+    resource = FakeResource(response(required_header()), response(required_header()))
+    result = signer_result().model_copy(
+        update={"payer": "0x4444444444444444444444444444444444444444"}
+    )
+    signer = FakeSigner(result)
+    adapter = X402Adapter(resource, signer, FakeRpc(receipt()))
+    value = request()
+    contract = ExpectedContract.model_validate_json(json.dumps((await adapter.inspect(value)).data))
+
+    executed = await adapter.execute_once(
+        await authorization(contract, value), value, cast(Money, contract.price)
+    )
+
+    assert executed.submission_uncertain is True
+    assert executed.provider_receipt is None
+    assert cast(dict[str, JsonValue], executed.data)["settlement_status"] == "unknown"
 
 
 @pytest.mark.asyncio

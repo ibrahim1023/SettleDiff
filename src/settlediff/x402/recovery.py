@@ -211,6 +211,8 @@ async def verify_exact_usdc_settlement(
         )
     if status != "0x1":
         raise X402SettlementError("transaction receipt status is malformed")
+    if expected_payer is None:
+        raise X402SettlementError("expected payer is required for confirmed settlement")
     logs_value = receipt.get("logs")
     if not isinstance(logs_value, list):
         raise X402SettlementError("transaction receipt logs must be an array")
@@ -241,7 +243,7 @@ async def verify_exact_usdc_settlement(
     topics = cast(list[JsonValue], transfer["topics"])
     payer = _topic_address(topics[1], "payer")
     recipient = _topic_address(topics[2], "recipient")
-    if expected_payer is not None and payer.casefold() != expected_payer.casefold():
+    if payer.casefold() != expected_payer.casefold():
         raise X402SettlementError("USDC transfer payer does not match provider evidence")
     if recipient.casefold() != requirement.pay_to.casefold():
         raise X402SettlementError("USDC transfer recipient does not match payment terms")

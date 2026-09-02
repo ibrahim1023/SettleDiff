@@ -18,7 +18,7 @@ from settlediff.domain.verdict import derive_verdict
 Sha256Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 DATABASE_SCHEMA_VERSION = 3
 X402_PROTOCOL_VERSION = "2"
-X402_SIGNER_SCHEMA_VERSION = 1
+X402_SIGNER_SCHEMA_VERSION = 2
 
 
 class BundleError(ValueError):
@@ -36,7 +36,7 @@ class CompatibilityMetadata(BaseModel):
     perflo_cli_version: NonEmptyStr | None
     payment_adapter_id: NonEmptyStr | None = None
     x402_protocol_version: Literal["2"] | None = None
-    x402_signer_schema_version: Literal[1] | None = None
+    x402_signer_schema_version: Literal[2] | None = None
 
 
 class EvidenceBundle(BaseModel):

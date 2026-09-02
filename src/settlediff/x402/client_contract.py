@@ -22,6 +22,7 @@ from settlediff.domain.money import Money
 from settlediff.x402.urls import is_safe_x402_target
 
 Sha256Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+EvmAddress = Annotated[str, StringConstraints(pattern=r"^0x[0-9a-fA-F]{40}$")]
 _FORBIDDEN_OUTPUT_KEYS = frozenset(
     {
         "authorization",
@@ -48,7 +49,7 @@ class SignerContractModel(BaseModel):
 
 
 class ExternalSignerRequest(SignerContractModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     adapter: Literal["x402"] = "x402"
     run_id: NonEmptyStr
     x402_version: Literal[2] = 2
@@ -86,7 +87,7 @@ class SignerServiceResponse(SignerContractModel):
 
 
 class ExternalSignerResult(SignerContractModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     adapter: Literal["x402"]
     submission_state: SignerSubmissionState
     challenge: dict[str, JsonValue]
@@ -94,6 +95,7 @@ class ExternalSignerResult(SignerContractModel):
     service_response: SignerServiceResponse
     payment_reference: NonEmptyStr | None
     transaction_reference: NonEmptyStr | None
+    payer: EvmAddress | None
     notes: tuple[str, ...]
 
     @model_validator(mode="after")
@@ -105,6 +107,8 @@ class ExternalSignerResult(SignerContractModel):
             self.provider_settlement is None or self.transaction_reference is None
         ):
             raise ValueError("confirmed submission requires settlement and transaction evidence")
+        if self.transaction_reference is not None and self.payer is None:
+            raise ValueError("transaction evidence requires public payer attribution")
         if self.submission_state is SignerSubmissionState.NOT_SUBMITTED and (
             self.provider_settlement is not None or self.transaction_reference is not None
         ):

@@ -122,7 +122,7 @@ class X402Adapter:
                 result,
                 self._rpc,
                 requirement,
-                expected_payer=None,
+                expected_payer=result.payer,
                 observed_at=observed.observed_at,
             )
             execution = _execution(
@@ -139,11 +139,7 @@ class X402Adapter:
             result,
             self._rpc,
             returned_requirement,
-            expected_payer=(
-                _provider_settlement(result).payer
-                if result.provider_settlement is not None
-                else None
-            ),
+            expected_payer=result.payer,
             observed_at=observed.observed_at,
         )
         execution = _execution(
@@ -248,6 +244,12 @@ class X402Adapter:
                 and settlement.transaction != result.transaction_reference
             ):
                 raise ValueError("provider and signer transaction references differ")
+            if (
+                result.payer is None
+                or settlement.payer is None
+                or settlement.payer.casefold() != result.payer.casefold()
+            ):
+                raise ValueError("provider and signer payer references differ")
             return normalize_payment_response(settlement, requirement, issued_at=observed_at)
         except (ValidationError, ValueError) as error:
             raise X402SubmissionUncertainError(

@@ -268,7 +268,7 @@ def test_x402_report_round_trips_with_separate_settlement_evidence(tmp_path: Pat
     compatibility = export_bundle(repository, report.run_id).compatibility
     assert compatibility.payment_adapter_id == "x402"
     assert compatibility.x402_protocol_version == "2"
-    assert compatibility.x402_signer_schema_version == 1
+    assert compatibility.x402_signer_schema_version == 2
     repository.close()
 
 

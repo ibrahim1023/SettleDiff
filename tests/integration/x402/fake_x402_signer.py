@@ -25,7 +25,7 @@ if mode in {"oversized", "oversized-sleep"}:
     raise SystemExit(0)
 
 result: dict[str, object] = {
-    "schema_version": 1,
+    "schema_version": 2,
     "adapter": "x402",
     "submission_state": "submitted_confirmed",
     "challenge": {"x402Version": 2},
@@ -39,6 +39,7 @@ result: dict[str, object] = {
     },
     "payment_reference": "syn_payment",
     "transaction_reference": "syn_transaction",
+    "payer": "0x3333333333333333333333333333333333333333",
     "notes": [],
 }
 if mode == "pipeline":
