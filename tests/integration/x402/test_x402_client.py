@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import sys
 from decimal import Decimal
@@ -114,6 +115,20 @@ async def test_oversized_input_is_rejected_before_signer_launch(tmp_path: Path) 
 
     assert error.value.submission_uncertain is False
     assert not count_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_cancellation_after_signer_launch_is_uncertain(tmp_path: Path) -> None:
+    count_path = tmp_path / "count"
+    signer = client("timeout", count_path)
+    task = asyncio.create_task(signer.execute_once(request()))
+    async with asyncio.timeout(1):
+        while not count_path.exists():
+            await asyncio.sleep(0.01)
+    task.cancel()
+
+    with pytest.raises(X402SubmissionUncertainError):
+        await task
 
 
 @pytest.mark.asyncio

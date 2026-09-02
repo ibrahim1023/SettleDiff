@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -135,6 +136,22 @@ async def test_timeout_is_uncertain_and_consumed_capability_cannot_retry(tmp_pat
         await authorized.consume(request, now=NOW)
 
     assert counter.read_text() == "1"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_after_mutation_launch_is_uncertain(tmp_path: Path) -> None:
+    request = paid_request()
+    counter = tmp_path / "count.txt"
+    paid_client = client("count-sleep", str(counter))
+    authorization = await capability(request).consume(request, now=NOW)
+    task = asyncio.create_task(paid_client.execute(authorization, request, QUOTED_PRICE))
+    async with asyncio.timeout(1):
+        while not counter.exists():
+            await asyncio.sleep(0.01)
+    task.cancel()
+
+    with pytest.raises(PerfloMutationUncertainError):
+        await task
 
 
 @pytest.mark.asyncio

@@ -63,6 +63,11 @@ class X402ExternalClient:
                 process.communicate(input=encoded_request),
                 timeout=self._timeout_seconds,
             )
+        except asyncio.CancelledError as error:
+            await self._terminate(process)
+            raise X402SubmissionUncertainError(
+                "x402 signer was cancelled after launch; perform read-only recovery"
+            ) from error
         except TimeoutError as error:
             await self._terminate(process)
             raise X402SubmissionUncertainError(

@@ -122,6 +122,14 @@ class PerfloClient:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=self._timeout_seconds
             )
+        except asyncio.CancelledError as error:
+            await self._terminate(process)
+            if mutation:
+                raise PerfloMutationUncertainError(
+                    "Perflo mutation was cancelled after launch; "
+                    "verify status before any new attempt"
+                ) from error
+            raise
         except TimeoutError as error:
             await self._terminate(process)
             if mutation:
