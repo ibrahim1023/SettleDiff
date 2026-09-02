@@ -420,7 +420,11 @@ async def test_collector_empty_activity_history_does_not_prove_non_submission() 
 
 
 @pytest.mark.asyncio
-async def test_live_preflight_accepts_current_perflo_contract_envelope() -> None:
+@pytest.mark.parametrize(
+    "request_schema",
+    [{}, '{"method":"POST","body":[{"name":"query","type":"string"}]}'],
+)
+async def test_live_preflight_accepts_embedded_schema(request_schema: JsonValue) -> None:
     request = PaidExecutionRequest(
         run_id="syn_current_contract",
         target="https://example.invalid/search",
@@ -433,7 +437,7 @@ async def test_live_preflight_accepts_current_perflo_contract_envelope() -> None
         "found": True,
         "method": "POST",
         "priceMinor": "10000",
-        "requestSchema": '{"method":"POST","body":[{"name":"query","type":"string"}]}',
+        "requestSchema": request_schema,
         "source": "curated",
         "url": request.target,
     }

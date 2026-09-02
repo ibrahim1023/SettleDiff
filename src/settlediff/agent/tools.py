@@ -54,7 +54,8 @@ def build_investigation_dependencies(
 
     async def get_schema() -> EvidenceSummary:
         artifact = by_source.get("perflo.schema")
-        schema = report.contract.request_schema if report.contract is not None else {}
+        schema = report.contract.request_schema if report.contract is not None else None
+        schema = schema or {}
         fields = tuple(sorted(redact_embedded_identifiers(key) for key in schema))[:20]
         summary = f"request schema fields: {', '.join(fields) if fields else 'none'}"
         return EvidenceSummary(

@@ -122,7 +122,7 @@ class ExpectedContract(CanonicalModel):
     asset: NonEmptyStr | None
     protocol: NonEmptyStr | None
     chain: NonEmptyStr | None
-    request_schema: dict[str, JsonValue]
+    request_schema: dict[str, JsonValue] | None = None
     scheme: NonEmptyStr | None = None
     network: Caip2Network | None = None
     asset_identity: AssetIdentity | None = None

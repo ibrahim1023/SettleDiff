@@ -51,7 +51,7 @@ def normalize_contract(raw: EvidenceArtifact) -> ExpectedContract:
         asset=_normalized_name(data, raw, "asset", _RECOGNIZED_ASSETS, str.upper, notes),
         protocol=_normalized_protocol(data, raw),
         chain=_normalized_name(data, raw, "chain", _RECOGNIZED_CHAINS, str.lower, notes),
-        request_schema=_required_schema(data, raw),
+        request_schema=_optional_schema(data, raw),
         scheme=_optional_string(data, raw, "scheme"),
         network=_optional_network(data, raw),
         asset_identity=_optional_asset_identity(data, raw),
@@ -292,8 +292,12 @@ def _optional_asset_identity(
         ) from error
 
 
-def _required_schema(data: dict[str, JsonValue], raw: EvidenceArtifact) -> dict[str, JsonValue]:
+def _optional_schema(
+    data: dict[str, JsonValue], raw: EvidenceArtifact
+) -> dict[str, JsonValue] | None:
     value = _field(data, raw, "request_schema")
+    if value is None:
+        return None
     if isinstance(value, dict):
         return cast(dict[str, JsonValue], value)
     if isinstance(value, str):
@@ -301,11 +305,11 @@ def _required_schema(data: dict[str, JsonValue], raw: EvidenceArtifact) -> dict[
             parsed = json.loads(value)
         except json.JSONDecodeError as error:
             raise ArtifactParseError(
-                raw.artifact_id, "data.request_schema", "required JSON object"
+                raw.artifact_id, "data.request_schema", "JSON object or null"
             ) from error
         if isinstance(parsed, dict):
             return cast(dict[str, JsonValue], parsed)
-    raise ArtifactParseError(raw.artifact_id, "data.request_schema", "required JSON object")
+    raise ArtifactParseError(raw.artifact_id, "data.request_schema", "JSON object or null")
 
 
 def _optional_json(

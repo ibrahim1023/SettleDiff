@@ -283,7 +283,7 @@ class LiveEvidenceCollector:
             method=request.method,
             body_digest=PaidExecutionCapability.body_digest_for(request.body),
         )
-        if contract.request_schema:
+        if contract.request_schema is not None:
             self._schema = _artifact(
                 request.run_id,
                 ArtifactType.CONTEXT_EVIDENCE,
