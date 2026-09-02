@@ -120,6 +120,11 @@ def test_metric_canary_is_rejected_without_dropping_useful_counters() -> None:
 
     telemetry.counter("settlediff.runs", {"mode": "replay", "verdict": "VERIFIED"})
     telemetry.counter("settlediff.checks", {"check_name": "chain", "check_status": "PASS"})
+    telemetry.counter("settlediff.checks", {"check_name": "network", "check_status": "PASS"})
+    telemetry.counter(
+        "settlediff.checks", {"check_name": "asset_identity", "check_status": "PASS"}
+    )
+    telemetry.component_duration(1, "payment_rail")
     with pytest.raises(ValueError, match="bounded enum"):
         telemetry.counter("settlediff.runs", {"mode": SecretStr(CANARY), "verdict": "VERIFIED"})
 
@@ -129,6 +134,9 @@ def test_metric_canary_is_rejected_without_dropping_useful_counters() -> None:
     assert "settlediff.checks" in exported
     assert "replay" in exported
     assert "chain" in exported
+    assert "network" in exported
+    assert "asset_identity" in exported
+    assert "payment_rail" in exported
     telemetry.shutdown()
 
 
