@@ -92,8 +92,11 @@ pins requirement index zero in the signer contract, checks returned challenge te
 transaction references. CLI composition requires explicit `--rail x402`, an environment
 testnet gate, a command-line testnet gate, and the ordinary interactive exact-request
 authorization. The adapter and composition are offline-tested and completed one controlled
-authorized Base Sepolia cycle; public-endpoint compatibility remains pending. The signer
-implementation remains independently owned and outside the tracked application.
+authorized Base Sepolia cycle and one independently operated GoPlausible test endpoint
+cycle. The public challenge demonstrated that bounded unsupported alternatives may follow
+a strict supported primary requirement; selection remains pinned to index zero, and an
+unsupported primary still fails closed. The signer implementation remains independently
+owned and outside the tracked application.
 
 ## Components
 

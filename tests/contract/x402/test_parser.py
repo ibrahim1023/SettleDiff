@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from settlediff.x402.models import AlternativePaymentRequirements, PaymentRequirements
 from settlediff.x402.parser import (
     X402ProtocolError,
     parse_payment_required,
@@ -30,22 +31,34 @@ def challenge() -> dict[str, Any]:
 def test_parse_captured_payment_required_header() -> None:
     parsed = parse_payment_required(encoded(challenge()))
 
+    requirement = parsed.selected_requirement()
     assert parsed.x402_version == 2
     assert parsed.resource.url == "http://127.0.0.1:4021/weather"
-    assert parsed.accepts[0].scheme == "exact"
-    assert parsed.accepts[0].network == "eip155:84532"
-    assert parsed.accepts[0].amount == "1000"
-    assert parsed.accepts[0].asset == BASE_SEPOLIA_USDC
-    assert parsed.accepts[0].pay_to == SYNTHETIC_RECIPIENT
-    assert parsed.accepts[0].extra.asset_transfer_method == "eip3009"
+    assert requirement.scheme == "exact"
+    assert requirement.network == "eip155:84532"
+    assert requirement.amount == "1000"
+    assert requirement.asset == BASE_SEPOLIA_USDC
+    assert requirement.pay_to == SYNTHETIC_RECIPIENT
+    assert requirement.extra.asset_transfer_method == "eip3009"
+
+
+def test_parse_preserves_bounded_unsupported_alternatives_after_supported_primary() -> None:
+    payload = json.loads((FIXTURES / "payment-required-multi-network-v2.json").read_text())
+
+    parsed = parse_payment_required(encoded(payload))
+
+    assert len(parsed.accepts) == 3
+    assert isinstance(parsed.accepts[0], PaymentRequirements)
+    assert isinstance(parsed.accepts[1], AlternativePaymentRequirements)
+    assert isinstance(parsed.accepts[2], AlternativePaymentRequirements)
+    assert parsed.accepts[1].network.startswith("algorand:")
+    assert parsed.accepts[2].network.startswith("solana:")
 
 
 @pytest.mark.parametrize(
     ("case", "message"),
     [
         ("version", "x402Version"),
-        ("scheme", "scheme"),
-        ("network", "network"),
         ("missing_pay_to", "payTo"),
         ("invalid_pay_to", "payTo"),
         ("amount", "amount"),
@@ -60,10 +73,6 @@ def test_parse_payment_required_rejects_unsupported_or_malformed_fields(
     requirement = payload["accepts"][0]
     if case == "version":
         payload["x402Version"] = 1
-    elif case == "scheme":
-        requirement["scheme"] = "upto"
-    elif case == "network":
-        requirement["network"] = "eip155:8453"
     elif case == "missing_pay_to":
         requirement.pop("payTo")
     elif case == "invalid_pay_to":

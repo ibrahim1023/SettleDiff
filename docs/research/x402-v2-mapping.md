@@ -18,7 +18,7 @@ The initial request returned HTTP 402 with `PAYMENT-REQUIRED`. No
 The receiving address was synthetic. Raw headers and decoded capture remain under
 ignored `.local/x402-captures/` and are not published.
 
-This is reference-protocol evidence, not external-vendor compatibility evidence.
+The later GoPlausible public-endpoint cycle established one external compatibility case: a strict supported Base Sepolia requirement at index 0 may be followed by bounded unsupported network alternatives. Selection remains pinned to index 0, and an unsupported primary requirement fails closed.
 
 ## Evidence classification
 

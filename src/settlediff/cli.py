@@ -56,7 +56,6 @@ from settlediff.domain.models import (
     MachineReport,
 )
 from settlediff.domain.money import Money
-from settlediff.domain.redaction import mask_identifier
 from settlediff.perflo.adapter import PerfloAdapter
 from settlediff.perflo.client import PerfloClient, PerfloClientError
 from settlediff.storage.sqlite import SQLiteReportRepository
@@ -218,8 +217,12 @@ async def _execute_live_run(
         )
         identity = payment_terms.asset
         asset_label = identity.symbol if identity is not None else payment_terms.asset_symbol
-        recipient_label = (
-            mask_identifier(payment_terms.recipient) if payment_terms.recipient else "unknown"
+        recipient_label = payment_terms.recipient or "unknown"
+        asset_reference = identity.reference if identity is not None else "unknown"
+        timeout_label = (
+            f"{payment_terms.max_timeout_seconds} seconds"
+            if payment_terms.max_timeout_seconds is not None
+            else "unknown"
         )
         typer.echo(
             f"Rail: {payment_terms.adapter_id}\n"
@@ -235,7 +238,9 @@ async def _execute_live_run(
             f"{payment_terms.quoted_price.unit}\n"
             f"Budget: {request.budget.amount} {request.budget.unit}\n"
             f"Asset: {asset_label or 'unknown'}\n"
+            f"Asset reference: {asset_reference}\n"
             f"Recipient: {recipient_label}\n"
+            f"Maximum timeout: {timeout_label}\n"
             f"External signer: "
             f"{'configured' if payment_terms.adapter_id == 'x402' else 'not applicable'}"
         )

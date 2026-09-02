@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal, Self, cast
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -20,6 +20,9 @@ from settlediff.domain.models import Caip2Network, NonEmptyStr
 EvmAddress = Annotated[str, StringConstraints(pattern=r"^0x[0-9a-fA-F]{40}$")]
 TransactionHash = Annotated[str, StringConstraints(pattern=r"^0x[0-9a-fA-F]{64}$")]
 AtomicAmount = Annotated[str, StringConstraints(pattern=r"^[0-9]+$")]
+BoundedExternalStr = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)
+]
 
 
 class X402ExternalModel(BaseModel):
@@ -71,12 +74,57 @@ class PaymentRequirements(X402ExternalModel):
         return value
 
 
+class AlternativePaymentRequirements(X402ExternalModel):
+    scheme: BoundedExternalStr
+    network: BoundedExternalStr
+    amount: AtomicAmount
+    asset: BoundedExternalStr
+    pay_to: BoundedExternalStr = Field(alias="payTo")
+    max_timeout_seconds: int = Field(alias="maxTimeoutSeconds", gt=0, le=86_400)
+    extra: dict[str, JsonValue]
+
+    @field_validator("amount")
+    @classmethod
+    def require_positive_amount(cls, value: str) -> str:
+        if int(value) <= 0:
+            raise ValueError("amount must be positive")
+        return value
+
+
 class PaymentRequired(X402ExternalModel):
     x402_version: Literal[2] = Field(alias="x402Version")
     error: str | None = None
     resource: ResourceInfo
-    accepts: tuple[PaymentRequirements, ...] = Field(min_length=1)
+    accepts: tuple[PaymentRequirements | AlternativePaymentRequirements, ...] = Field(min_length=1)
     extensions: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator("accepts", mode="before")
+    @classmethod
+    def classify_requirements(cls, value: object) -> object:
+        if not isinstance(value, (list, tuple)):
+            return value
+        classified: list[PaymentRequirements | AlternativePaymentRequirements] = []
+        items = cast(list[object] | tuple[object, ...], value)
+        for item in items:
+            if not isinstance(item, dict):
+                return cast(object, value)
+            mapping = cast(dict[str, object], item)
+            model = (
+                PaymentRequirements
+                if mapping.get("scheme") == "exact" and mapping.get("network") == "eip155:84532"
+                else AlternativePaymentRequirements
+            )
+            classified.append(model.model_validate(mapping))
+        return tuple(classified)
+
+    def selected_requirement(self, index: int = 0) -> PaymentRequirements:
+        try:
+            requirement = self.accepts[index]
+        except IndexError as error:
+            raise ValueError("selected payment requirement is unavailable") from error
+        if not isinstance(requirement, PaymentRequirements):
+            raise ValueError("selected payment requirement is unsupported")
+        return requirement
 
 
 class SettlementResponse(X402ExternalModel):

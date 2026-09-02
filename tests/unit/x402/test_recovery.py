@@ -18,6 +18,7 @@ from settlediff.x402.client_contract import (
     SignerServiceResponse,
     SignerSubmissionState,
 )
+from settlediff.x402.models import PaymentRequirements
 from settlediff.x402.parser import parse_payment_required
 from settlediff.x402.recovery import (
     TRANSFER_TOPIC,
@@ -36,9 +37,9 @@ TX_HASH = "0x2222222222222222222222222222222222222222222222222222222222222222"
 NOW = datetime(2026, 8, 31, tzinfo=UTC)
 
 
-def requirement():
+def requirement() -> PaymentRequirements:
     payload = FIXTURE.read_bytes()
-    return parse_payment_required(base64.b64encode(payload).decode()).accepts[0]
+    return parse_payment_required(base64.b64encode(payload).decode()).selected_requirement()
 
 
 def address_topic(address: str) -> str:

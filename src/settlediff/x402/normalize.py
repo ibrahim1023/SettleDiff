@@ -32,9 +32,9 @@ def normalize_payment_required(
     selected: int = 0,
 ) -> ExpectedContract:
     try:
-        requirement = required.accepts[selected]
-    except IndexError as error:
-        raise X402NormalizationError("selected payment requirement is unavailable") from error
+        requirement = required.selected_requirement(selected)
+    except ValueError as error:
+        raise X402NormalizationError(str(error)) from error
     identity = _asset_identity(requirement)
     notes = (
         ("x402 exact EVM defaulted assetTransferMethod to eip3009",)

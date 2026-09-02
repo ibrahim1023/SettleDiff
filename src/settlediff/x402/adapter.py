@@ -198,7 +198,11 @@ class X402Adapter:
         )
         if required.resource.url != request.target or contract.url != request.target:
             raise AdapterProtocolError("x402 challenge resource differs from the exact target")
-        return required, required.accepts[0], contract
+        try:
+            requirement = required.selected_requirement()
+        except ValueError as error:
+            raise AdapterProtocolError("x402 primary payment requirement is unsupported") from error
+        return required, requirement, contract
 
     @staticmethod
     def _require_returned_terms(
@@ -222,7 +226,12 @@ class X402Adapter:
             raise X402SubmissionUncertainError(
                 "x402 signer challenge changed after possible submission"
             )
-        return required.accepts[0]
+        try:
+            return required.selected_requirement()
+        except ValueError as error:
+            raise X402SubmissionUncertainError(
+                "x402 signer selected an unsupported payment requirement"
+            ) from error
 
     @staticmethod
     def _provider_receipt(

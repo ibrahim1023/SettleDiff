@@ -296,6 +296,9 @@ def test_x402_get_decline_preserves_method_and_absent_body_without_execution(
     assert requests[0].body is None
     assert "Rail: x402" in result.stdout
     assert "Version: 2" in result.stdout
+    assert "Asset reference: syn_usdc_base_sepolia" in result.stdout
+    assert "Recipient: syn_x402_recipient" in result.stdout
+    assert "Maximum timeout: 300 seconds" in result.stdout
     assert "External signer: configured" in result.stdout
     assert "Authorization declined" in result.stdout
 

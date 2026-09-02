@@ -133,8 +133,10 @@ signer-returned challenge is checked against the selected terms, provider receip
 separate from bounded read-only Base Sepolia verification, and the exact USDC transfer
 log—not receipt existence—establishes settlement. One authorized `0.001 USDC` controlled
 Base Sepolia cycle completed with 12 passing checks and verdict `VERIFIED`; see the
-[x402 live-cycle report](docs/testing/x402-live-cycle.md). Validation against an unrelated
-public endpoint remains pending. Submission recovery is
+[x402 live-cycle report](docs/testing/x402-live-cycle.md). A separately authorized
+GoPlausible public endpoint cycle also produced `VERIFIED` and established compatibility
+with a supported EVM primary requirement followed by bounded unsupported alternatives;
+see [public endpoint validation](docs/testing/x402-public-endpoint-validation.md). Submission recovery is
 read-only: confirmed and reverted receipts both prove transmission, while missing,
 pending, malformed, or unavailable evidence remains unresolved. Only explicit
 pre-transmission proof can establish non-submission. Direct MPP clients and other payment rails remain
@@ -186,8 +188,9 @@ the temporary default. Select x402 explicitly with `--rail x402 --allow-testnet`
 private-key setting: wallet authority belongs to the separately installed signer. GET uses
 `--method GET` with no body; POST requires `--body` and preserves the JSON value exactly.
 Remote targets require HTTPS; x402 alone permits HTTP on an IP/hostname proven to be loopback for the controlled local reference cycle. Both rails show the exact target/resource, method, canonical body digest, adapter,
-protocol version, scheme, network, asset, masked recipient, quote, payment-terms digest,
-and budget before the mandatory interactive authorization. Environment flags never
+protocol version, scheme, network, full public asset reference and recipient, timeout, quote,
+payment-terms digest, and budget before mandatory interactive authorization. Persisted and
+ordinary report views remain masked. Environment flags never
 bypass confirmation, and live/paid calls are never part of the default test suite.
 
 ## Live findings become offline regression tests

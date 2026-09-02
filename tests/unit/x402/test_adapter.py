@@ -86,7 +86,7 @@ def address_topic(address: str) -> str:
 
 
 def receipt() -> dict[str, JsonValue]:
-    selected = parse_payment_required(required_header()).accepts[0]
+    selected = parse_payment_required(required_header()).selected_requirement()
     return {
         "transactionHash": TX_HASH,
         "status": "0x1",

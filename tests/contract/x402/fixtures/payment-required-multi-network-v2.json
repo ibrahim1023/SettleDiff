@@ -1,0 +1,48 @@
+{
+  "x402Version": 2,
+  "error": "Payment required",
+  "resource": {
+    "url": "https://public.example.invalid/evm/weather",
+    "description": "Synthetic multi-network weather evidence",
+    "mimeType": "application/json"
+  },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "eip155:84532",
+      "amount": "1000",
+      "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "payTo": "0x1111111111111111111111111111111111111111",
+      "maxTimeoutSeconds": 300,
+      "extra": {
+        "name": "USDC",
+        "version": "2"
+      }
+    },
+    {
+      "scheme": "exact",
+      "network": "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+      "amount": "1000",
+      "asset": "10458941",
+      "payTo": "syn_algorand_recipient",
+      "maxTimeoutSeconds": 300,
+      "extra": {
+        "name": "USDC",
+        "decimals": 6,
+        "feePayer": "syn_algorand_fee_payer"
+      }
+    },
+    {
+      "scheme": "exact",
+      "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      "amount": "1000",
+      "asset": "syn_solana_usdc_asset",
+      "payTo": "syn_solana_recipient",
+      "maxTimeoutSeconds": 300,
+      "extra": {
+        "feePayer": "syn_solana_fee_payer"
+      }
+    }
+  ],
+  "extensions": {}
+}

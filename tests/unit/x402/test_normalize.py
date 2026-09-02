@@ -54,6 +54,15 @@ def test_normalize_payment_required_maps_exact_base_sepolia_usdc() -> None:
     assert contract.asset_identity.decimals == 6
 
 
+def test_normalize_payment_required_rejects_unsupported_primary_requirement() -> None:
+    payload = json.loads((FIXTURE.parent / "payment-required-multi-network-v2.json").read_text())
+    payload["accepts"] = [payload["accepts"][1], payload["accepts"][0]]
+    required = parse_payment_required(encoded(payload))
+
+    with pytest.raises(X402NormalizationError, match="selected payment requirement"):
+        normalize_payment_required(required, request_schema={"method": "GET"})
+
+
 def test_normalize_payment_required_rejects_untrusted_asset_identity() -> None:
     payload = challenge()
     payload["accepts"][0]["asset"] = "0x4444444444444444444444444444444444444444"
@@ -107,7 +116,7 @@ def test_normalize_provider_settlement_preserves_claim_without_inventing_fields(
     required = parse_payment_required(encoded(challenge()))
     response = parse_payment_response(encoded(payload))
 
-    receipt = normalize_payment_response(response, required.accepts[0], issued_at=NOW)
+    receipt = normalize_payment_response(response, required.selected_requirement(), issued_at=NOW)
 
     assert receipt.settlement_status is expected_status
     assert receipt.amount == expected_amount
