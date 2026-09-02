@@ -157,13 +157,14 @@ def _field_consistency(
     observed = getattr(execution, field) if execution is not None else None
     receipt_value = getattr(receipt, field) if receipt is not None else None
     ledger_value = getattr(match.matched, field) if match.matched is not None else None
-    values = tuple(
-        value
-        for value in (expected, observed, receipt_value, ledger_value)
-        if value is not None and value != "unknown"
+    available = tuple(
+        value for value in (expected, observed, receipt_value, ledger_value) if value is not None
     )
-    if len(values) < 2:
+    if "unknown" in available:
+        return _unknown(field, f"At least one {field} value is unknown.")
+    if len(available) < 2:
         return _unknown(field, f"Insufficient {field} evidence is available.")
+    values = available
     status = CheckStatus.PASS if len(set(values)) == 1 else CheckStatus.DIFF
     artifact_ids = tuple(
         name

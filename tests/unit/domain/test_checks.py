@@ -9,6 +9,7 @@ from settlediff.domain.checks import run_checks
 from settlediff.domain.matching import MatchConfidence, MatchResult, MatchStatus, MatchStrategy
 from settlediff.domain.models import (
     AssetIdentity,
+    CheckStatus,
     ExecutionRecord,
     ExpectedContract,
     Finding,
@@ -17,6 +18,7 @@ from settlediff.domain.models import (
     PaymentReceipt,
     PurchaseIntent,
     SettlementStatus,
+    Verdict,
 )
 from settlediff.domain.money import Money
 from settlediff.domain.verdict import derive_verdict
@@ -402,6 +404,17 @@ def test_provider_receipt_and_independent_ledger_agree() -> None:
     assert statuses["settlement"] == "PASS"
     assert statuses["ledger_outcome"] == "PASS"
     assert derive_verdict(findings).value == "VERIFIED"
+
+
+def test_unknown_contract_value_cannot_be_discarded_into_a_pass() -> None:
+    intent, contract, execution, match, receipt = x402_evidence()
+    contract = contract.model_copy(update={"asset": "unknown"})
+
+    findings = run_checks(intent, contract, execution, match, receipt=receipt)
+    statuses = {finding.check_id: finding.status for finding in findings}
+
+    assert statuses["asset"] is CheckStatus.UNKNOWN
+    assert derive_verdict(findings) is Verdict.UNVERIFIABLE
 
 
 def test_provider_receipt_without_confirmed_independent_evidence_is_unknown() -> None:
