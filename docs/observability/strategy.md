@@ -19,12 +19,12 @@ Minimum span tree:
 ```text
 settlediff.run
 ├── settlediff.authorize
-├── settlediff.perflo.inspect
+├── settlediff.payment_rail.inspect <perflo|x402>
 ├── settlediff.agent.investigate
 │   ├── invoke_agent <model>
 │   └── execute_tool <tool>
-├── settlediff.perflo.execute
-├── settlediff.perflo.activity
+├── settlediff.payment_rail.execute <perflo|x402>
+├── settlediff.payment_rail.activity <perflo|x402>
 ├── settlediff.match_activity
 ├── settlediff.verify
 ├── settlediff.agent.explain
@@ -55,7 +55,7 @@ Histograms:
 - model cost estimate when supplied;
 - activity candidate count.
 
-Metric labels are bounded enums. Run IDs, users, URLs, vendors with unbounded names, wallet/transaction identifiers, error messages, prompts, and model output never become labels.
+Metric labels are bounded enums. Run IDs, users, URLs, vendors with unbounded names, wallet/transaction identifiers, error messages, prompts, and model output never become labels. x402 compatibility versions belong in local bundle/diagnostic metadata; resource URLs, payer/recipient addresses, transaction references, and challenge/payment payloads never become metric labels or exported span attributes.
 
 ## Correlation
 
@@ -105,7 +105,7 @@ With no exporter, the SQLite event timeline and structured log file must still a
 
 ## Retention
 
-Local report retention is owner-configurable and unresolved. Until chosen, implementation must support explicit deletion and avoid any background upload. Telemetry backend retention is outside SettleDiff and must be documented at deployment time.
+Sanitized local reports remain until explicit per-run deletion or an owner-applied age purge; SettleDiff performs no background upload or automatic deletion. Raw x402 authorization material is never retained. Telemetry backend retention is outside SettleDiff and must be documented at deployment time.
 
 ## Verification
 

@@ -271,6 +271,20 @@ def test_x402_report_round_trips_with_separate_settlement_evidence(tmp_path: Pat
     repository.close()
 
 
+def test_verify_rejects_x402_compatibility_tampering(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "x402.sqlite3")
+    report = replay_fixture(FIXTURES / "x402-clean-success").model_copy(
+        update={"adapter_id": "x402"}
+    )
+    repository.save(report)
+    bundle = export_bundle(repository, report.run_id)
+    compatibility = bundle.compatibility.model_copy(update={"x402_protocol_version": None})
+
+    with pytest.raises(BundleError, match="integrity"):
+        verify_bundle(bundle.model_copy(update={"compatibility": compatibility}))
+    repository.close()
+
+
 def test_current_bundle_reads_pre_x402_compatibility_metadata(tmp_path: Path) -> None:
     repository = SQLiteReportRepository(tmp_path / "x402.sqlite3")
     report = replay_fixture(FIXTURES / "x402-clean-success").model_copy(

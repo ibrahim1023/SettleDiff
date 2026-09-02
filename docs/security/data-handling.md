@@ -50,7 +50,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Invoke an independently owned signer at most once through the versioned bounded JSON contract. SettleDiff passes a controlled environment that does not inherit private-key variables; the signer must obtain authority independently without returning it.
 - Reject oversized signer input before launch; treat timeout, malformed/secret-bearing output, output overflow, and non-proven post-launch failure as submission uncertainty.
 - A provider settlement response remains provider-asserted evidence and cannot replace independent settlement verification.
-- Independent x402 verification permits only `eth_chainId` and `eth_getTransactionReceipt`, with bounded request count and response size and no retry/poll loop.
+- Independent x402 verification permits only `eth_chainId` and `eth_getTransactionReceipt`, with bounded request count and response size and no retry/poll loop. The configured RPC is independent of the resource/facilitator but is still untrusted input: chain identity, receipt structure, token address, event signature, payer when supplied, recipient, and amount are validated rather than accepted by source reputation.
 - Receipt success alone is insufficient: require the expected Base Sepolia chain plus exactly one matching USDC transfer event for token, payer when supplied, recipient, and amount. The facilitator transaction sender is not the payer.
 - A mined reverted transaction proves submission, not non-submission. Missing/pending receipts, malformed evidence, and RPC failure remain unresolved; only an explicit pre-transmission result or separately proven non-submission may set the non-submission state.
 - Once an external signer process launches, that client instance cannot launch again, including after timeout, overflow, malformed output, or another uncertain failure.
@@ -64,7 +64,8 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Redact before persistence and again before display/export.
 - Mask identifiers by default; explicit local expansion is auditable.
 - Send the model normalized summaries and artifact handles, not unrestricted raw data.
-- Keep reports local for MVP.
+- Keep reports local for MVP. Retain sanitized reports until explicit per-run deletion or an owner-applied age purge; do not retain x402 signatures, reusable authorizations, signer secrets, or raw live captures in the report database.
+- Export only redacted artifacts and integrity-checked compatibility metadata. Bundle export never upgrades provider evidence into independent evidence and never exports signer material.
 
 ### Web UI
 

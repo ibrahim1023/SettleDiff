@@ -32,27 +32,21 @@ The later GoPlausible public-endpoint cycle established one external compatibili
 
 ## Captured challenge mapping
 
-| x402 source | Field | Observed shape | Canonical target | Classification | Current fit |
-|---|---|---|---|---|---|
-| HTTP response | status | `402` | preflight/challenge evidence | `EXACT` | Preservable as raw evidence; not an `ExecutionRecord` service result |
-| `PAYMENT-REQUIRED` | `x402Version` | integer `2` | adapter protocol version | `EXACT` | No canonical field |
-| `resource` | `url` | absolute loopback URL | `ExpectedContract.url` | `EXACT` | Fits |
-| `resource` | `description` | string | raw contract metadata | `PROVIDER_ASSERTED` | Preservable only in raw evidence |
-| `resource` | `mimeType` | MIME string | raw contract metadata | `PROVIDER_ASSERTED` | Preservable only in raw evidence |
-| selected requirement | `scheme` | `exact` | payment scheme | `EXACT` | No distinct canonical scheme field; must not be conflated with protocol |
-| selected requirement | `network` | CAIP-2 `eip155:84532` | canonical network | `EXACT` | Current `chain` accepts only `base`/`tempo`, so this becomes unknown |
-| selected requirement | `amount` | atomic-unit decimal string `1000` | `ExpectedContract.price` | `TRANSFORMED` | Requires independently trusted token decimals and asset identity |
-| selected requirement | `asset` | Base Sepolia USDC contract address | canonical asset identity | `EXACT` | Current asset is a symbol string and would become unknown |
-| selected requirement | `payTo` | EVM address | advertised recipient | `EXACT` | `ExpectedContract` has no recipient |
-| selected requirement | `maxTimeoutSeconds` | positive integer `300` | payment-term expiry/timeout | `EXACT` | No canonical field |
-| requirement `extra` | `assetTransferMethod` | absent | transfer mechanism | `TRANSFORMED` | Exact-EVM specification defines absent as `eip3009`; the normalized value must cite that specification |
-| requirement `extra` | `name` | `USDC` | token signing/domain metadata | `PROVIDER_ASSERTED` | Must not establish asset identity by itself |
-| requirement `extra` | `version` | string `2` | token EIP-712 domain metadata | `PROVIDER_ASSERTED` | Preservable only in raw evidence |
-| HTTP request | method | `GET` | authorized request method | `EXACT` | `PaidExecutionRequest` has no method |
-| HTTP request | body | absent | authorized body representation | `EXACT` | Current request requires a JSON object body |
-| initial challenge | payer | absent | authorized signer/payer | `UNAVAILABLE` | Correctly unavailable before signing |
-| initial challenge | transaction reference | absent | payment/transaction reference | `UNAVAILABLE` | Correctly unavailable before submission |
-| initial challenge | settlement | absent | provider/independent settlement | `UNAVAILABLE` | Correctly unavailable before submission |
+| x402 source | Field | Canonical target | Classification | Implemented handling |
+|---|---|---|---|---|
+| HTTP response | status `402` | preflight/challenge evidence | `EXACT` | retained as bounded adapter evidence, not service execution |
+| `PAYMENT-REQUIRED` | `x402Version: 2` | adapter protocol version | `EXACT` | retained in `AdapterEvidence.protocol_version` and compatibility metadata |
+| `resource` | URL | `ExpectedContract.url` | `EXACT` | must equal the authorized target |
+| selected requirement | `scheme: exact` | payment scheme | `EXACT` | retained separately from protocol |
+| selected requirement | `network: eip155:84532` | canonical network | `EXACT` | retained losslessly and mapped to legacy Base chain only for compatibility |
+| selected requirement | atomic amount | `ExpectedContract.price` | `TRANSFORMED` | converted with the canonical Base Sepolia USDC identity and six decimals |
+| selected requirement | asset contract | canonical asset identity | `EXACT` | bound to network, contract address, symbol, and decimals |
+| selected requirement | `payTo` | advertised recipient | `EXACT` | retained for expected/executed/recorded comparison |
+| selected requirement | timeout | payment-term timeout | `EXACT` | retained and bound into authorization |
+| requirement `extra` | transfer method | raw/normalized contract evidence | `TRANSFORMED` | absent means EIP-3009 only under the accepted exact-EVM contract |
+| requirement `extra` | token name/version | provider metadata | `PROVIDER_ASSERTED` | cannot establish asset identity by itself |
+| HTTP request | method and optional body | `PaidExecutionRequest` | `EXACT` | GET requires no body; POST retains the bounded JSON value |
+| initial challenge | payer/transaction/settlement absent | unavailable evidence | `UNAVAILABLE` | remains unavailable without guessing |
 
 ## Deterministic transformations
 
@@ -82,38 +76,21 @@ versioned representation.
 recipient later observed in a provider settlement response or independent token
 transfer. This enables deterministic advertised/executed/recorded comparison.
 
-## Canonical model gaps established by the capture
+## Canonical model result
 
-The current model cannot represent the captured challenge without losing or
-guessing settlement-relevant information:
+Report schema 2 resolved the capture-established gaps without changing schema-v1 meaning. It added lossless network and asset identity, recipient and timeout fields, HTTP method and optional-body authorization, adapter provenance, and separate provider receipt versus independent ledger evidence. The selected payment terms are hashed into the one-use capability and revalidated immediately before signer launch.
 
-1. `ExpectedContract` has no advertised recipient.
-2. `ExpectedContract` has no payment scheme separate from protocol.
-3. `chain` cannot losslessly represent CAIP-2 network identity.
-4. asset strings and `Money.unit` do not identify network, token contract, and
-   decimals together.
-5. `PaidExecutionRequest` has no HTTP method or absent-body representation.
-6. authorization cannot bind adapter, x402 version, scheme, selected network,
-   asset, recipient, quote, timeout, or the selected payment requirement.
-7. there is no canonical adapter/payment-protocol version field.
-8. provider settlement and independently observed settlement cannot both be
-   represented explicitly in `MachineReport`.
-9. payment requirement timeout and transfer method are available only as raw
-   evidence.
+Unavailable fields remain `None`/unknown rather than being inferred. Compatibility readers continue to accept schema-v1 reports and bundles that predate x402 metadata.
 
-These gaps do not justify guessed defaults. They require a versioned canonical
-model decision before the production adapter boundary is generalized.
+## Signed and settlement evidence
 
-## Expected later evidence
+The controlled and public Base Sepolia cycles established these mappings:
 
-The following mappings remain hypotheses until signed testnet evidence is
-captured:
-
-| Source | Expected evidence | Proposed canonical role | Classification |
+| Source | Evidence | Canonical role | Classification |
 |---|---|---|---|
-| `PAYMENT-SIGNATURE` | accepted requirement and payer authorization | ephemeral authorization evidence | provider/client payload; do not persist raw signature |
+| `PAYMENT-SIGNATURE` | accepted requirement and payer authorization | ephemeral transport only; never persisted | provider/client payload |
 | final HTTP response | service status/body | execution and service outcome | `EXACT` |
-| `PAYMENT-RESPONSE` | success, error reason, transaction, network, payer, optional amount | provider settlement evidence | `PROVIDER_ASSERTED` |
+| `PAYMENT-RESPONSE` | success, reason, transaction, network, payer, optional amount | provider receipt | `PROVIDER_ASSERTED` |
 | Base Sepolia RPC | receipt status and chain ID | independent transaction evidence | `INDEPENDENT` |
 | USDC transfer log | token, payer, recipient, atomic amount | independent settlement evidence | `INDEPENDENT` |
 
@@ -132,21 +109,4 @@ recipient, and amount. Because the facilitator may submit the transaction,
 
 ## Decision gate result
 
-**Result: the current canonical model cannot represent the captured x402 v2
-challenge without losing settlement-relevant distinctions.**
-
-Before implementation continues, accept a minimal schema design covering:
-
-- lossless CAIP-2 network identity;
-- network-bound asset identity and decimals;
-- advertised recipient;
-- payment protocol version and scheme;
-- HTTP method and optional body;
-- digest-bound selected payment terms;
-- provider versus independent settlement evidence;
-- report, bundle, database, fixture, CLI, and UI version compatibility.
-
-These decisions were accepted in
-[ADR 0007](../decisions/0007-rail-neutral-canonical-payment-evidence.md). Production
-model work may proceed test-first; adapter refactoring and payment execution remain
-blocked until the canonical schema increment passes its compatibility gates.
+The minimal rail-neutral schema was accepted in [ADR 0007](../decisions/0007-rail-neutral-canonical-payment-evidence.md) and implemented across reports, bundles, SQLite round trips, fixtures, CLI, and UI. Perflo and x402 now feed the same deterministic checks. Compatibility is bounded to the demonstrated x402 v2 exact/Base-Sepolia/test-USDC profile; other networks, assets, schemes, primary requirement shapes, and mainnet remain unsupported until a separate contract is accepted.

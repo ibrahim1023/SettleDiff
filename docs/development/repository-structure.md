@@ -1,6 +1,6 @@
 # Repository Structure
 
-The repository starts documentation-only. Source, tests, fixtures, and configuration files are created by the implementation task that first needs them; empty directories and placeholder modules are avoided.
+The repository keeps architecture, source, tests, and sanitized fixtures together while local specifications and live captures remain ignored. Empty directories and placeholder modules are avoided.
 
 ```text
 .

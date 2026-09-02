@@ -13,11 +13,13 @@ Application service ───────► one-use paid capability
        ▼
 Bounded investigator ──────► typed evidence tools
        │                           │
-       │             ┌─────────────┼─────────────┐
-       │             ▼             ▼             ▼
-       │          Perflo        Activity      Context.dev
-       │          adapter        matcher      (optional)
-       │             └─────────────┼─────────────┘
+       │          ┌────────────────┼───────────────┐
+       │          ▼                ▼               ▼
+       │    payment adapters    Activity       Context.dev
+       │    ┌──────┴──────┐     matcher       (conditional)
+       │  Perflo         x402
+       │    └──────┬──────┘
+       │           └───────────────┼───────────────┘
        │                           ▼
        └──────────────────► evidence bundle
                                    │
@@ -35,8 +37,8 @@ Bounded investigator ──────► typed evidence tools
 ## Payment-rail boundary
 
 Paid execution reaches SettleDiff through adapters that translate rail-specific
-envelopes into canonical evidence. Perflo is the first adapter; x402 or direct MPP
-clients are architectural extension points, not implemented integrations:
+envelopes into canonical evidence. Perflo and x402 are implemented adapters; direct
+MPP clients and other rails remain architectural extension points:
 
 ```text
                        ┌──────────────────────┐
@@ -167,6 +169,7 @@ Invalid transitions fail closed. `SUBMISSION_UNCERTAIN` permits status/history i
 - Findings cite artifact IDs and field paths.
 - Explanations cite existing finding and artifact IDs and are validated after generation.
 - Artifact schemas and report schemas carry explicit versions.
+- Bundle compatibility metadata records the report/database versions, payment adapter identity, and x402 protocol/signer schema when applicable. Older bundles without the additive x402 fields retain their original integrity representation and remain readable.
 
 ## Context strategy
 

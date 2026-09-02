@@ -162,6 +162,22 @@ Every scenario replays deterministically with no credentials, external requests,
 | `x402-provider-failure-independent-confirmation` | provider failure contradicts confirmed transfer | `UNVERIFIABLE` |
 | `x402-wrong-{recipient,amount,asset,network}` | one canonical term differs | `VERIFIED_WITH_WARNINGS` |
 
+The paired fixtures demonstrate that equivalent economic evidence produces the same canonical outcome without an adapter-specific verdict branch:
+
+| Outcome | Perflo fixture | x402 fixture |
+|---|---|---|
+| Clean settlement and service success | `clean-success` → `VERIFIED` | `x402-clean-success` → `VERIFIED` |
+| Settlement proven and service failure | `paid-failure` → `PAID_FAILURE` | `x402-paid-failure` → `PAID_FAILURE` |
+
+```bash
+uv run settlediff verify-fixture fixtures/clean-success --json
+uv run settlediff verify-fixture fixtures/x402-clean-success --json
+uv run settlediff verify-fixture fixtures/paid-failure --json
+uv run settlediff verify-fixture fixtures/x402-paid-failure --json
+```
+
+These commands are offline fixture replay. They do not configure or invoke Perflo, a signer, RPC, Context.dev, Hyperfusion, or a paid resource.
+
 ## 60-second fixture demo
 
 ```bash
@@ -230,7 +246,7 @@ calling, and tool-result continuation are compatible with the configured profile
 - LLM provider: Hyperfusion, through its OpenAI-compatible Chat Completions API.
 - Agent SDK: PydanticAI, one bounded investigator.
 - Trust boundary: the model selects and explains evidence but cannot change findings or verdicts.
-- First payment adapter: Perflo CLI.
+- Payment adapters: Perflo CLI and x402 v2 exact/Base-Sepolia/test-USDC through one canonical evidence boundary.
 - Default development path: sanitized fixture replay with no paid calls and no live model calls.
 
 The local product specification is intentionally excluded from Git. The approved foundation
@@ -241,7 +257,8 @@ is captured in [the production design](docs/superpowers/specs/2026-08-12-product
 After building locally, install the versioned wheel without publishing it:
 
 ```bash
-uv tool install dist/settlediff-0.1.0-py3-none-any.whl
+uv build
+uv tool install --force dist/settlediff-0.1.0-py3-none-any.whl
 settlediff --version
 ```
 
