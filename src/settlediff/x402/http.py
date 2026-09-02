@@ -52,27 +52,34 @@ class X402ResourceClient:
                 "credentials or fragment"
             )
         try:
-            response = await self._client.request(
+            async with self._client.stream(
                 request.method,
                 request.target,
                 json=request.body if request.method == "POST" else None,
                 timeout=self._timeout_seconds,
-            )
+            ) as response:
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > self._max_response_bytes:
+                        raise X402ResourceError(
+                            "x402 resource response exceeded its configured limit"
+                        )
+                status_code = response.status_code
+                payment_required = response.headers.get("PAYMENT-REQUIRED")
         except httpx.HTTPError as error:
             raise X402ResourceError("x402 resource challenge request failed") from error
-        if len(response.content) > self._max_response_bytes:
-            raise X402ResourceError("x402 resource response exceeded its configured limit")
         body: JsonValue | None = None
-        if response.content:
+        if content:
             try:
-                loaded: object = json.loads(response.content)
+                loaded: object = json.loads(content)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 loaded = None
             if loaded is None or isinstance(loaded, (dict, list, str, int, float, bool)):
                 body = cast(JsonValue | None, loaded)
         return X402ResourceResponse(
-            status_code=response.status_code,
-            payment_required=response.headers.get("PAYMENT-REQUIRED"),
+            status_code=status_code,
+            payment_required=payment_required,
             body=body,
             observed_at=datetime.now(UTC),
         )

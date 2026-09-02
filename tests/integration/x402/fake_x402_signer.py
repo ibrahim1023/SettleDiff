@@ -18,8 +18,10 @@ if mode == "timeout":
 if mode == "invalid":
     print("not-json")
     raise SystemExit(0)
-if mode == "oversized":
-    print("x" * 10_000)
+if mode in {"oversized", "oversized-sleep"}:
+    print("x" * 10_000, flush=True)
+    if mode == "oversized-sleep":
+        time.sleep(1)
     raise SystemExit(0)
 
 result: dict[str, object] = {

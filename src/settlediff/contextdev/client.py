@@ -221,21 +221,32 @@ class ContextDevClient:
         if not _is_eligible_evidence_url(request.url):
             raise ValueError("Context.dev evidence URL must be an eligible HTTPS URL")
         try:
-            response = await self._client.get(
+            async with self._client.stream(
+                "GET",
                 self._endpoint,
                 params={
                     "url": request.url,
                     "includeLinks": "false",
                     "useMainContentOnly": "true",
                 },
-            )
+            ) as response:
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > DEFAULT_MAX_BODY_BYTES:
+                        raise ContextDevProtocolError(
+                            "Context.dev response exceeded the configured size limit",
+                            body_bytes=len(content),
+                        )
+                status_code = response.status_code
         except httpx.HTTPError as error:
             raise ContextDevUnavailableError(
                 "Context.dev unavailable after a transport failure"
             ) from error
 
-        if response.status_code == 200:
-            parsed = parse_contextdev_success(response.content)
+        body = bytes(content)
+        if status_code == 200:
+            parsed = parse_contextdev_success(body)
             excerpt = _exact_excerpt(parsed.markdown, request.claim)
             return ContextEvidence(
                 url=request.url,
@@ -244,10 +255,10 @@ class ContextDevClient:
                 excerpt=excerpt,
                 fetched_at=self._clock(),
                 note=None,
-                body_bytes=len(response.content),
+                body_bytes=len(body),
             )
-        if response.status_code in _SOURCE_FAILURE_STATUSES:
-            error = parse_contextdev_error(response.content)
+        if status_code in _SOURCE_FAILURE_STATUSES:
+            error = parse_contextdev_error(body)
             return ContextEvidence(
                 url=request.url,
                 reachable=False,
@@ -255,11 +266,11 @@ class ContextDevClient:
                 excerpt=None,
                 fetched_at=self._clock(),
                 note=redact_embedded_identifiers(error.message),
-                body_bytes=len(response.content),
+                body_bytes=len(body),
             )
         raise ContextDevUnavailableError(
-            f"Context.dev unavailable after HTTP {response.status_code}",
-            body_bytes=len(response.content),
+            f"Context.dev unavailable after HTTP {status_code}",
+            body_bytes=len(body),
         )
 
     async def aclose(self) -> None:

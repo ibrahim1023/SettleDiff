@@ -155,6 +155,19 @@ async def test_post_launch_failures_are_uncertain_and_never_retried(
 
 
 @pytest.mark.asyncio
+async def test_oversized_output_stops_before_signer_completion(tmp_path: Path) -> None:
+    signer = client(
+        "oversized-sleep",
+        tmp_path / "count",
+        timeout_seconds=0.5,
+        max_output_bytes=1024,
+    )
+
+    with pytest.raises(X402SubmissionUncertainError, match="output"):
+        await signer.execute_once(request())
+
+
+@pytest.mark.asyncio
 async def test_proven_pre_submission_refusal_is_not_marked_uncertain(
     tmp_path: Path,
 ) -> None:

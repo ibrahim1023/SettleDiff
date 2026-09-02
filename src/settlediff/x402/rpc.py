@@ -43,19 +43,23 @@ class X402RpcClient:
             self._requests += 1
             request_id = self._requests
         try:
-            response = await self._client.post(
+            async with self._client.stream(
+                "POST",
                 "",
                 json={"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
                 timeout=self._timeout_seconds,
-            )
+            ) as response:
+                if response.status_code != 200:
+                    raise X402RpcError("x402 RPC returned a non-success HTTP status")
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > self._max_response_bytes:
+                        raise X402RpcError("x402 RPC response exceeded its configured limit")
         except httpx.HTTPError as error:
             raise X402RpcError("x402 RPC request failed") from error
-        if response.status_code != 200:
-            raise X402RpcError("x402 RPC returned a non-success HTTP status")
-        if len(response.content) > self._max_response_bytes:
-            raise X402RpcError("x402 RPC response exceeded its configured limit")
         try:
-            loaded: object = json.loads(response.content)
+            loaded: object = json.loads(content)
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
             raise X402RpcError("x402 RPC returned invalid JSON") from error
         if not isinstance(loaded, dict):

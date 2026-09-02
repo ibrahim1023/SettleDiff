@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from decimal import Decimal
 from typing import Literal, cast
 
@@ -99,6 +100,29 @@ async def test_resource_client_rejects_unsafe_target_before_request(target: str)
             await client.challenge(request().model_copy(update={"target": target}))
 
     assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_resource_client_stops_reading_at_response_limit() -> None:
+    class CountingStream(httpx.AsyncByteStream):
+        yielded = 0
+
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            for chunk in (b"x" * 512, b"x", b"unread"):
+                self.yielded += 1
+                yield chunk
+
+    stream = CountingStream()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(402, stream=stream)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = X402ResourceClient(http, max_response_bytes=512)
+        with pytest.raises(X402ResourceError, match="limit"):
+            await client.challenge(request())
+
+    assert stream.yielded == 2
 
 
 @pytest.mark.asyncio

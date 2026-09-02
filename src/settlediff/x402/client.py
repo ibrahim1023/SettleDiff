@@ -8,6 +8,7 @@ import os
 from pydantic import ValidationError
 
 from settlediff.application.payment_rails import SubmissionUncertainError
+from settlediff.subprocess_io import OutputLimitExceeded, communicate_bounded
 from settlediff.x402.client_contract import (
     ExternalSignerRequest,
     ExternalSignerResult,
@@ -59,8 +60,8 @@ class X402ExternalClient:
             )
             self._launched = True
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(input=encoded_request),
+            stdout, _stderr = await asyncio.wait_for(
+                communicate_bounded(process, self._max_output_bytes, input_bytes=encoded_request),
                 timeout=self._timeout_seconds,
             )
         except asyncio.CancelledError as error:
@@ -73,10 +74,11 @@ class X402ExternalClient:
             raise X402SubmissionUncertainError(
                 "x402 signer timed out after launch; perform read-only recovery"
             ) from error
-        if len(stdout) > self._max_output_bytes or len(stderr) > self._max_output_bytes:
+        except OutputLimitExceeded as error:
+            await self._terminate(process)
             raise X402SubmissionUncertainError(
                 "x402 signer output exceeded its limit after launch; perform read-only recovery"
-            )
+            ) from error
         try:
             result = ExternalSignerResult.model_validate_json(stdout, strict=True)
         except (ValidationError, ValueError, UnicodeDecodeError) as error:

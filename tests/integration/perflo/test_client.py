@@ -168,6 +168,8 @@ async def test_malformed_mutation_output_is_submission_uncertain() -> None:
 async def test_output_is_bounded() -> None:
     with pytest.raises(PerfloOutputLimitError):
         await client("large", limit=128).get_activity()
+    with pytest.raises(PerfloOutputLimitError):
+        await client("large-sleep", timeout=1, limit=128).get_activity()
 
 
 @pytest.mark.asyncio

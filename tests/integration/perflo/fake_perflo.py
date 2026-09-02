@@ -16,8 +16,11 @@ def main() -> None:
         count = int(counter.read_text()) if counter.exists() else 0
         counter.write_text(str(count + 1))
         time.sleep(2)
-    elif mode == "large":
+    elif mode in {"large", "large-sleep"}:
         sys.stdout.write("x" * 4096)
+        sys.stdout.flush()
+        if mode == "large-sleep":
+            time.sleep(2)
     elif mode == "malformed":
         sys.stdout.write("not-json")
     elif mode in {"refusal", "uncertain", "unknown-certainty"}:

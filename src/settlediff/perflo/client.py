@@ -16,6 +16,7 @@ from settlediff.perflo.parser import (
     PerfloProtocolError,
     parse_perflo_envelope,
 )
+from settlediff.subprocess_io import OutputLimitExceeded, communicate_bounded
 
 
 class PerfloClientError(RuntimeError):
@@ -122,7 +123,8 @@ class PerfloClient:
         )
         try:
             stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=self._timeout_seconds
+                communicate_bounded(process, self._max_output_bytes),
+                timeout=self._timeout_seconds,
             )
         except asyncio.CancelledError as error:
             await self._terminate(process)
@@ -139,13 +141,13 @@ class PerfloClient:
                     "Perflo mutation timed out after launch; verify status before any new attempt"
                 ) from error
             raise PerfloClientError("Perflo read timed out") from error
-
-        if len(stdout) > self._max_output_bytes or len(stderr) > self._max_output_bytes:
+        except OutputLimitExceeded as error:
+            await self._terminate(process)
             if mutation:
                 raise PerfloMutationUncertainError(
                     "Perflo mutation output exceeded its limit; verify status before retrying"
-                )
-            raise PerfloOutputLimitError("Perflo output exceeded its configured limit")
+                ) from error
+            raise PerfloOutputLimitError("Perflo output exceeded its configured limit") from error
 
         try:
             envelope = parse_perflo_envelope(
