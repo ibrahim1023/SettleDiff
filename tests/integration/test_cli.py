@@ -18,13 +18,14 @@ from settlediff.agent.grounding import fallback_explanation
 from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
 from settlediff.application.payment_rails import AdapterEvidence
 from settlediff.application.replay import replay_fixture
-from settlediff.application.run import RunEvent, RunState
+from settlediff.application.run import InvestigationOutcome, RunEvent, RunState
 from settlediff.cli import (
     PaymentRail,
     _build_payment_adapter,  # pyright: ignore[reportPrivateUsage]
     app,
 )
 from settlediff.config import Settings
+from settlediff.contextdev.client import ContextDevClient
 from settlediff.domain.models import (
     ArtifactType,
     EvidenceArtifact,
@@ -491,6 +492,64 @@ def test_run_reports_unresolved_activity_recovery(monkeypatch: pytest.MonkeyPatc
     assert "UNVERIFIABLE" in result.stdout
     assert "Submission: unresolved" in result.stdout
     assert "proof of non-submission: no" in result.stdout
+
+
+def test_live_run_renders_in_memory_report_when_persistence_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    explanation = ExplanationRecord(
+        explanation=fallback_explanation(report, set()),
+        source=ExplanationSource.FALLBACK,
+        tool_calls=0,
+    )
+
+    async def completed_run(*args: object, **kwargs: object) -> InvestigationOutcome:
+        del kwargs
+        contextdev = cast(ContextDevClient, args[2])
+        await contextdev.aclose()
+        return InvestigationOutcome(
+            report=report,
+            explanation=explanation,
+            recovery=None,
+            events=(),
+            submission_uncertain=False,
+        )
+
+    class FailingRepository:
+        def __init__(self, path: Path) -> None:
+            assert path == tmp_path / "reports.sqlite3"
+
+        def save(self, *_args: object, **_kwargs: object) -> None:
+            raise sqlite3.OperationalError("syn-sensitive-storage-detail")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli._execute_live_run", completed_run)
+    monkeypatch.setattr("settlediff.cli.SQLiteReportRepository", FailingRepository)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--url",
+            "https://example.invalid/search",
+            "--body",
+            "{}",
+            "--budget",
+            "0.01",
+            "--database",
+            str(tmp_path / "reports.sqlite3"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert '"verdict":"VERIFIED"' in result.stdout
+    assert "report was not persisted" in result.stderr
+    assert "syn-sensitive-storage-detail" not in result.stderr
 
 
 def test_show_renders_persisted_explanation_without_recomputing(tmp_path: Path) -> None:

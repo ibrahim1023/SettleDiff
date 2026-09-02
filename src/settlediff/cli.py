@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import sqlite3
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -437,18 +438,26 @@ def run(
         except (PerfloClientError, X402ClientError, ValueError) as error:
             typer.echo(f"Live investigation failed: {error}", err=True)
             raise typer.Exit(code=2) from error
+        persistence_failed = False
         if database is not None:
-            repository = SQLiteReportRepository(database)
             try:
-                with telemetry.span("settlediff.storage.persist", {"component": "storage"}):
-                    repository.save(
-                        outcome.report,
-                        events=outcome.events,
-                        artifacts=collector.artifacts,
-                        explanation=outcome.explanation,
-                    )
-            finally:
-                repository.close()
+                repository = SQLiteReportRepository(database)
+                try:
+                    with telemetry.span("settlediff.storage.persist", {"component": "storage"}):
+                        repository.save(
+                            outcome.report,
+                            events=outcome.events,
+                            artifacts=collector.artifacts,
+                            explanation=outcome.explanation,
+                        )
+                finally:
+                    repository.close()
+            except (OSError, sqlite3.Error):
+                persistence_failed = True
+                typer.echo(
+                    "Critical: report was not persisted; rendering the in-memory result.",
+                    err=True,
+                )
         with telemetry.span("settlediff.render", {"component": "rendering"}):
             _render(
                 outcome.report,
@@ -456,6 +465,8 @@ def run(
                 explanation=outcome.explanation,
                 recovery=outcome.recovery,
             )
+        if persistence_failed:
+            raise typer.Exit(code=2)
     finally:
         telemetry.shutdown()
 
