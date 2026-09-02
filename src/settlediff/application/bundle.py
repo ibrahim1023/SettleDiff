@@ -16,6 +16,9 @@ from settlediff.domain.redaction import redact_artifact
 from settlediff.domain.verdict import derive_verdict
 
 Sha256Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+DATABASE_SCHEMA_VERSION = 3
+X402_PROTOCOL_VERSION = "2"
+X402_SIGNER_SCHEMA_VERSION = 1
 
 
 class BundleError(ValueError):
@@ -125,13 +128,15 @@ def export_bundle(repository: BundleRepository, run_id: str) -> EvidenceBundle:
         compatibility=CompatibilityMetadata(
             settlediff_version=__version__,
             report_schema_version=report.schema_version,
-            database_schema_version=3,
+            database_schema_version=DATABASE_SCHEMA_VERSION,
             contextdev_api_path="/web/scrape/markdown",
             hyperfusion_model=None,
             perflo_cli_version=None,
             payment_adapter_id=report.adapter_id,
-            x402_protocol_version="2" if report.adapter_id == "x402" else None,
-            x402_signer_schema_version=1 if report.adapter_id == "x402" else None,
+            x402_protocol_version=(X402_PROTOCOL_VERSION if report.adapter_id == "x402" else None),
+            x402_signer_schema_version=(
+                X402_SIGNER_SCHEMA_VERSION if report.adapter_id == "x402" else None
+            ),
         ),
         integrity="0" * 64,
     )
@@ -144,8 +149,30 @@ def verify_bundle(bundle: EvidenceBundle) -> MachineReport:
         raise BundleError("bundle integrity digest does not match its payload")
 
     report = bundle.report
-    if bundle.compatibility.report_schema_version != report.schema_version:
+    compatibility = bundle.compatibility
+    if compatibility.report_schema_version != report.schema_version:
         raise BundleError("bundle compatibility metadata does not match report schema")
+    if compatibility.database_schema_version > DATABASE_SCHEMA_VERSION:
+        raise BundleError("bundle compatibility metadata requires a newer database schema")
+    if (
+        compatibility.payment_adapter_id is not None
+        and compatibility.payment_adapter_id != report.adapter_id
+    ):
+        raise BundleError("bundle compatibility adapter does not match report provenance")
+    x402_fields_present = bool(
+        {"x402_protocol_version", "x402_signer_schema_version"} & compatibility.model_fields_set
+    )
+    if compatibility.payment_adapter_id == "x402" and x402_fields_present:
+        if (
+            compatibility.x402_protocol_version != X402_PROTOCOL_VERSION
+            or compatibility.x402_signer_schema_version != X402_SIGNER_SCHEMA_VERSION
+        ):
+            raise BundleError("bundle compatibility x402 contract is incomplete")
+    elif (
+        compatibility.x402_protocol_version is not None
+        or compatibility.x402_signer_schema_version is not None
+    ):
+        raise BundleError("bundle compatibility x402 contract lacks x402 adapter provenance")
     if bundle.run_id != report.run_id or report.run_id != report.intent.run_id:
         raise BundleError("bundle, report, and intent run IDs do not match")
     if any(not artifact.redacted for artifact in bundle.artifacts):

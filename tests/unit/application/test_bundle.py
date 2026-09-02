@@ -272,17 +272,28 @@ def test_x402_report_round_trips_with_separate_settlement_evidence(tmp_path: Pat
     repository.close()
 
 
-def test_verify_rejects_x402_compatibility_tampering(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"payment_adapter_id": "perflo"},
+        {"x402_protocol_version": None},
+        {"x402_signer_schema_version": None},
+        {"database_schema_version": 4},
+    ],
+)
+def test_verify_rejects_resigned_inconsistent_compatibility_metadata(
+    tmp_path: Path, updates: dict[str, object]
+) -> None:
     repository = SQLiteReportRepository(tmp_path / "x402.sqlite3")
     report = replay_fixture(FIXTURES / "x402-clean-success").model_copy(
         update={"adapter_id": "x402"}
     )
     repository.save(report)
     bundle = export_bundle(repository, report.run_id)
-    compatibility = bundle.compatibility.model_copy(update={"x402_protocol_version": None})
+    compatibility = bundle.compatibility.model_copy(update=updates)
 
-    with pytest.raises(BundleError, match="integrity"):
-        verify_bundle(bundle.model_copy(update={"compatibility": compatibility}))
+    with pytest.raises(BundleError, match="compatibility"):
+        verify_bundle(_resign(bundle, compatibility=compatibility))
     repository.close()
 
 
