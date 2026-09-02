@@ -22,6 +22,8 @@ def derive_verdict(findings: tuple[Finding, ...]) -> Verdict:
         return Verdict.PAID_FAILURE
     if check_statuses.get("ledger_outcome") is CheckStatus.FAIL:
         return Verdict.UNVERIFIABLE
+    if any(finding.status is CheckStatus.FAIL for finding in findings):
+        return Verdict.UNVERIFIABLE
     if any(finding.status is CheckStatus.UNKNOWN for finding in findings):
         return Verdict.UNVERIFIABLE
     if any(finding.status in {CheckStatus.WARN, CheckStatus.DIFF} for finding in findings):

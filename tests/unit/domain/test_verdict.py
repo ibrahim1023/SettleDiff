@@ -56,6 +56,8 @@ def test_verdict_precedence_and_paid_failure() -> None:
         )
         is Verdict.PAYMENT_FAILURE
     )
+    assert derive_verdict((finding("budget", CheckStatus.FAIL),)) is Verdict.UNVERIFIABLE
+    assert derive_verdict((finding("future_check", CheckStatus.FAIL),)) is Verdict.UNVERIFIABLE
     assert derive_verdict((finding("chain", CheckStatus.DIFF),)) is Verdict.VERIFIED_WITH_WARNINGS
     assert derive_verdict((finding("chain", CheckStatus.UNKNOWN),)) is Verdict.UNVERIFIABLE
     assert derive_verdict((finding("chain", CheckStatus.PASS),)) is Verdict.VERIFIED
