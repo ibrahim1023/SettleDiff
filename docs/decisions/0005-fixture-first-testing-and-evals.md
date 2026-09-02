@@ -11,7 +11,7 @@ Default development must be reproducible and free while the product operates aro
 
 Make sanitized fixture replay the primary integration path. Test deterministic logic with pytest and Hypothesis. Test agent trajectories using PydanticAI `FunctionModel`, tool schemas using `TestModel`, and globally disable real model requests in the offline suite.
 
-Use Pydantic Evals for investigation behavior. Grade outcomes and trajectories with code first. Keep live Hyperfusion contracts and live Perflo smoke tests explicit, separate, and opt-in.
+Use small pytest datasets and deterministic code graders for investigation behavior. Add a dedicated eval framework only when repeated capability trials require it. Keep live Hyperfusion contracts and manually authorized paid cycles explicit, separate, and opt-in.
 
 ## Consequences
 

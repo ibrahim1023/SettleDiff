@@ -19,20 +19,22 @@ Minimum span tree:
 ```text
 settlediff.run
 ├── settlediff.authorize
-├── settlediff.payment_rail.inspect <perflo|x402>
-├── settlediff.agent.investigate
-│   ├── invoke_agent <model>
-│   └── execute_tool <tool>
-├── settlediff.payment_rail.execute <perflo|x402>
-├── settlediff.payment_rail.activity <perflo|x402>
+├── settlediff.payment_rail.inspect
+├── settlediff.payment_rail.schema (when required)
+├── settlediff.payment_rail.execute
+├── settlediff.payment_rail.transaction (when recovering by reference)
+├── settlediff.payment_rail.activity
 ├── settlediff.match_activity
+├── settlediff.contextdev.verify (when eligible)
 ├── settlediff.verify
-├── settlediff.agent.explain
-├── settlediff.storage.persist
+└── settlediff.agent.explain
+
+CLI post-run
+├── settlediff.storage.persist (when a database is selected)
 └── settlediff.render
 ```
 
-PydanticAI emits OpenTelemetry GenAI spans. SettleDiff wraps those spans with domain operations and records only safe attributes.
+PydanticAI emits its own OpenTelemetry GenAI spans when a model is configured. SettleDiff records only safe attributes and does not rename those spans as `settlediff.agent.investigate`.
 
 ### Metrics
 

@@ -8,9 +8,9 @@ The repository keeps architecture, source, tests, and sanitized fixtures togethe
 ├── README.md
 ├── Product-spec.md                 # local-only, ignored
 ├── task.md                         # future local-only input, ignored
-├── pyproject.toml                  # Phase 1
-├── uv.lock                         # Phase 1, committed
-├── .env.example                    # Phase 1, no secrets
+├── pyproject.toml                  # package and tool configuration
+├── uv.lock                         # committed dependency lock
+├── .env.example                    # configuration names, no secrets
 ├── docs/
 │   ├── architecture/               # system views and boundaries
 │   ├── decisions/                  # accepted ADRs

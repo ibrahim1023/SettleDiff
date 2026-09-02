@@ -1,12 +1,12 @@
 # SettleDiff MVP Implementation Plan
 
-> **For implementers:** Execute this plan directly using the repository's ADRs, tests, and verification loops. Do not invoke Superpowers skills for implementation or fixes. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status:** Historical implementation plan. The unchecked boxes preserve the original sequence and are not current task tracking. Use the architecture overview, ADRs, tests, and verification loops for implemented behavior.
 
 **Goal:** Build a local developer tool that performs one authorized Perflo purchase investigation, deterministically verifies its evidence, and renders the same report through a CLI and local web UI.
 
 **Architecture:** A pure domain core owns normalization, matching, checks, and verdicts. Application services coordinate replaceable Perflo, Hyperfusion/PydanticAI, Context.dev, storage, and telemetry adapters. The single bounded agent may select evidence and explain immutable findings but cannot execute payment without a one-use capability or alter the machine report.
 
-**Tech Stack:** Python 3.12, uv, Pydantic v2, PydanticAI with Hyperfusion's OpenAI-compatible Chat Completions API, Typer, FastAPI, Jinja, minimal vendored HTMX, SQLite, pytest, Hypothesis, Ruff, Pyright, Pydantic Evals, and optional OpenTelemetry.
+**Tech Stack:** Python 3.12, uv, Pydantic v2, PydanticAI with Hyperfusion's OpenAI-compatible Chat Completions API, Typer, FastAPI, Jinja, minimal vendored HTMX, SQLite, pytest, Hypothesis, Ruff, Pyright, deterministic code graders, and optional OpenTelemetry.
 
 ## Global Constraints
 

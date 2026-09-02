@@ -18,7 +18,7 @@ SettleDiff is MIT-licensed and versioned (`0.1.0`). No public distribution chann
 - [ ] Every x402 fixture replays with its expected findings and verdict.
 - [ ] Cross-rail semantic-equivalence and adapter anti-coupling tests pass.
 - [ ] Schema-v1 reports, pre-x402 bundle metadata, and existing SQLite migrations remain readable.
-- [ ] Bundle tampering is rejected.
+- [ ] Bundle checksum changes and internal inconsistencies are rejected; authenticated provenance is not claimed.
 
 Run the demonstrated cross-rail pairs directly:
 

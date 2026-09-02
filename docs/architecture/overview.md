@@ -148,16 +148,16 @@ Typer provides automation and developer output. FastAPI renders Jinja pages for 
 The application owns an explicit state machine even though no graph framework is used:
 
 ```text
-CREATED
-  → CONTRACT_CAPTURED
-  → EXECUTION_AUTHORIZED
-  → EXECUTION_CAPTURED | EXECUTION_REJECTED | SUBMISSION_UNCERTAIN
-  → EVIDENCE_COLLECTED
-  → VERIFIED | UNVERIFIABLE
-  → EXPLAINED
+PREFLIGHT
+  → AUTHORIZED
+  → EXECUTING
+  → EVIDENCE_RECOVERY (only after submission uncertainty)
+  → VERIFYING
+  → EXPLAINING
+  → COMPLETE
 ```
 
-Invalid transitions fail closed. `SUBMISSION_UNCERTAIN` permits status/history inspection but never another paid execution.
+Invalid transitions fail closed. Evidence recovery permits only status/activity inspection and never another paid execution. `REFUSED` and `FAILED` are reserved terminal states in the transition model; the current CLI reports pre-run refusal and propagated failures directly rather than persisting those states.
 
 ## Data model principles
 

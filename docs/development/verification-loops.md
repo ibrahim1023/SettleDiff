@@ -79,7 +79,7 @@ git diff --check
 uv run python scripts/check_docs.py
 ```
 
-The planned documentation checker verifies internal links, required ADR fields, ignored local inputs, command references, and banned placeholder markers. Until implemented, perform the same checks with `rg` and direct link inspection.
+`scripts/check_docs.py` verifies internal links, required ADR fields, ignored local inputs, command references, and banned placeholder markers.
 
 ## Anti-slop review
 
@@ -108,6 +108,7 @@ uv run ruff format --check .
 uv run ruff check .
 uv run pyright
 uv run pytest -m "not live and not paid"
+uv run python scripts/check_docs.py
 git diff --check
 git status --short
 ```

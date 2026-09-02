@@ -14,8 +14,8 @@ Prove financial semantics, evidence matching, safety gates, and interface contra
 | Agent loop | Exact tool trajectories, limits, and grounded output | None; `FunctionModel`/`TestModel` |
 | Adapter contract | Parse captured Hyperfusion/Perflo envelopes and Context.dev responses | None |
 | Interface integration | Typer and FastAPI against in-memory/fake ports | None |
-| Live compatibility | Hyperfusion tool/structured-output behavior | Hyperfusion only; explicit opt-in |
-| Paid smoke | One tightly budgeted Perflo scenario | Paid; manual explicit opt-in |
+| Live compatibility | Hyperfusion and Context.dev response mechanics | Explicit opt-in; Context.dev consumes credits |
+| Authorized live cycle | Perflo or x402 end-to-end compatibility | Manual approval, exact budget, no retry |
 
 ## Deterministic core matrix
 
@@ -186,7 +186,7 @@ only if it answers a specific question:
 - can a known `PAID_FAILURE` be reproduced against a real vendor;
 - does a fix require live compatibility verification.
 
-## Planned commands
+## Commands
 
 ```bash
 # Fast focused loop
@@ -204,12 +204,12 @@ uv run settlediff verify-fixture fixtures/paid-failure --json
 # Explicit unpaid provider compatibility
 SETTLEDIFF_LIVE_HYPERFUSION=1 uv run pytest -m live_hyperfusion
 
-# Manual paid smoke; never CI
-SETTLEDIFF_ALLOW_PAID_TEST=1 uv run pytest -m paid --maxfail=1
+# Context.dev compatibility; one credit per explicitly authorized invocation
+SETTLEDIFF_LIVE_CONTEXTDEV=1 uv run pytest -m live_contextdev
 ```
 
-The paid marker additionally requires a test-specific maximum budget and interactive confirmation; the environment flag alone is insufficient.
+Paid compatibility uses the interactive `settlediff run` command with exact owner-approved terms. There is no automated paid pytest target.
 
 ## Coverage policy
 
-Coverage is a diagnostic, not the target. The release gate requires complete branch coverage for verdict precedence, paid authorization, submission uncertainty, and redaction modules. Other modules should not regress below an agreed baseline established after Phase 2; meaningless assertions added only to raise coverage are AI slop.
+Coverage is diagnostic rather than a substitute for behavioral evidence. No percentage threshold is currently enforced. Verdict precedence, paid authorization, submission uncertainty, and redaction require explicit positive, negative, and boundary tests; meaningless assertions added only to raise a percentage are rejected.

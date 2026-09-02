@@ -123,7 +123,7 @@ _ALLOWED: dict[RunState, set[RunState]] = {
 
 
 class RunTimeline:
-    """In-memory transition record; persistence is supplied by the Phase 11 repository."""
+    """In-memory transition record persisted by the configured report repository."""
 
     def __init__(self) -> None:
         self._events = [RunEvent(state=RunState.PREFLIGHT, occurred_at=datetime.now(UTC))]

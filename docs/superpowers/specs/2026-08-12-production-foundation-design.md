@@ -1,6 +1,6 @@
 # SettleDiff Production Foundation Design
 
-**Status:** Approved direction; documentation foundation only  
+**Status:** Historical approved foundation; current behavior is documented in the architecture overview and ADRs
 **Date:** 2026-08-12  
 **Source specification:** `Product-spec.md`
 
@@ -26,7 +26,7 @@ Use one Python application with a functional core and an imperative shell:
 - Typer for the CLI.
 - SQLite for local run, artifact, finding, and trace-index persistence.
 - Pytest for unit, contract, integration, and fixture-replay tests.
-- Pydantic Evals only for probabilistic investigation behavior.
+- Deterministic pytest graders for evidence-only investigation behavior.
 - OpenTelemetry-compatible spans and structured logs, disabled for sensitive content by default.
 
 This is a production-shaped MVP, not a distributed production platform. It keeps replaceable adapters around Hyperfusion, Perflo, Context.dev, storage, and telemetry without introducing services or brokers.
@@ -197,13 +197,13 @@ Each run has a correlation ID shared across application logs, subprocess spans, 
 Minimum spans are:
 
 - `settlediff.run`;
-- `settlediff.perflo.inspect`;
-- `settlediff.perflo.execute`;
-- `settlediff.perflo.activity`;
-- `settlediff.agent.investigate`;
+- `settlediff.payment_rail.inspect`;
+- `settlediff.payment_rail.execute`;
+- `settlediff.payment_rail.activity`;
 - `settlediff.match_activity`;
+- `settlediff.contextdev.verify` when eligible;
 - `settlediff.verify`;
-- `settlediff.context.verify` when used.
+- `settlediff.agent.explain`.
 
 Metrics are low-cardinality counters and histograms for run verdict, check status, duration, tool count, model requests, parse failures, ambiguous matches, and provider errors. Wallets, URLs, transaction IDs, prompts, bodies, and run IDs are excluded from metric labels.
 

@@ -234,7 +234,7 @@ it permanently checks that:
 The current package version is **0.1.0** and the project is available under the
 [MIT License](LICENSE).
 
-The 12-phase MVP is implemented. It includes strict versioned evidence models, exact money
+The MVP and x402 second-rail milestone are implemented. They include strict versioned evidence models, exact money
 semantics, recursive redaction, bounded provider parsing, deterministic Activity matching,
 independent verification checks, verdict precedence, fully offline fixture replay, a safe
 Perflo subprocess boundary, an explicitly authorized live-run state machine, SQLite report
@@ -337,7 +337,7 @@ Repository instructions are in [AGENTS.md](AGENTS.md). Verification gates are in
 3. Improve evidence inspection and report readability.
 4. Harden the payment-adapter boundary.
 5. Validate demand with users building paid agents.
-6. Add another payment rail only when it provides meaningful validation.
+6. Add a third payment rail only when a concrete use case justifies it.
 
 ## Documentation
 
@@ -347,6 +347,9 @@ Repository instructions are in [AGENTS.md](AGENTS.md). Verification gates are in
 - [Repository structure](docs/development/repository-structure.md)
 - [Testing strategy](docs/testing/strategy.md)
 - [Live paid test cycle — 2026-08-21](docs/testing/live-run-report-2026-08-21.md)
+- [Controlled x402 live cycle](docs/testing/x402-live-cycle.md)
+- [Public x402 endpoint validation](docs/testing/x402-public-endpoint-validation.md)
+- [Context.dev live compatibility](docs/testing/contextdev-live-compatibility.md)
 - [Release checklist](docs/development/release-checklist.md)
 - [Evaluation strategy](docs/evaluation/strategy.md)
 - [Observability strategy](docs/observability/strategy.md)
