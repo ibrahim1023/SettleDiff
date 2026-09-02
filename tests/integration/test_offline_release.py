@@ -13,6 +13,7 @@ from settlediff.api.app import create_app
 from settlediff.application.replay import replay_fixture
 from settlediff.cli import app
 from settlediff.domain.models import MachineReport
+from settlediff.domain.redaction import redact_report
 from settlediff.storage.sqlite import SQLiteReportRepository
 
 
@@ -60,7 +61,7 @@ def test_complete_fixture_path_remains_offline(
         )
         assert persisted.exit_code == 0, persisted.output
         persisted_report = MachineReport.model_validate_json(persisted.stdout)
-        assert persisted_report == report
+        assert persisted_report == redact_report(report)
 
     expected_reports = tuple(report for _path, report in fixture_reports)
     repository = SQLiteReportRepository(database)
@@ -68,7 +69,7 @@ def test_complete_fixture_path_remains_offline(
     listing = client.get("/runs")
     assert listing.status_code == 200
     for report in expected_reports:
-        assert repository.get(report.run_id) == report
+        assert repository.get(report.run_id) == redact_report(report)
         detail = client.get(f"/runs/{report.run_id}")
         assert detail.status_code == 200
         assert report.verdict.value in detail.text
