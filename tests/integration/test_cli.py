@@ -367,7 +367,7 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
         input="n\n",
     )
     assert result.exit_code == 1
-    assert calls == ["check", "schema"]
+    assert calls == ["check"]
     assert "Rail: perflo" in result.stdout
     assert "Version: unknown" in result.stdout
     assert "Scheme: unknown" in result.stdout
@@ -488,7 +488,7 @@ def test_run_reports_unresolved_activity_recovery(monkeypatch: pytest.MonkeyPatc
     )
 
     assert result.exit_code == 0
-    assert calls == ["check", "schema", "fetch", "activity"]
+    assert calls == ["check", "fetch", "activity"]
     assert "UNVERIFIABLE" in result.stdout
     assert "Submission: unresolved" in result.stdout
     assert "proof of non-submission: no" in result.stdout
