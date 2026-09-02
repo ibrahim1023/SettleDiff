@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 from pydantic import Field, SecretStr, StringConstraints, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from settlediff.domain.redaction import SECRET_KEYS
+
 NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
@@ -164,7 +166,7 @@ class Settings(BaseSettings):
 
 
 def _safe_signer_command(value: tuple[str, ...]) -> tuple[str, ...]:
-    forbidden = ("privatekey", "mnemonic", "seed", "signature", "authorization")
+    forbidden = SECRET_KEYS | {"mnemonic", "seed"}
     if not value or any(not item.strip() or "\x00" in item for item in value):
         raise ValueError("x402 signer command must contain non-empty arguments")
     normalized = tuple(

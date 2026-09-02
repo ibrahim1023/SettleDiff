@@ -127,6 +127,9 @@ def test_invalid_x402_rpc_diagnostic_masks_credential_bearing_url() -> None:
         (),
         ("/opt/signer", "--private-key", "syn-secret"),
         ("/opt/signer", "--mnemonic=synthetic"),
+        ("/opt/signer", "--api-key", "syn-secret"),
+        ("/opt/signer", "--token=synthetic"),
+        ("/opt/signer", "--client-secret", "synthetic"),
         ("/opt/signer", ""),
     ],
 )
