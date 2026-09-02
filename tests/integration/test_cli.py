@@ -789,6 +789,7 @@ def test_export_and_verify_bundle_round_trip(tmp_path: Path) -> None:
     assert verified.exit_code == 0
     assert "VERIFIED" in verified.stdout
     assert report.run_id in verified.stdout
+    assert "authenticity is not established" in verified.stdout
 
 
 def test_export_refuses_to_overwrite_without_force(tmp_path: Path) -> None:

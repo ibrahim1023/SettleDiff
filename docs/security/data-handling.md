@@ -65,7 +65,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Mask identifiers by default; explicit local expansion is auditable.
 - Send the model normalized summaries and artifact handles, not unrestricted raw data.
 - Keep reports local for MVP. Retain sanitized reports until explicit per-run deletion or an owner-applied age purge; do not retain x402 signatures, reusable authorizations, signer secrets, or raw live captures in the report database.
-- Export only redacted artifacts and integrity-checked compatibility metadata. Bundle export never upgrades provider evidence into independent evidence and never exports signer material.
+- Export only redacted artifacts and checksum-protected compatibility metadata. Bundle verification detects checksum changes and internal inconsistency but does not authenticate origin; authenticated provenance requires a separately accepted signing-key owner and trust model. Bundle export never upgrades provider evidence into independent evidence and never exports signer material.
 
 ### Web UI
 

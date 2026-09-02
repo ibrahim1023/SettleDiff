@@ -599,7 +599,7 @@ def export_run(
 
 @app.command("verify-bundle")
 def verify_evidence_bundle(path: Path) -> None:
-    """Verify one bundle's schema, digest, redaction, and report consistency."""
+    """Verify one bundle's checksum, redaction, and internal consistency."""
     try:
         bundle = load_bundle(path.read_bytes())
         report = verify_bundle(bundle)
@@ -607,6 +607,7 @@ def verify_evidence_bundle(path: Path) -> None:
         typer.echo(f"Bundle verification failed: {error}", err=True)
         raise typer.Exit(code=2) from error
     typer.echo(f"Verified bundle {bundle.run_id}: {report.verdict.value}")
+    typer.echo("Checksum and internal consistency verified; authenticity is not established.")
 
 
 @app.command()
