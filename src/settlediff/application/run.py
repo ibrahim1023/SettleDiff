@@ -223,19 +223,21 @@ class LiveEvidenceCollector:
 
     @property
     def artifacts(self) -> tuple[EvidenceArtifact, ...]:
-        return tuple(
-            artifact
-            for artifact in (
-                self._contract,
-                self._schema,
-                self._execution,
-                self._receipt,
-                self._activity,
-                self._context,
-                self._recovery,
-            )
-            if artifact is not None
-        )
+        artifacts: list[EvidenceArtifact] = []
+        artifact_ids: set[str] = set()
+        for artifact in (
+            self._contract,
+            self._schema,
+            self._execution,
+            self._receipt,
+            self._activity,
+            self._context,
+            self._recovery,
+        ):
+            if artifact is not None and artifact.artifact_id not in artifact_ids:
+                artifacts.append(artifact)
+                artifact_ids.add(artifact.artifact_id)
+        return tuple(artifacts)
 
     async def preflight(self, request: PaidExecutionRequest) -> None:
         with self._span(

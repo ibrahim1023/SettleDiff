@@ -417,6 +417,7 @@ async def test_collector_empty_activity_history_does_not_prove_non_submission() 
 
     assert state is RecoveryState.UNRESOLVED
     assert len(artifacts) == 1
+    assert collector.artifacts == artifacts
 
 
 @pytest.mark.asyncio
