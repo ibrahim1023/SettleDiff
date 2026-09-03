@@ -184,6 +184,15 @@ def test_runs_support_search_verdict_filter_and_deterministic_sort(tmp_path: Pat
     assert paid_failure.run_id in searched.text
     assert clean.run_id not in searched.text
     assert 'name="q"' in searched.text
+    assert 'placeholder="Task text or run ID"' in searched.text
+
+    blank_filters = client.get(
+        "/runs",
+        params={"q": clean.run_id, "verdict": "", "state": "", "sort": "newest"},
+    )
+    assert blank_filters.status_code == 200
+    assert clean.run_id in blank_filters.text
+    assert paid_failure.run_id not in blank_filters.text
 
     filtered = client.get("/runs", params={"verdict": "PAID_FAILURE"})
     assert filtered.status_code == 200

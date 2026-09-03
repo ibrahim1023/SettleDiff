@@ -96,7 +96,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
 
     def runs(
         q: str | None = None,
-        verdict: Verdict | None = None,
+        verdict: str | None = None,
         state: str | None = None,
         sort: Literal["newest", "oldest", "verdict"] = "newest",
     ) -> str:
@@ -110,8 +110,13 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
                 if normalized_query in report.run_id.casefold()
                 or normalized_query in report.intent.task.casefold()
             ]
-        if verdict is not None:
-            reports = [report for report in reports if report.verdict is verdict]
+        selected_verdict: Verdict | None = None
+        if verdict:
+            try:
+                selected_verdict = Verdict(verdict)
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail="invalid verdict filter") from error
+            reports = [report for report in reports if report.verdict is selected_verdict]
         if sort == "verdict":
             reports.sort(key=lambda report: (report.verdict.value, report.run_id))
         else:
@@ -132,7 +137,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
         return templates.get_template("runs.html").render(
             items=items,
             query=query,
-            selected_verdict=verdict.value if verdict is not None else "",
+            selected_verdict=selected_verdict.value if selected_verdict is not None else "",
             selected_state=selected_state,
             selected_sort=sort,
             verdicts=tuple(Verdict),
