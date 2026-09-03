@@ -366,6 +366,7 @@ Repository instructions are in [AGENTS.md](AGENTS.md). Verification gates are in
 - [Testing strategy](docs/testing/strategy.md)
 - [Live paid test cycle — 2026-08-21](docs/testing/live-run-report-2026-08-21.md)
 - [Controlled x402 live cycle](docs/testing/x402-live-cycle.md)
+- [Durable controlled live cycle](docs/testing/durable-live-cycle-2026-09-03.md)
 - [Public x402 endpoint validation](docs/testing/x402-public-endpoint-validation.md)
 - [Context.dev live compatibility](docs/testing/contextdev-live-compatibility.md)
 - [Release checklist](docs/development/release-checklist.md)
