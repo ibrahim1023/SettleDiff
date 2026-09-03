@@ -738,6 +738,45 @@ def test_show_renders_persisted_report(tmp_path: Path) -> None:
     assert "VERIFIED" in result.stdout
 
 
+def test_inspect_and_recover_use_persisted_evidence_only(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/x402-provider-success-independent-failure"))
+    recovery = EvidenceArtifact(
+        artifact_id=f"{report.run_id}:recovery",
+        artifact_type=ArtifactType.PAYMENT_RECEIPT,
+        source="x402.transaction",
+        collected_at=datetime(2026, 9, 3, tzinfo=UTC),
+        redacted=True,
+        data={"status": "failed"},
+    )
+    repository = SQLiteReportRepository(database)
+    repository.save(report, artifacts=(recovery,))
+    repository.close()
+
+    inspected = runner.invoke(
+        app, ["inspect", report.run_id, "--database", str(database), "--json"]
+    )
+    recovered = runner.invoke(
+        app, ["recover", report.run_id, "--database", str(database), "--json"]
+    )
+
+    assert inspected.exit_code == 0
+    inspected_payload = json.loads(inspected.stdout)
+    assert inspected_payload["state"] == "complete"
+    assert inspected_payload["provenance"] == "fixture"
+    assert inspected_payload["artifact_ids"] == [recovery.artifact_id]
+    assert recovered.exit_code == 0
+    recovered_payload = json.loads(recovered.stdout)
+    assert recovered_payload == {
+        "run_id": report.run_id,
+        "recovery_state": "submitted",
+        "proof_of_non_submission": False,
+        "evidence_ids": [recovery.artifact_id],
+        "external_calls": 0,
+        "paid_calls": 0,
+    }
+
+
 def _persisted_fixture_report(tmp_path: Path) -> tuple[Path, str]:
     """Persist the clean-success fixture (created 2026-08-12) and return (database, run_id)."""
     database = tmp_path / "reports.sqlite3"

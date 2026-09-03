@@ -47,6 +47,7 @@ from settlediff.application.run import (
     InvestigationOutcome,
     LiveEvidenceCollector,
     LiveRunCommand,
+    RecoveryState,
     RunEvent,
     RunFailure,
     RunInvestigation,
@@ -57,6 +58,8 @@ from settlediff.application.run import (
 from settlediff.config import Settings
 from settlediff.contextdev.client import ContextDevClient
 from settlediff.domain.models import (
+    ArtifactType,
+    EvidenceArtifact,
     ExplanationRecord,
     ExplanationSource,
     MachineReport,
@@ -641,6 +644,104 @@ def show(
         typer.echo(f"Run {run_id} was not found.", err=True)
         raise typer.Exit(code=1)
     _render(report, json_mode, explanation)
+
+
+@app.command("inspect")
+def inspect_run(
+    run_id: str,
+    database: Path = DATABASE_OPTION,
+    json_mode: bool = JSON_OPTION,
+) -> None:
+    """Inspect one durable run without invoking an external system."""
+    repository = SQLiteReportRepository(database)
+    try:
+        record = repository.record(run_id)
+        artifacts = repository.artifacts(run_id) if record is not None else ()
+    finally:
+        repository.close()
+    if record is None:
+        typer.echo(f"Run {run_id} was not found.", err=True)
+        raise typer.Exit(code=1)
+    payload = {
+        "run_id": record.run_id,
+        "task": record.task,
+        "provenance": record.provenance.value,
+        "state": record.latest_state.value,
+        "verdict": record.report.verdict.value if record.report is not None else None,
+        "failure": record.failure.model_dump(mode="json") if record.failure is not None else None,
+        "artifact_ids": [artifact.artifact_id for artifact in artifacts],
+    }
+    if json_mode:
+        typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return
+    typer.echo(f"Run: {record.run_id}")
+    typer.echo(f"Task: {record.task}")
+    typer.echo(f"Provenance: {record.provenance.value}")
+    typer.echo(f"State: {record.latest_state.value}")
+    typer.echo(
+        f"Verdict: {record.report.verdict.value if record.report is not None else 'not available'}"
+    )
+    if record.failure is not None:
+        typer.echo(f"Failure: {record.failure.error_class} ({record.failure.diagnostic})")
+        typer.echo(
+            f"Submission uncertain: {'yes' if record.failure.submission_uncertain else 'no'}"
+        )
+    typer.echo(f"Artifacts: {len(artifacts)}")
+
+
+def _persisted_recovery_state(
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> tuple[RecoveryState, tuple[str, ...]]:
+    recovery = tuple(
+        artifact for artifact in artifacts if artifact.artifact_id.endswith(":recovery")
+    )
+    if not recovery:
+        return RecoveryState.UNRESOLVED, ()
+    artifact = recovery[0]
+    data = artifact.data
+    if artifact.artifact_type is ArtifactType.PAYMENT_RECEIPT and isinstance(data, dict):
+        status = data.get("status")
+        if status in {"confirmed", "failed"}:
+            return RecoveryState.SUBMITTED, (artifact.artifact_id,)
+        if status == "not_submitted" and data.get("proof_of_non_submission") is True:
+            return RecoveryState.NOT_SUBMITTED, (artifact.artifact_id,)
+    return RecoveryState.UNRESOLVED, (artifact.artifact_id,)
+
+
+@app.command("recover")
+def recover_run(
+    run_id: str,
+    database: Path = DATABASE_OPTION,
+    json_mode: bool = JSON_OPTION,
+) -> None:
+    """Classify persisted recovery evidence without signing, paying, or external I/O."""
+    repository = SQLiteReportRepository(database)
+    try:
+        record = repository.record(run_id)
+        artifacts = repository.artifacts(run_id) if record is not None else ()
+    finally:
+        repository.close()
+    if record is None:
+        typer.echo(f"Run {run_id} was not found.", err=True)
+        raise typer.Exit(code=1)
+    state, evidence_ids = _persisted_recovery_state(artifacts)
+    payload = {
+        "run_id": run_id,
+        "recovery_state": state.value,
+        "proof_of_non_submission": state is RecoveryState.NOT_SUBMITTED,
+        "evidence_ids": list(evidence_ids),
+        "external_calls": 0,
+        "paid_calls": 0,
+    }
+    if json_mode:
+        typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return
+    typer.echo(f"Recovery: {state.value}")
+    typer.echo(
+        f"Proof of non-submission: {'yes' if state is RecoveryState.NOT_SUBMITTED else 'no'}"
+    )
+    typer.echo("External calls: 0")
+    typer.echo("Paid calls: 0")
 
 
 _DURATION = re.compile(r"([0-9]+)([dhm])")
