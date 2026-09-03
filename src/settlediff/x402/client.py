@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import os
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from settlediff.application.payment_rails import SubmissionUncertainError
 from settlediff.subprocess_io import OutputLimitExceeded, communicate_bounded
 from settlediff.x402.client_contract import (
+    EvmAddress,
     ExternalSignerRequest,
     ExternalSignerResult,
     SignerSubmissionState,
@@ -22,6 +23,68 @@ class X402ClientError(RuntimeError):
 
 class X402SubmissionUncertainError(SubmissionUncertainError, X402ClientError):
     submission_uncertain = True
+
+
+async def _terminate_process(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=0.25)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+
+
+def _controlled_environment() -> dict[str, str]:
+    environment: dict[str, str] = {}
+    for name in ("PATH", "SYSTEMROOT", "TMPDIR"):
+        value = os.environ.get(name)
+        if value:
+            environment[name] = value
+    environment["NO_COLOR"] = "1"
+    return environment
+
+
+class X402SignerMetadata(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    schema_version: int
+    payer: EvmAddress
+
+
+async def probe_x402_signer(
+    command: tuple[str, ...], *, timeout_seconds: float = 5
+) -> X402SignerMetadata:
+    if not command or timeout_seconds <= 0:
+        raise X402ClientError("invalid x402 signer probe configuration")
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            "--version",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=_controlled_environment(),
+        )
+    except OSError as error:
+        raise X402ClientError("x402 signer launcher is unavailable") from error
+    try:
+        stdout, _stderr = await asyncio.wait_for(
+            communicate_bounded(process, 4096), timeout=timeout_seconds
+        )
+    except (OutputLimitExceeded, TimeoutError) as error:
+        await _terminate_process(process)
+        raise X402ClientError("x402 signer metadata probe failed") from error
+    if process.returncode != 0:
+        raise X402ClientError("x402 signer metadata probe was refused")
+    try:
+        metadata = X402SignerMetadata.model_validate_json(stdout, strict=True)
+    except (ValidationError, ValueError) as error:
+        raise X402ClientError("x402 signer metadata is invalid") from error
+    if metadata.schema_version != 2:
+        raise X402ClientError("x402 signer schema is incompatible")
+    return metadata
 
 
 class X402ExternalClient:
@@ -40,7 +103,7 @@ class X402ExternalClient:
         self._timeout_seconds = timeout_seconds
         self._max_input_bytes = max_input_bytes
         self._max_output_bytes = max_output_bytes
-        self._environment = environment or self._controlled_environment()
+        self._environment = environment or _controlled_environment()
         self._launch_lock = asyncio.Lock()
         self._launched = False
 
@@ -65,17 +128,17 @@ class X402ExternalClient:
                 timeout=self._timeout_seconds,
             )
         except asyncio.CancelledError as error:
-            await self._terminate(process)
+            await _terminate_process(process)
             raise X402SubmissionUncertainError(
                 "x402 signer was cancelled after launch; perform read-only recovery"
             ) from error
         except TimeoutError as error:
-            await self._terminate(process)
+            await _terminate_process(process)
             raise X402SubmissionUncertainError(
                 "x402 signer timed out after launch; perform read-only recovery"
             ) from error
         except OutputLimitExceeded as error:
-            await self._terminate(process)
+            await _terminate_process(process)
             raise X402SubmissionUncertainError(
                 "x402 signer output exceeded its limit after launch; perform read-only recovery"
             ) from error
@@ -95,24 +158,3 @@ class X402ExternalClient:
                 "x402 signer failed after possible submission; perform read-only recovery"
             )
         return result
-
-    @staticmethod
-    async def _terminate(process: asyncio.subprocess.Process) -> None:
-        if process.returncode is not None:
-            return
-        process.terminate()
-        try:
-            await asyncio.wait_for(process.wait(), timeout=0.25)
-        except TimeoutError:
-            process.kill()
-            await process.wait()
-
-    @staticmethod
-    def _controlled_environment() -> dict[str, str]:
-        environment: dict[str, str] = {}
-        for name in ("PATH", "SYSTEMROOT", "TMPDIR"):
-            value = os.environ.get(name)
-            if value:
-                environment[name] = value
-        environment["NO_COLOR"] = "1"
-        return environment

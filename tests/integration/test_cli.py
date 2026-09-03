@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -57,7 +58,7 @@ def x402_live_settings(*, enabled: bool = True) -> Settings:
     return Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue]
         contextdev_api_key=SecretStr("syn-contextdev-key"),
-        x402_signer_command=("/opt/syn-x402-signer",),
+        x402_signer_command=(sys.executable,),
         x402_rpc_url="https://rpc.example.invalid",
         x402_testnet_enabled=enabled,
     )
@@ -113,6 +114,46 @@ def test_version_option_reports_package_version_without_running_a_command() -> N
 
     assert result.exit_code == 0
     assert result.stdout == f"settlediff {__version__}\n"
+
+
+def test_doctor_checks_perflo_and_database_without_paid_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def executable(_command: str) -> str:
+        return "/usr/bin/perflo"
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.shutil.which", executable)
+
+    result = runner.invoke(
+        app,
+        ["doctor", "--rail", "perflo", "--database", str(tmp_path / "reports.sqlite3")],
+    )
+
+    assert result.exit_code == 0
+    assert "Database: writable" in result.stdout
+    assert "Context.dev: configured" in result.stdout
+    assert "Perflo: executable available" in result.stdout
+
+
+def test_doctor_reports_x402_schema_payer_and_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def doctor_x402(_settings: Settings) -> tuple[str, str]:
+        return "0x14a34", "0x3333…3333"
+
+    monkeypatch.setattr("settlediff.cli.Settings", x402_live_settings)
+    monkeypatch.setattr("settlediff.cli._doctor_x402", doctor_x402)
+
+    result = runner.invoke(
+        app,
+        ["doctor", "--rail", "x402", "--database", str(tmp_path / "reports.sqlite3")],
+    )
+
+    assert result.exit_code == 0
+    assert "Signer schema: 2" in result.stdout
+    assert "Signer payer: 0x3333…3333" in result.stdout
+    assert "RPC chain: 0x14a34 (Base Sepolia)" in result.stdout
 
 
 def test_fixture_replay_requires_no_live_configuration() -> None:

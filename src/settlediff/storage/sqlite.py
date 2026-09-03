@@ -87,6 +87,11 @@ class SQLiteReportRepository:
                         "INSERT INTO schema_migrations(version) VALUES (?)", (version,)
                     )
 
+    def check_writable(self) -> None:
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.rollback()
+
     def begin_run(
         self,
         run_id: str,

@@ -7,6 +7,10 @@ import time
 from pathlib import Path
 from typing import cast
 
+if sys.argv[-1] == "--version":
+    print(json.dumps({"schema_version": 2, "payer": "0x3333333333333333333333333333333333333333"}))
+    raise SystemExit(0)
+
 mode = sys.argv[1]
 count_path = Path(sys.argv[2])
 count = int(count_path.read_text()) if count_path.exists() else 0

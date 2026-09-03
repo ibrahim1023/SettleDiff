@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import shutil
 import sqlite3
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -61,12 +62,13 @@ from settlediff.domain.models import (
     MachineReport,
 )
 from settlediff.domain.money import Money
+from settlediff.domain.redaction import mask_identifier
 from settlediff.perflo.adapter import PerfloAdapter
 from settlediff.perflo.client import PerfloClient, PerfloClientError
 from settlediff.storage.sqlite import SQLiteReportRepository
 from settlediff.telemetry.setup import TelemetryRuntime, configure_telemetry
 from settlediff.x402.adapter import X402Adapter
-from settlediff.x402.client import X402ClientError, X402ExternalClient
+from settlediff.x402.client import X402ClientError, X402ExternalClient, probe_x402_signer
 from settlediff.x402.http import X402ResourceClient
 from settlediff.x402.rpc import X402RpcClient
 from settlediff.x402.urls import is_safe_x402_target
@@ -390,6 +392,69 @@ def _build_payment_adapter(
     return adapter, close
 
 
+async def _doctor_x402(settings: Settings) -> tuple[str, str]:
+    config = settings.require_x402()
+    if not config.testnet_enabled:
+        raise ValueError("x402 testnet configuration is disabled")
+    if shutil.which(config.signer_command[0]) is None:
+        raise ValueError("x402 signer launcher is unavailable")
+    metadata = await probe_x402_signer(
+        config.signer_command,
+        timeout_seconds=config.signer_timeout_seconds,
+    )
+    rpc_http = httpx.AsyncClient(
+        base_url=config.rpc_url.get_secret_value(),
+        follow_redirects=False,
+    )
+    try:
+        chain_id = await X402RpcClient(
+            rpc_http,
+            max_requests=1,
+            timeout_seconds=config.rpc_timeout_seconds,
+        ).call("eth_chainId", ())
+    finally:
+        await rpc_http.aclose()
+    if chain_id != "0x14a34":
+        raise ValueError("x402 RPC does not report Base Sepolia")
+    return str(chain_id), mask_identifier(metadata.payer)
+
+
+def _check_database(database: Path | None) -> None:
+    if database is None:
+        return
+    repository = SQLiteReportRepository(database)
+    try:
+        repository.check_writable()
+    finally:
+        repository.close()
+
+
+@app.command()
+def doctor(
+    rail: PaymentRail = RAIL_OPTION,
+    database: Path | None = OPTIONAL_DATABASE_OPTION,
+) -> None:
+    """Check live dependencies without signing or paying."""
+    try:
+        settings = Settings()
+        settings.require_contextdev()
+        _check_database(database)
+        typer.echo("Database: writable" if database is not None else "Database: not selected")
+        typer.echo("Context.dev: configured")
+        if rail is PaymentRail.PERFLO:
+            if shutil.which("perflo") is None:
+                raise ValueError("Perflo executable is unavailable")
+            typer.echo("Perflo: executable available")
+        else:
+            chain_id, payer = asyncio.run(_doctor_x402(settings))
+            typer.echo("Signer schema: 2")
+            typer.echo(f"Signer payer: {payer}")
+            typer.echo(f"RPC chain: {chain_id} (Base Sepolia)")
+    except (OSError, X402ClientError, ValueError) as error:
+        typer.echo(f"Doctor failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+
+
 @app.command()
 def run(
     url: str = typer.Option(...),
@@ -448,6 +513,10 @@ def run(
                     "x402 testnet execution requires --allow-testnet and "
                     "SETTLEDIFF_X402_TESTNET_ENABLED=true"
                 )
+            if shutil.which(x402_config.signer_command[0]) is None:
+                raise ValueError("x402 signer launcher is unavailable; run settlediff doctor")
+        elif shutil.which("perflo") is None:
+            raise ValueError("Perflo executable is unavailable; run settlediff doctor")
     except ValueError as error:
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error

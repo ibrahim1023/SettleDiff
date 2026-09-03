@@ -209,6 +209,15 @@ payment-terms digest, and budget before mandatory interactive authorization. Per
 ordinary report views remain masked. Environment flags never
 bypass confirmation, and live/paid calls are never part of the default test suite.
 
+Before authorization, validate the selected database and live dependencies without signing or paying:
+
+```bash
+uv run settlediff doctor --rail perflo --database /path/to/reports.sqlite3
+uv run settlediff doctor --rail x402 --database /path/to/reports.sqlite3
+```
+
+The x402 signer command must support `--version` and return bounded JSON containing `schema_version: 2` and its public `payer` address. `doctor` also verifies the configured read-only RPC reports Base Sepolia. Signer installation and wallet authority remain independently owned; SettleDiff stores neither the launcher package nor its key.
+
 ## Live findings become offline regression tests
 
 SettleDiff does not rely on live vendors for its default test suite. When a real paid run

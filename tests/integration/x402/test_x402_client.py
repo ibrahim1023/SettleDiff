@@ -14,6 +14,7 @@ from settlediff.x402.client import (
     X402ClientError,
     X402ExternalClient,
     X402SubmissionUncertainError,
+    probe_x402_signer,
 )
 from settlediff.x402.client_contract import (
     ExternalSignerRequest,
@@ -53,6 +54,17 @@ def client(
         max_input_bytes=max_input_bytes,
         max_output_bytes=max_output_bytes,
     )
+
+
+@pytest.mark.asyncio
+async def test_signer_metadata_probe_requires_schema_two_and_public_payer(tmp_path: Path) -> None:
+    metadata = await probe_x402_signer(
+        (sys.executable, str(FAKE), "success", str(tmp_path / "count"))
+    )
+
+    assert metadata.schema_version == 2
+    assert metadata.payer == "0x3333333333333333333333333333333333333333"
+    assert not (tmp_path / "count").exists()
 
 
 @pytest.mark.asyncio
