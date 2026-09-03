@@ -10,7 +10,7 @@ from typing import cast
 import pytest
 
 from settlediff.application.replay import replay_fixture
-from settlediff.application.run import RunFailure, RunProvenance, RunState, RunTimeline
+from settlediff.application.run import RunEvent, RunFailure, RunProvenance, RunState, RunTimeline
 from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
@@ -57,7 +57,9 @@ def test_live_run_is_durable_before_final_report(tmp_path: Path) -> None:
         provenance=RunProvenance.EXTERNAL_LIVE,
         created_at=created_at,
     )
-    repository.append_event(report.run_id, RunState.AUTHORIZED)
+    repository.append_event(
+        report.run_id, RunEvent(state=RunState.AUTHORIZED, occurred_at=created_at)
+    )
     repository.save_artifacts(report.run_id, (artifact,))
     failure = RunFailure(
         stage=RunState.EXECUTING,

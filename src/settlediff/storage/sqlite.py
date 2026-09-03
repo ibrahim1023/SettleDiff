@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from threading import RLock
 from typing import cast
@@ -116,27 +116,34 @@ class SQLiteReportRepository:
                     record.latest_state.value,
                 ),
             )
+            event = RunEvent(state=RunState.PREFLIGHT, occurred_at=record.created_at)
+            self._connection.execute(
+                "INSERT INTO run_record_events(run_id, position, event_json) VALUES (?, 0, ?)",
+                (run_id, event.model_dump_json()),
+            )
 
-    def append_event(self, run_id: str, state: RunState) -> RunEvent:
-        event = RunEvent(state=state, occurred_at=datetime.now(UTC))
+    def append_event(self, run_id: str, event: RunEvent) -> None:
         with self._lock, self._connection:
             row = self._connection.execute(
-                "SELECT COALESCE(MAX(position), -1) + 1 FROM run_record_events WHERE run_id = ?",
+                "SELECT position, event_json FROM run_record_events WHERE run_id = ? "
+                "ORDER BY position DESC LIMIT 1",
                 (run_id,),
             ).fetchone()
             if row is None:
-                raise ValueError("run event position is unavailable")
+                raise ValueError("run record not found")
+            latest = RunEvent.model_validate_json(cast(str, row[1]))
+            if latest.state is event.state:
+                return
             self._connection.execute(
                 "INSERT INTO run_record_events(run_id, position, event_json) VALUES (?, ?, ?)",
-                (run_id, int(row[0]), event.model_dump_json()),
+                (run_id, int(row[0]) + 1, event.model_dump_json()),
             )
             updated = self._connection.execute(
                 "UPDATE run_records SET latest_state = ? WHERE run_id = ?",
-                (state.value, run_id),
+                (event.state.value, run_id),
             )
             if updated.rowcount != 1:
                 raise ValueError("run record not found")
-        return event
 
     def save_artifacts(self, run_id: str, artifacts: tuple[EvidenceArtifact, ...]) -> None:
         with self._lock, self._connection:

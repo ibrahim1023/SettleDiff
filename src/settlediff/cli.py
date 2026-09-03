@@ -40,13 +40,17 @@ from settlediff.application.bundle import (
     serialize_bundle,
     verify_bundle,
 )
-from settlediff.application.payment_rails import PaymentRailAdapter
+from settlediff.application.payment_rails import PaymentRailAdapter, SubmissionUncertainError
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
     InvestigationOutcome,
     LiveEvidenceCollector,
     LiveRunCommand,
+    RunEvent,
+    RunFailure,
     RunInvestigation,
+    RunProvenance,
+    RunState,
     SubmissionRecovery,
 )
 from settlediff.config import Settings
@@ -193,6 +197,40 @@ async def _explain_without_model(
     )
 
 
+def _record_live_failure(
+    repository: SQLiteReportRepository | None,
+    run_id: str,
+    error: Exception,
+    *,
+    submission_uncertain: bool,
+) -> None:
+    if repository is None:
+        return
+    events = list(repository.events(run_id))
+    stage = RunState.PREFLIGHT
+    if events:
+        stage = (
+            events[-2].state
+            if events[-1].state is RunState.FAILED and len(events) > 1
+            else events[-1].state
+        )
+    if not events or events[-1].state is not RunState.FAILED:
+        repository.append_event(
+            run_id,
+            RunEvent(state=RunState.FAILED, occurred_at=datetime.now(UTC)),
+        )
+    repository.record_failure(
+        run_id,
+        RunFailure(
+            stage=stage,
+            error_class=type(error).__name__,
+            diagnostic=f"{stage.value} failed",
+            submission_uncertain=submission_uncertain,
+            occurred_at=datetime.now(UTC),
+        ),
+    )
+
+
 async def _execute_live_run(
     request: PaidExecutionRequest,
     settings: Settings,
@@ -201,12 +239,27 @@ async def _execute_live_run(
     budget: InvestigationBudgetState,
     telemetry: TelemetryRuntime,
     adapter_close: AdapterCloser | None = None,
+    repository: SQLiteReportRepository | None = None,
 ) -> InvestigationOutcome:
     """Keep every async live boundary on one event loop."""
+
+    async def persist_event(event: RunEvent) -> None:
+        if repository is not None:
+            repository.append_event(request.run_id, event)
+            repository.save_artifacts(request.run_id, collector.artifacts)
+
     try:
         try:
             await collector.preflight(request)
-        except (PerfloClientError, X402ClientError, ValueError) as error:
+            if repository is not None:
+                repository.save_artifacts(request.run_id, collector.artifacts)
+        except (PerfloClientError, X402ClientError, OSError, ValueError) as error:
+            _record_live_failure(
+                repository,
+                request.run_id,
+                error,
+                submission_uncertain=False,
+            )
             typer.echo(f"Live preflight failed: {error}", err=True)
             raise typer.Exit(code=2) from error
 
@@ -253,6 +306,11 @@ async def _execute_live_run(
             f"output tokens: {INVESTIGATION_OUTPUT_TOKEN_LIMIT}"
         )
         if not typer.confirm("Authorize this exact paid request?"):
+            if repository is not None:
+                repository.append_event(
+                    request.run_id,
+                    RunEvent(state=RunState.REFUSED, occurred_at=datetime.now(UTC)),
+                )
             typer.echo("Authorization declined; no paid request was sent.")
             raise typer.Exit(code=1)
 
@@ -260,6 +318,7 @@ async def _execute_live_run(
         return await RunInvestigation(
             collector.execute,
             lambda: collector.verify(request),
+            persist_event=persist_event,
             telemetry=telemetry,
             explain=lambda report, artifact_ids: _explain_report(report, artifact_ids, model),
             artifact_ids=lambda: frozenset(
@@ -405,6 +464,26 @@ def run(
         body=parsed_body,
         budget=Money(amount=amount, unit="USDC"),
     )
+    repository: SQLiteReportRepository | None = None
+    if database is not None:
+        try:
+            repository = SQLiteReportRepository(database)
+            provenance = (
+                RunProvenance.CONTROLLED_LIVE
+                if rail is PaymentRail.X402 and parsed_url.scheme == "http"
+                else RunProvenance.EXTERNAL_LIVE
+            )
+            repository.begin_run(
+                request.run_id,
+                task=f"{rail.value} request to {parsed_url.hostname}",
+                provenance=provenance,
+                created_at=datetime.now(UTC),
+            )
+        except (OSError, sqlite3.Error, ValueError) as error:
+            if repository is not None:
+                repository.close()
+            typer.echo("Live run database is not writable.", err=True)
+            raise typer.Exit(code=2) from error
     budget_state = InvestigationBudgetState(
         InvestigationBudget.issue(
             request.run_id,
@@ -433,29 +512,32 @@ def run(
                     budget_state,
                     telemetry,
                     adapter_close,
+                    repository,
                 )
             )
-        except (PerfloClientError, X402ClientError, ValueError) as error:
-            typer.echo(f"Live investigation failed: {error}", err=True)
+        except (PerfloClientError, X402ClientError, OSError, ValueError) as error:
+            _record_live_failure(
+                repository,
+                request.run_id,
+                error,
+                submission_uncertain=isinstance(error, SubmissionUncertainError),
+            )
+            message = "signer process could not start" if isinstance(error, OSError) else str(error)
+            typer.echo(f"Live investigation failed: {message}", err=True)
             raise typer.Exit(code=2) from error
         persistence_failed = False
-        if database is not None:
+        if repository is not None:
             try:
-                repository = SQLiteReportRepository(database)
-                try:
-                    with telemetry.span("settlediff.storage.persist", {"component": "storage"}):
-                        repository.save(
-                            outcome.report,
-                            events=outcome.events,
-                            artifacts=collector.artifacts,
-                            explanation=outcome.explanation,
-                        )
-                finally:
-                    repository.close()
+                with telemetry.span("settlediff.storage.persist", {"component": "storage"}):
+                    repository.save_artifacts(request.run_id, collector.artifacts)
+                    repository.finalize_run(
+                        outcome.report,
+                        explanation=outcome.explanation,
+                    )
             except (OSError, sqlite3.Error):
                 persistence_failed = True
                 typer.echo(
-                    "Critical: report was not persisted; rendering the in-memory result.",
+                    "Critical: report finalization failed; the durable run remains available.",
                     err=True,
                 )
         with telemetry.span("settlediff.render", {"component": "rendering"}):
@@ -468,6 +550,8 @@ def run(
         if persistence_failed:
             raise typer.Exit(code=2)
     finally:
+        if repository is not None:
+            repository.close()
         telemetry.shutdown()
 
 

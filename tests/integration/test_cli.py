@@ -431,7 +431,9 @@ async def test_perflo_adapter_rejects_conflicting_transaction_references() -> No
         )
 
 
-def test_run_reports_unresolved_activity_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_reports_unresolved_activity_recovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     calls: list[str] = []
 
     class FakePerflo:
@@ -483,7 +485,17 @@ def test_run_reports_unresolved_activity_recovery(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
     result = runner.invoke(
         app,
-        ["run", "--url", "https://example.invalid/search", "--body", "{}", "--budget", "0.01"],
+        [
+            "run",
+            "--url",
+            "https://example.invalid/search",
+            "--body",
+            "{}",
+            "--budget",
+            "0.01",
+            "--database",
+            str(tmp_path / "reports.sqlite3"),
+        ],
         input="y\n",
     )
 
@@ -492,6 +504,67 @@ def test_run_reports_unresolved_activity_recovery(monkeypatch: pytest.MonkeyPatc
     assert "UNVERIFIABLE" in result.stdout
     assert "Submission: unresolved" in result.stdout
     assert "proof of non-submission: no" in result.stdout
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    records = repository.records()
+    assert len(records) == 1
+    assert records[0].report is not None
+    assert records[0].latest_state is RunState.COMPLETE
+    assert records[0].provenance.value == "external_live"
+    assert repository.artifacts(records[0].run_id)
+    repository.close()
+
+
+def test_live_signer_launch_failure_remains_visible_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    requests: list[PaidExecutionRequest] = []
+
+    class BrokenSignerAdapter(DeclineX402Adapter):
+        async def execute_once(self, *_args: object) -> AdapterEvidence:
+            raise PermissionError("syn-sensitive-launch-path")
+
+    adapter = BrokenSignerAdapter(requests)
+    monkeypatch.setattr("settlediff.cli.Settings", x402_live_settings)
+
+    def build_adapter(_rail: PaymentRail, _settings: Settings) -> tuple[BrokenSignerAdapter, None]:
+        return adapter, None
+
+    monkeypatch.setattr("settlediff.cli._build_payment_adapter", build_adapter)
+    database = tmp_path / "reports.sqlite3"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--rail",
+            "x402",
+            "--allow-testnet",
+            "--method",
+            "GET",
+            "--url",
+            "https://example.invalid/paid",
+            "--budget",
+            "0.001",
+            "--database",
+            str(database),
+        ],
+        input="y\n",
+    )
+
+    assert result.exit_code == 2
+    assert "signer process could not start" in result.stderr
+    assert "Traceback" not in result.output
+    assert "syn-sensitive-launch-path" not in result.output
+    repository = SQLiteReportRepository(database)
+    records = repository.records()
+    assert len(records) == 1
+    assert records[0].latest_state is RunState.FAILED
+    assert records[0].report is None
+    assert records[0].failure is not None
+    assert records[0].failure.error_class == "PermissionError"
+    assert records[0].failure.submission_uncertain is False
+    assert repository.artifacts(records[0].run_id)
+    repository.close()
 
 
 def test_live_run_renders_in_memory_report_when_persistence_fails(
@@ -520,7 +593,13 @@ def test_live_run_renders_in_memory_report_when_persistence_fails(
         def __init__(self, path: Path) -> None:
             assert path == tmp_path / "reports.sqlite3"
 
-        def save(self, *_args: object, **_kwargs: object) -> None:
+        def begin_run(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def save_artifacts(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def finalize_run(self, *_args: object, **_kwargs: object) -> None:
             raise sqlite3.OperationalError("syn-sensitive-storage-detail")
 
         def close(self) -> None:
@@ -548,7 +627,7 @@ def test_live_run_renders_in_memory_report_when_persistence_fails(
 
     assert result.exit_code == 2
     assert '"verdict":"VERIFIED"' in result.stdout
-    assert "report was not persisted" in result.stderr
+    assert "durable run remains available" in result.stderr
     assert "syn-sensitive-storage-detail" not in result.stderr
 
 
