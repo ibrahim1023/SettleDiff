@@ -6,11 +6,12 @@ from hashlib import sha384
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from settlediff.api.app import create_app
 from settlediff.application.replay import replay_fixture
-from settlediff.application.run import RunState, RunTimeline
+from settlediff.application.run import RunEvent, RunFailure, RunProvenance, RunState, RunTimeline
 from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
@@ -177,6 +178,12 @@ def test_runs_support_search_verdict_filter_and_deterministic_sort(tmp_path: Pat
     timeline.transition(RunState.COMPLETE)
     repository.save(clean, events=timeline.events)
     repository.save(paid_failure)
+    repository.begin_run(
+        "live_active",
+        task="External active search",
+        provenance=RunProvenance.EXTERNAL_LIVE,
+        created_at=datetime(2026, 9, 3, tzinfo=UTC),
+    )
     client = TestClient(create_app(repository))
 
     searched = client.get("/runs", params={"q": "paid failure"})
@@ -203,14 +210,76 @@ def test_runs_support_search_verdict_filter_and_deterministic_sort(tmp_path: Pat
     state_filtered = client.get("/runs", params={"state": "complete"})
     assert state_filtered.status_code == 200
     assert clean.run_id in state_filtered.text
-    assert paid_failure.run_id not in state_filtered.text
+    assert paid_failure.run_id in state_filtered.text
+    assert "live_active" not in state_filtered.text
     assert 'option value="complete" selected' in state_filtered.text
+
+    provenance_filtered = client.get("/runs", params={"provenance": "external_live"})
+    assert provenance_filtered.status_code == 200
+    assert "live_active" in provenance_filtered.text
+    assert clean.run_id not in provenance_filtered.text
+    assert 'option value="external_live" selected' in provenance_filtered.text
 
     sorted_response = client.get("/runs", params={"sort": "verdict"})
     assert sorted_response.status_code == 200
     assert sorted_response.text.index(paid_failure.run_id) < sorted_response.text.index(
         clean.run_id
     )
+    repository.close()
+
+
+def test_incomplete_live_run_remains_visible_with_safe_failure_and_artifacts(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    created_at = datetime(2026, 9, 3, tzinfo=UTC)
+    repository.begin_run(
+        "live_failed",
+        task="External x402 request",
+        provenance=RunProvenance.EXTERNAL_LIVE,
+        created_at=created_at,
+    )
+    repository.save_artifacts(
+        "live_failed",
+        (
+            EvidenceArtifact(
+                artifact_id="live_failed:contract",
+                artifact_type=ArtifactType.SERVICE_CONTRACT,
+                source="x402.challenge",
+                collected_at=created_at,
+                redacted=False,
+                data={"recipient": "syn_sensitive_recipient"},
+            ),
+        ),
+    )
+    repository.append_event("live_failed", RunEvent(state=RunState.FAILED, occurred_at=created_at))
+    repository.record_failure(
+        "live_failed",
+        RunFailure(
+            stage=RunState.EXECUTING,
+            error_class="PermissionError",
+            diagnostic="executing failed",
+            submission_uncertain=False,
+            occurred_at=created_at,
+        ),
+    )
+    client = TestClient(create_app(repository))
+
+    listing = client.get("/runs")
+    detail = client.get("/runs/live_failed")
+    artifacts = client.get("/runs/live_failed/artifacts")
+
+    assert listing.status_code == 200
+    assert "live_failed" in listing.text
+    assert "external live" in listing.text
+    assert "No final report" in listing.text
+    assert 'hx-trigger="every 3s"' in listing.text
+    assert detail.status_code == 200
+    assert "Safe failure evidence" in detail.text
+    assert "PermissionError" in detail.text
+    assert "Submission uncertain</dt><dd>No" in detail.text
+    assert artifacts.status_code == 200
+    assert "syn_sensitive_recipient" not in artifacts.text
     repository.close()
 
 
@@ -420,6 +489,36 @@ def test_run_detail_renders_persisted_recovery_evidence(tmp_path: Path) -> None:
     assert "Unresolved" in detail.text
     assert "No proof of non-submission" in detail.text
     assert "activity history" in detail.text
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("failed", "Submitted, but the transaction failed or reverted."),
+        ("not_submitted", "Not submitted."),
+    ],
+)
+def test_transaction_recovery_distinguishes_revert_from_non_submission(
+    tmp_path: Path, status: str, expected: str
+) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    artifact = EvidenceArtifact(
+        artifact_id=f"{report.run_id}:recovery",
+        artifact_type=ArtifactType.PAYMENT_RECEIPT,
+        source="x402.transaction",
+        collected_at=datetime(2026, 8, 18, tzinfo=UTC),
+        redacted=True,
+        data={"status": status},
+    )
+    repository.save(report, artifacts=(artifact,))
+    assert repository.artifacts(report.run_id) == (artifact,)
+
+    detail = TestClient(create_app(repository)).get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert expected in detail.text
     repository.close()
 
 

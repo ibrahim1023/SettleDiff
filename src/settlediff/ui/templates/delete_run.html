@@ -1,20 +1,21 @@
 {% extends "base.html" %}
-{% block title %}Delete {{ report.run_id }}{% endblock %}
+{% block title %}Delete {{ record.run_id }}{% endblock %}
 {% block content %}
-  <p class="breadcrumb"><a href="/runs">Investigation runs</a><span aria-hidden="true">/</span><a href="/runs/{{ report.run_id }}">{{ report.run_id }}</a><span aria-hidden="true">/</span><span>Delete</span></p>
+  <p class="breadcrumb"><a href="/runs">Investigation runs</a><span aria-hidden="true">/</span><a href="/runs/{{ record.run_id }}">{{ record.run_id }}</a><span aria-hidden="true">/</span><span>Delete</span></p>
   <section class="panel delete-panel">
     <p class="eyebrow">Destructive local action</p>
     <h1>Delete local report</h1>
     <p>This permanently removes the report and its persisted events, artifacts, and explanation from this local database.</p>
     <dl class="context-metadata">
-      <div><dt>Run</dt><dd>{{ report.run_id }}</dd></div>
-      <div><dt>Verdict</dt><dd>{{ report.verdict.value }}</dd></div>
-      <div><dt>Created</dt><dd>{{ report.intent.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd></div>
+      <div><dt>Run</dt><dd>{{ record.run_id }}</dd></div>
+      <div><dt>State</dt><dd>{{ record.latest_state.value }}</dd></div>
+      <div><dt>Verdict</dt><dd>{{ record.report.verdict.value if record.report else "Pending" }}</dd></div>
+      <div><dt>Created</dt><dd>{{ record.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd></div>
     </dl>
-    <form class="delete-form" method="post" action="/runs/{{ report.run_id }}/delete">
+    <form class="delete-form" method="post" action="/runs/{{ record.run_id }}/delete">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="danger-action" type="submit">Delete this report</button>
-      <a class="secondary-action" href="/runs/{{ report.run_id }}">Cancel</a>
+      <a class="secondary-action" href="/runs/{{ record.run_id }}">Cancel</a>
     </form>
   </section>
 {% endblock %}

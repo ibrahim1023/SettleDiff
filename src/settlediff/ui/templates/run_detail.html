@@ -8,6 +8,7 @@
       <h1>{{ report.intent.task }}</h1>
       <p class="run-id">{{ report.run_id }}</p>
       {% if report.adapter_id %}<p>Payment rail: {{ report.adapter_id }}</p>{% endif %}
+      <p>Provenance: {{ record.provenance.value|replace("_", " ") }}</p>
     </div>
     <span class="verdict verdict-{{ report.verdict.value|lower }}">{{ report.verdict.value }}</span>
   </section>
@@ -193,7 +194,9 @@
         {% if recovery_status == "confirmed" %}
           <p><strong>Submitted.</strong> Read-only transaction status confirmed the payment.</p>
         {% elif recovery_status == "failed" %}
-          <p><strong>Not submitted.</strong> Read-only transaction status proves the payment was not submitted.</p>
+          <p><strong>Submitted, but the transaction failed or reverted.</strong> Read-only transaction status proves submission, not settlement.</p>
+        {% elif recovery_status == "not_submitted" %}
+          <p><strong>Not submitted.</strong> Explicit recovery evidence proves no payment submission occurred.</p>
         {% else %}
           <p><strong>Unresolved.</strong> The transaction status did not establish submission.</p>
         {% endif %}

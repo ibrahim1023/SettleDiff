@@ -4,7 +4,7 @@
   <section class="intro">
     <p class="eyebrow">Local evidence ledger</p>
     <h1>Investigation runs</h1>
-    <p>Find a persisted run, inspect its deterministic verdict, and trace every result to evidence.</p>
+    <p>Watch active runs, inspect deterministic verdicts, and trace every result to evidence.</p>
   </section>
   <form class="run-filters" method="get" action="/runs" aria-label="Filter investigation runs">
     <label class="search-field">
@@ -30,6 +30,15 @@
       </select>
     </label>
     <label>
+      <span>Provenance</span>
+      <select name="provenance">
+        <option value="">All provenance</option>
+        {% for provenance in provenances %}
+          <option value="{{ provenance.value }}"{% if selected_provenance == provenance.value %} selected{% endif %}>{{ provenance.value|replace("_", " ")|title }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
       <span>Sort</span>
       <select name="sort">
         <option value="newest"{% if selected_sort == "newest" %} selected{% endif %}>Newest first</option>
@@ -40,34 +49,44 @@
     <button type="submit">Apply</button>
     <a class="clear-filters" href="/runs">Clear</a>
   </form>
-  {% if items %}
-    <p class="result-count">{{ items|length }} persisted run{% if items|length != 1 %}s{% endif %}</p>
-    <div class="records-table">
-      <table>
-        <thead><tr><th>Investigation</th><th>Created</th><th>Latest state</th><th>Verdict</th></tr></thead>
-        <tbody>
-          {% for item in items %}
-            {% set report = item.report %}
-            <tr>
-              <td data-label="Investigation">
-                <a class="run-record-link" href="/runs/{{ report.run_id }}">
-                  <strong>{{ report.intent.task }}</strong>
-                  <small>{{ report.run_id }}</small>
-                </a>
-              </td>
-              <td data-label="Created"><time datetime="{{ report.intent.created_at.isoformat() }}">{{ report.intent.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</time></td>
-              <td data-label="Latest state"><span class="state-chip">{{ item.latest_state }}</span></td>
-              <td data-label="Verdict"><span class="verdict verdict-{{ report.verdict.value|lower }}">{{ report.verdict.value }}</span></td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  {% else %}
-    <section class="empty-state">
-      <h2>No matching runs</h2>
-      <p>Clear the filters or create a local run with:</p>
-      <code>uv run settlediff verify-fixture fixtures/paid-failure --database /tmp/settlediff.sqlite3</code>
-    </section>
-  {% endif %}
+  <div id="run-results" hx-get="{{ refresh_url }}" hx-trigger="every 3s" hx-select="#run-results" hx-swap="outerHTML">
+    {% if items %}
+      <p class="result-count">{{ items|length }} persisted run{% if items|length != 1 %}s{% endif %}</p>
+      <div class="records-table">
+        <table>
+          <thead><tr><th>Investigation</th><th>Created</th><th>Provenance</th><th>Latest state</th><th>Verdict</th></tr></thead>
+          <tbody>
+            {% for record in items %}
+              <tr>
+                <td data-label="Investigation">
+                  <a class="run-record-link" href="/runs/{{ record.run_id }}">
+                    <strong>{{ record.task }}</strong>
+                    <small>{{ record.run_id }}</small>
+                  </a>
+                </td>
+                <td data-label="Created"><time datetime="{{ record.created_at.isoformat() }}">{{ record.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</time></td>
+                <td data-label="Provenance"><span class="state-chip">{{ record.provenance.value|replace("_", " ") }}</span></td>
+                <td data-label="Latest state"><span class="state-chip">{{ record.latest_state.value }}</span></td>
+                <td data-label="Verdict">
+                  {% if record.report %}
+                    <span class="verdict verdict-{{ record.report.verdict.value|lower }}">{{ record.report.verdict.value }}</span>
+                  {% elif record.latest_state.value in ["failed", "refused"] %}
+                    <span class="state-chip">No final report</span>
+                  {% else %}
+                    <span class="state-chip">Pending</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <section class="empty-state">
+        <h2>No matching runs</h2>
+        <p>Clear the filters or create a local run with:</p>
+        <code>uv run settlediff verify-fixture fixtures/paid-failure --database /tmp/settlediff.sqlite3</code>
+      </section>
+    {% endif %}
+  </div>
 {% endblock %}

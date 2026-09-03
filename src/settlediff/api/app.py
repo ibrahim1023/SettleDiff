@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -21,7 +21,7 @@ from settlediff.application.bundle import (
     X402_PROTOCOL_VERSION,
     X402_SIGNER_SCHEMA_VERSION,
 )
-from settlediff.application.run import RunEvent, RunState
+from settlediff.application.run import RunEvent, RunProvenance, RunState
 from settlediff.contextdev.client import CONTEXTDEV_API_PATH
 from settlediff.domain.models import (
     AssetIdentity,
@@ -102,17 +102,18 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
         q: str | None = None,
         verdict: str | None = None,
         state: str | None = None,
+        provenance: str | None = None,
         sort: Literal["newest", "oldest", "verdict"] = "newest",
     ) -> str:
-        reports = list(repository.list())
+        records = list(repository.records())
         query = q.strip() if q is not None else ""
         if query:
             normalized_query = query.casefold()
-            reports = [
-                report
-                for report in reports
-                if normalized_query in report.run_id.casefold()
-                or normalized_query in report.intent.task.casefold()
+            records = [
+                record
+                for record in records
+                if normalized_query in record.run_id.casefold()
+                or normalized_query in record.task.casefold()
             ]
         selected_verdict: Verdict | None = None
         if verdict:
@@ -120,40 +121,71 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
                 selected_verdict = Verdict(verdict)
             except ValueError as error:
                 raise HTTPException(status_code=422, detail="invalid verdict filter") from error
-            reports = [report for report in reports if report.verdict is selected_verdict]
-        if sort == "verdict":
-            reports.sort(key=lambda report: (report.verdict.value, report.run_id))
-        else:
-            reports.sort(
-                key=lambda report: (report.intent.created_at, report.run_id),
-                reverse=sort == "newest",
-            )
-        items = tuple(
-            {
-                "report": report,
-                "latest_state": _latest_state(repository.events(report.run_id)),
-            }
-            for report in reports
-        )
+            records = [
+                record
+                for record in records
+                if record.report is not None and record.report.verdict is selected_verdict
+            ]
         selected_state = state or ""
         if selected_state:
-            items = tuple(item for item in items if item["latest_state"] == selected_state)
+            records = [record for record in records if record.latest_state.value == selected_state]
+        selected_provenance: RunProvenance | None = None
+        if provenance:
+            try:
+                selected_provenance = RunProvenance(provenance)
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail="invalid provenance filter") from error
+            records = [record for record in records if record.provenance is selected_provenance]
+        if sort == "verdict":
+            records.sort(
+                key=lambda record: (
+                    record.report.verdict.value if record.report is not None else "ZZZ",
+                    record.run_id,
+                )
+            )
+        else:
+            records.sort(
+                key=lambda record: (record.created_at, record.run_id),
+                reverse=sort == "newest",
+            )
         return templates.get_template("runs.html").render(
-            items=items,
+            items=tuple(records),
             query=query,
             selected_verdict=selected_verdict.value if selected_verdict is not None else "",
             selected_state=selected_state,
+            selected_provenance=(
+                selected_provenance.value if selected_provenance is not None else ""
+            ),
             selected_sort=sort,
             verdicts=tuple(Verdict),
-            states=("no timeline", *(run_state.value for run_state in RunState)),
+            states=tuple(run_state.value for run_state in RunState),
+            provenances=tuple(RunProvenance),
+            refresh_url="/runs?"
+            + urlencode(
+                {
+                    "q": query,
+                    "verdict": selected_verdict.value if selected_verdict is not None else "",
+                    "state": selected_state,
+                    "provenance": (
+                        selected_provenance.value if selected_provenance is not None else ""
+                    ),
+                    "sort": sort,
+                }
+            ),
         )
 
     app.get("/runs", response_class=HTMLResponse)(runs)
 
     def run_detail(run_id: str, differences: bool = False) -> str:
-        report = repository.get(run_id)
-        if report is None:
+        record = repository.record(run_id)
+        if record is None:
             raise HTTPException(status_code=404, detail="run not found")
+        report = record.report
+        if report is None:
+            return templates.get_template("run_pending.html").render(
+                record=record,
+                artifacts=repository.artifacts(run_id),
+            )
         rows = _evidence_rows(report)
         if differences:
             rows = tuple(row for row in rows if row.status is not CheckStatus.PASS)
@@ -174,6 +206,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
         )
         return templates.get_template("run_detail.html").render(
             report=report,
+            record=record,
             rows=rows,
             differences=differences,
             explanation_record=explanation,
@@ -187,14 +220,14 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
     app.get("/runs/{run_id}", response_class=HTMLResponse)(run_detail)
 
     def run_events(run_id: str) -> list[dict[str, str]]:
-        if repository.get(run_id) is None:
+        if repository.record(run_id) is None:
             raise HTTPException(status_code=404, detail="run not found")
         return [event.model_dump(mode="json") for event in repository.events(run_id)]
 
     app.get("/runs/{run_id}/events")(run_events)
 
     def event_fragment(run_id: str) -> str:
-        if repository.get(run_id) is None:
+        if repository.record(run_id) is None:
             raise HTTPException(status_code=404, detail="run not found")
         events = repository.events(run_id)
         terminal = not events or events[-1].state in _TERMINAL_STATES
@@ -207,19 +240,18 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
     app.get("/runs/{run_id}/events-fragment", response_class=HTMLResponse)(event_fragment)
 
     def confirm_delete(run_id: str) -> str:
-        report = repository.get(run_id)
-        if report is None:
+        record = repository.record(run_id)
+        if record is None:
             raise HTTPException(status_code=404, detail="run not found")
         return templates.get_template("delete_run.html").render(
-            report=report,
+            record=record,
             csrf_token=csrf_token,
         )
 
     app.get("/runs/{run_id}/delete", response_class=HTMLResponse)(confirm_delete)
 
     async def delete_run(run_id: str, request: Request) -> RedirectResponse:
-        report = repository.get(run_id)
-        if report is None:
+        if repository.record(run_id) is None:
             raise HTTPException(status_code=404, detail="run not found")
         body = (await request.body()).decode("utf-8", errors="strict")
         submitted = parse_qs(body).get("csrf_token", [""])[0]
@@ -235,21 +267,17 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
     app.post("/runs/{run_id}/delete", response_class=RedirectResponse)(delete_run)
 
     def run_artifacts(run_id: str) -> str:
-        report = repository.get(run_id)
-        if report is None:
+        record = repository.record(run_id)
+        if record is None:
             raise HTTPException(status_code=404, detail="run not found")
         return templates.get_template("artifacts.html").render(
-            report=report,
+            record=record,
             groups=_artifact_groups(repository.artifacts(run_id)),
         )
 
     app.get("/runs/{run_id}/artifacts", response_class=HTMLResponse)(run_artifacts)
 
     return app
-
-
-def _latest_state(events: tuple[RunEvent, ...]) -> str:
-    return events[-1].state.value if events else "no timeline"
 
 
 def _artifact_anchor(artifact_id: str) -> str:

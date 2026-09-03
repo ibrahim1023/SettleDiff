@@ -1,14 +1,18 @@
 {% extends "base.html" %}
-{% block title %}SettleDiff {{ report.run_id }} artifacts{% endblock %}
+{% block title %}SettleDiff {{ record.run_id }} artifacts{% endblock %}
 {% block content %}
-  <p class="breadcrumb"><a href="/runs">Investigation runs</a><span aria-hidden="true">/</span><a href="/runs/{{ report.run_id }}">{{ report.run_id }}</a><span aria-hidden="true">/</span><span>Artifacts</span></p>
+  <p class="breadcrumb"><a href="/runs">Investigation runs</a><span aria-hidden="true">/</span><a href="/runs/{{ record.run_id }}">{{ record.run_id }}</a><span aria-hidden="true">/</span><span>Artifacts</span></p>
   <section class="run-hero">
     <div>
       <p class="eyebrow">Persisted evidence</p>
       <h1>Evidence artifacts</h1>
-      <p class="run-id">{{ report.run_id }}</p>
+      <p class="run-id">{{ record.run_id }}</p>
     </div>
-    <span class="verdict verdict-{{ report.verdict.value|lower }}">{{ report.verdict.value }}</span>
+    {% if record.report %}
+      <span class="verdict verdict-{{ record.report.verdict.value|lower }}">{{ record.report.verdict.value }}</span>
+    {% else %}
+      <span class="state-chip">{{ record.latest_state.value }}</span>
+    {% endif %}
   </section>
   {% if groups %}
     {% for group in groups %}

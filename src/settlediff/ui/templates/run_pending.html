@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}SettleDiff {{ record.run_id }}{% endblock %}
+{% block content %}
+  <p class="breadcrumb"><a href="/runs">Investigation runs</a><span aria-hidden="true">/</span><span>{{ record.run_id }}</span></p>
+  <section class="run-hero">
+    <div>
+      <p class="eyebrow">Durable live run</p>
+      <h1>{{ record.task }}</h1>
+      <p class="run-id">{{ record.run_id }}</p>
+      <p>Provenance: {{ record.provenance.value|replace("_", " ") }}</p>
+    </div>
+    <span class="state-chip">{{ record.latest_state.value }}</span>
+  </section>
+  {% if record.failure %}
+    <section class="panel outcome-panel">
+      <p class="eyebrow">Safe failure evidence</p>
+      <h2>{{ record.failure.stage.value|replace("_", " ")|title }} failed</h2>
+      <dl class="context-metadata">
+        <div><dt>Error class</dt><dd>{{ record.failure.error_class }}</dd></div>
+        <div><dt>Diagnostic</dt><dd>{{ record.failure.diagnostic }}</dd></div>
+        <div><dt>Submission uncertain</dt><dd>{{ "Yes" if record.failure.submission_uncertain else "No" }}</dd></div>
+        <div><dt>Observed</dt><dd>{{ record.failure.occurred_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd></div>
+      </dl>
+    </section>
+  {% else %}
+    <section class="panel outcome-panel">
+      <p><strong>Investigation in progress.</strong> No final deterministic report is available yet.</p>
+    </section>
+  {% endif %}
+  <section class="panel" aria-labelledby="timeline-heading">
+    <div class="section-heading"><div><p class="eyebrow">Audit trail</p><h2 id="timeline-heading">Run transitions</h2></div><p>Active runs refresh every 10 seconds.</p></div>
+    <div class="timeline-loading" hx-get="/runs/{{ record.run_id }}/events-fragment" hx-trigger="load" hx-swap="outerHTML" aria-live="polite">
+      <p>Loading recorded transitions…</p>
+    </div>
+  </section>
+  <div class="run-actions">
+    <p class="artifact-link"><a href="/runs/{{ record.run_id }}/artifacts">View {{ artifacts|length }} redacted evidence artifact{% if artifacts|length != 1 %}s{% endif %} <span aria-hidden="true">→</span></a></p>
+    <a class="delete-link" href="/runs/{{ record.run_id }}/delete">Delete local run</a>
+  </div>
+{% endblock %}
