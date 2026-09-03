@@ -137,11 +137,11 @@ Every result includes strategy and confidence. Ties or weak fallback matches rem
 
 ### Storage
 
-SQLite persists local run metadata, versioned artifacts, findings, explanations, and event summaries. Fixtures remain versioned JSON so CI and demos do not depend on a database.
+SQLite schema 4 creates a durable run record before live preflight, appends redacted events and artifacts during execution, and attaches the final report and explanation when available. Failed and refused runs remain inspectable without a final report. Every run records `fixture`, `controlled_live`, or `external_live` provenance. Fixtures remain versioned JSON so CI and demos do not depend on a database.
 
 ### Interfaces
 
-Typer provides automation and developer output. FastAPI renders Jinja pages for run lists and Expected/Executed/Recorded diffs. Both call the same application services.
+Typer provides automation and developer output, including non-paying readiness checks and persisted-evidence inspection/recovery. FastAPI renders active, failed, and completed run records plus Expected/Executed/Recorded diffs. The run list polls the same SQLite ledger, so a separate CLI writer becomes visible without restarting the server.
 
 ## Run state
 

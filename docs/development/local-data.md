@@ -2,7 +2,7 @@
 
 ## Scope
 
-SettleDiff stores reports in one local SQLite database. Migrations are forward-only and run when `SQLiteReportRepository` opens the database. There is no downgrade command.
+SettleDiff stores durable run records and finalized reports in one local SQLite database. Migration 4 backfills existing reports into the run ledger and adds incremental events, artifacts, failure evidence, and provenance. Migrations are forward-only and run when `SQLiteReportRepository` opens the database. There is no downgrade command.
 
 ## Back up before upgrading
 

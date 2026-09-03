@@ -195,7 +195,7 @@ challenge after credential submission. The failed Activity record is matched to 
 transaction but is not treated as proof of settlement.
 
 Then open `http://127.0.0.1:8765/runs` to inspect the persisted Expected, Executed, and
-Recorded evidence. This demo never contacts a model, Perflo, or a paid service.
+Recorded evidence. The list refreshes from the shared SQLite ledger, distinguishes fixture, controlled-live, and external-live provenance, and retains active or failed runs before a final report exists. This demo never contacts a model, Perflo, or a paid service.
 
 For a live call, `settlediff run --url URL --body JSON --budget AMOUNT` retains Perflo as
 the temporary default. Select x402 explicitly with `--rail x402 --allow-testnet`; configure
@@ -217,6 +217,15 @@ uv run settlediff doctor --rail x402 --database /path/to/reports.sqlite3
 ```
 
 The x402 signer command must support `--version` and return bounded JSON containing `schema_version: 2` and its public `payer` address. `doctor` also verifies the configured read-only RPC reports Base Sepolia. Signer installation and wallet authority remain independently owned; SettleDiff stores neither the launcher package nor its key.
+
+Inspect durable state or classify already-persisted recovery evidence without external calls:
+
+```bash
+uv run settlediff inspect RUN_ID --database /path/to/reports.sqlite3
+uv run settlediff recover RUN_ID --database /path/to/reports.sqlite3
+```
+
+`recover` never invokes a payment adapter, signer, provider, or RPC. It cannot turn missing evidence into proof of non-submission.
 
 ## Live findings become offline regression tests
 
