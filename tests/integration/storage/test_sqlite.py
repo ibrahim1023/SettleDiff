@@ -10,7 +10,7 @@ from typing import cast
 import pytest
 
 from settlediff.application.replay import replay_fixture
-from settlediff.application.run import RunState, RunTimeline
+from settlediff.application.run import RunFailure, RunProvenance, RunState, RunTimeline
 from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
@@ -35,6 +35,54 @@ def test_report_round_trips_through_sqlite(tmp_path: Path) -> None:
     loaded = repository.get(report.run_id)
     assert loaded is not None
     assert loaded.model_dump(mode="json") == redact_report(report).model_dump(mode="json")
+    repository.close()
+
+
+def test_live_run_is_durable_before_final_report(tmp_path: Path) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    created_at = datetime(2026, 9, 3, tzinfo=UTC)
+    artifact = EvidenceArtifact(
+        artifact_id=f"{report.run_id}:preflight",
+        artifact_type=ArtifactType.SERVICE_CONTRACT,
+        source="synthetic.live",
+        collected_at=created_at,
+        redacted=False,
+        data={"recipient": "syn_live_recipient"},
+    )
+
+    repository.begin_run(
+        report.run_id,
+        task=report.intent.task,
+        provenance=RunProvenance.EXTERNAL_LIVE,
+        created_at=created_at,
+    )
+    repository.append_event(report.run_id, RunState.AUTHORIZED)
+    repository.save_artifacts(report.run_id, (artifact,))
+    failure = RunFailure(
+        stage=RunState.EXECUTING,
+        error_class="SyntheticFailure",
+        diagnostic="synthetic safe failure",
+        submission_uncertain=True,
+        occurred_at=created_at,
+    )
+    repository.record_failure(report.run_id, failure)
+
+    active = repository.record(report.run_id)
+    assert active is not None
+    assert active.report is None
+    assert active.provenance is RunProvenance.EXTERNAL_LIVE
+    assert active.latest_state is RunState.FAILED
+    assert active.failure == failure
+    assert repository.artifacts(report.run_id)[0].redacted
+
+    repository.finalize_run(report, explanation=None)
+
+    completed = repository.record(report.run_id)
+    assert completed is not None
+    assert completed.report == redact_report(report)
+    assert completed.latest_state is RunState.COMPLETE
+    assert completed.failure is None
     repository.close()
 
 

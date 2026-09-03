@@ -10,7 +10,7 @@ from enum import StrEnum
 from typing import Protocol, cast
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from settlediff.agent.grounding import (
     ExplanationGroundingError,
@@ -87,6 +87,12 @@ class SubmissionRecovery:
     evidence_ids: tuple[str, ...]
 
 
+class RunProvenance(StrEnum):
+    FIXTURE = "fixture"
+    CONTROLLED_LIVE = "controlled_live"
+    EXTERNAL_LIVE = "external_live"
+
+
 class RunState(StrEnum):
     PREFLIGHT = "preflight"
     AUTHORIZED = "authorized"
@@ -108,6 +114,28 @@ class RunEvent(BaseModel):
 
     state: RunState
     occurred_at: datetime
+
+
+class RunFailure(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    stage: RunState
+    error_class: str = Field(min_length=1, max_length=128)
+    diagnostic: str = Field(min_length=1, max_length=256)
+    submission_uncertain: bool
+    occurred_at: datetime
+
+
+class RunRecord(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    run_id: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    provenance: RunProvenance
+    created_at: datetime
+    latest_state: RunState
+    report: MachineReport | None
+    failure: RunFailure | None
 
 
 _ALLOWED: dict[RunState, set[RunState]] = {

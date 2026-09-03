@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 from typing import cast
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from settlediff.application.run import RunEvent
+from settlediff.application.run import (
+    RunEvent,
+    RunFailure,
+    RunProvenance,
+    RunRecord,
+    RunState,
+)
 from settlediff.domain.models import EvidenceArtifact, ExplanationRecord, MachineReport
 from settlediff.domain.redaction import (
     redact_artifact,
@@ -80,6 +87,128 @@ class SQLiteReportRepository:
                         "INSERT INTO schema_migrations(version) VALUES (?)", (version,)
                     )
 
+    def begin_run(
+        self,
+        run_id: str,
+        *,
+        task: str,
+        provenance: RunProvenance,
+        created_at: datetime,
+    ) -> None:
+        record = RunRecord(
+            run_id=run_id,
+            task=task,
+            provenance=provenance,
+            created_at=created_at,
+            latest_state=RunState.PREFLIGHT,
+            report=None,
+            failure=None,
+        )
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO run_records(run_id, task, provenance, created_at, latest_state, "
+                "report_json, failure_json) VALUES (?, ?, ?, ?, ?, NULL, NULL)",
+                (
+                    record.run_id,
+                    record.task,
+                    record.provenance.value,
+                    record.created_at.isoformat(),
+                    record.latest_state.value,
+                ),
+            )
+
+    def append_event(self, run_id: str, state: RunState) -> RunEvent:
+        event = RunEvent(state=state, occurred_at=datetime.now(UTC))
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM run_record_events WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("run event position is unavailable")
+            self._connection.execute(
+                "INSERT INTO run_record_events(run_id, position, event_json) VALUES (?, ?, ?)",
+                (run_id, int(row[0]), event.model_dump_json()),
+            )
+            updated = self._connection.execute(
+                "UPDATE run_records SET latest_state = ? WHERE run_id = ?",
+                (state.value, run_id),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("run record not found")
+        return event
+
+    def save_artifacts(self, run_id: str, artifacts: tuple[EvidenceArtifact, ...]) -> None:
+        with self._lock, self._connection:
+            exists = self._connection.execute(
+                "SELECT 1 FROM run_records WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if exists is None:
+                raise ValueError("run record not found")
+            self._connection.executemany(
+                "INSERT INTO run_record_artifacts(run_id, artifact_id, artifact_json) "
+                "VALUES (?, ?, ?) ON CONFLICT(run_id, artifact_id) DO UPDATE SET "
+                "artifact_json = excluded.artifact_json",
+                (
+                    (
+                        run_id,
+                        artifact.artifact_id,
+                        redact_artifact(artifact).model_dump_json(),
+                    )
+                    for artifact in artifacts
+                ),
+            )
+
+    def record_failure(self, run_id: str, failure: RunFailure) -> None:
+        with self._lock, self._connection:
+            updated = self._connection.execute(
+                "UPDATE run_records SET latest_state = ?, failure_json = ? WHERE run_id = ?",
+                (RunState.FAILED.value, failure.model_dump_json(), run_id),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("run record not found")
+
+    def finalize_run(
+        self,
+        report: MachineReport,
+        *,
+        explanation: ExplanationRecord | None,
+    ) -> None:
+        persisted_report = redact_report(report)
+        persisted_explanation = (
+            _redact_explanation(explanation) if explanation is not None else None
+        )
+        with self._lock, self._connection:
+            updated = self._connection.execute(
+                "UPDATE run_records SET task = ?, latest_state = ?, report_json = ?, "
+                "failure_json = NULL WHERE run_id = ?",
+                (
+                    persisted_report.intent.task,
+                    RunState.COMPLETE.value,
+                    persisted_report.model_dump_json(),
+                    report.run_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("run record not found")
+            self._connection.execute(
+                "INSERT OR REPLACE INTO reports(run_id, report_json) VALUES (?, ?)",
+                (report.run_id, persisted_report.model_dump_json()),
+            )
+            self._connection.execute(
+                "DELETE FROM run_record_explanations WHERE run_id = ?", (report.run_id,)
+            )
+            self._connection.execute("DELETE FROM explanations WHERE run_id = ?", (report.run_id,))
+            if persisted_explanation is not None:
+                self._connection.execute(
+                    "INSERT INTO run_record_explanations(run_id, explanation_json) VALUES (?, ?)",
+                    (report.run_id, persisted_explanation.model_dump_json()),
+                )
+                self._connection.execute(
+                    "INSERT INTO explanations(run_id, explanation_json) VALUES (?, ?)",
+                    (report.run_id, persisted_explanation.model_dump_json()),
+                )
+
     def save(
         self,
         report: MachineReport,
@@ -92,14 +221,36 @@ class SQLiteReportRepository:
         persisted_explanation = (
             _redact_explanation(explanation) if explanation is not None else None
         )
+        persisted_artifacts = tuple(redact_artifact(artifact) for artifact in artifacts)
         with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO run_records(run_id, task, provenance, created_at, latest_state, "
+                "report_json, failure_json) VALUES (?, ?, ?, ?, ?, ?, NULL) "
+                "ON CONFLICT(run_id) DO UPDATE SET task = excluded.task, "
+                "latest_state = excluded.latest_state, report_json = excluded.report_json, "
+                "failure_json = NULL",
+                (
+                    report.run_id,
+                    persisted_report.intent.task,
+                    RunProvenance.FIXTURE.value,
+                    persisted_report.intent.created_at.isoformat(),
+                    RunState.COMPLETE.value,
+                    persisted_report.model_dump_json(),
+                ),
+            )
             self._connection.execute(
                 "INSERT OR REPLACE INTO reports(run_id, report_json) VALUES (?, ?)",
                 (report.run_id, persisted_report.model_dump_json()),
             )
-            self._connection.execute("DELETE FROM run_events WHERE run_id = ?", (report.run_id,))
-            self._connection.execute("DELETE FROM artifacts WHERE run_id = ?", (report.run_id,))
-            self._connection.execute("DELETE FROM explanations WHERE run_id = ?", (report.run_id,))
+            for table in (
+                "run_events",
+                "artifacts",
+                "explanations",
+                "run_record_events",
+                "run_record_artifacts",
+                "run_record_explanations",
+            ):
+                self._connection.execute(f"DELETE FROM {table} WHERE run_id = ?", (report.run_id,))
             self._connection.executemany(
                 "INSERT INTO run_events(run_id, position, event_json) VALUES (?, ?, ?)",
                 (
@@ -108,52 +259,97 @@ class SQLiteReportRepository:
                 ),
             )
             self._connection.executemany(
-                "INSERT INTO artifacts(run_id, artifact_id, artifact_json) VALUES (?, ?, ?)",
+                "INSERT INTO run_record_events(run_id, position, event_json) VALUES (?, ?, ?)",
                 (
-                    (
-                        report.run_id,
-                        artifact.artifact_id,
-                        redact_artifact(artifact).model_dump_json(),
-                    )
-                    for artifact in artifacts
+                    (report.run_id, index, event.model_dump_json())
+                    for index, event in enumerate(events)
                 ),
             )
+            artifact_rows = tuple(
+                (report.run_id, artifact.artifact_id, artifact.model_dump_json())
+                for artifact in persisted_artifacts
+            )
+            self._connection.executemany(
+                "INSERT INTO artifacts(run_id, artifact_id, artifact_json) VALUES (?, ?, ?)",
+                artifact_rows,
+            )
+            self._connection.executemany(
+                "INSERT INTO run_record_artifacts(run_id, artifact_id, artifact_json) "
+                "VALUES (?, ?, ?)",
+                artifact_rows,
+            )
             if persisted_explanation is not None:
+                explanation_json = persisted_explanation.model_dump_json()
                 self._connection.execute(
                     "INSERT INTO explanations(run_id, explanation_json) VALUES (?, ?)",
-                    (report.run_id, persisted_explanation.model_dump_json()),
+                    (report.run_id, explanation_json),
+                )
+                self._connection.execute(
+                    "INSERT INTO run_record_explanations(run_id, explanation_json) VALUES (?, ?)",
+                    (report.run_id, explanation_json),
                 )
 
-    def get(self, run_id: str) -> MachineReport | None:
+    def record(self, run_id: str) -> RunRecord | None:
         with self._lock:
             row = self._connection.execute(
-                "SELECT report_json FROM reports WHERE run_id = ?", (run_id,)
+                "SELECT run_id, task, provenance, created_at, latest_state, report_json, "
+                "failure_json FROM run_records WHERE run_id = ?",
+                (run_id,),
             ).fetchone()
-        return MachineReport.model_validate_json(row[0]) if row else None
+        return self._run_record(row) if row is not None else None
 
-    def list(self) -> tuple[MachineReport, ...]:
+    def records(self) -> tuple[RunRecord, ...]:
         with self._lock:
             rows = self._connection.execute(
-                "SELECT report_json FROM reports ORDER BY run_id DESC"
+                "SELECT run_id, task, provenance, created_at, latest_state, report_json, "
+                "failure_json FROM run_records ORDER BY created_at DESC, run_id DESC"
             ).fetchall()
-        return tuple(MachineReport.model_validate_json(cast(str, row[0])) for row in rows)
+        return tuple(self._run_record(row) for row in rows)
+
+    @staticmethod
+    def _run_record(row: tuple[object, ...]) -> RunRecord:
+        report_json = cast(str | None, row[5])
+        failure_json = cast(str | None, row[6])
+        return RunRecord(
+            run_id=cast(str, row[0]),
+            task=cast(str, row[1]),
+            provenance=RunProvenance(cast(str, row[2])),
+            created_at=datetime.fromisoformat(cast(str, row[3])),
+            latest_state=RunState(cast(str, row[4])),
+            report=(
+                MachineReport.model_validate_json(report_json) if report_json is not None else None
+            ),
+            failure=(
+                RunFailure.model_validate_json(failure_json) if failure_json is not None else None
+            ),
+        )
+
+    def get(self, run_id: str) -> MachineReport | None:
+        record = self.record(run_id)
+        return record.report if record is not None else None
+
+    def list(self) -> tuple[MachineReport, ...]:
+        return tuple(record.report for record in self.records() if record.report is not None)
 
     def delete(self, run_id: str) -> bool:
         with self._lock, self._connection:
-            cursor = self._connection.execute("DELETE FROM reports WHERE run_id = ?", (run_id,))
-            return cursor.rowcount == 1
+            record = self._connection.execute("DELETE FROM run_records WHERE run_id = ?", (run_id,))
+            report = self._connection.execute("DELETE FROM reports WHERE run_id = ?", (run_id,))
+            return record.rowcount == 1 or report.rowcount == 1
 
     def events(self, run_id: str) -> tuple[RunEvent, ...]:
         with self._lock:
             rows = self._connection.execute(
-                "SELECT event_json FROM run_events WHERE run_id = ? ORDER BY position", (run_id,)
+                "SELECT event_json FROM run_record_events WHERE run_id = ? ORDER BY position",
+                (run_id,),
             ).fetchall()
         return tuple(RunEvent.model_validate_json(cast(str, row[0])) for row in rows)
 
     def artifacts(self, run_id: str) -> tuple[EvidenceArtifact, ...]:
         with self._lock:
             rows = self._connection.execute(
-                "SELECT artifact_json FROM artifacts WHERE run_id = ? ORDER BY artifact_id",
+                "SELECT artifact_json FROM run_record_artifacts "
+                "WHERE run_id = ? ORDER BY artifact_id",
                 (run_id,),
             ).fetchall()
         return tuple(EvidenceArtifact.model_validate_json(cast(str, row[0])) for row in rows)
@@ -161,7 +357,7 @@ class SQLiteReportRepository:
     def explanation(self, run_id: str) -> ExplanationRecord | None:
         with self._lock:
             row = self._connection.execute(
-                "SELECT explanation_json FROM explanations WHERE run_id = ?", (run_id,)
+                "SELECT explanation_json FROM run_record_explanations WHERE run_id = ?", (run_id,)
             ).fetchone()
         return ExplanationRecord.model_validate_json(row[0]) if row else None
 

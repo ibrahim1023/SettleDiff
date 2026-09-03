@@ -83,7 +83,7 @@ def test_export_load_verify_round_trip(tmp_path: Path) -> None:
     assert loaded.compatibility == CompatibilityMetadata(
         settlediff_version="0.1.0",
         report_schema_version=2,
-        database_schema_version=3,
+        database_schema_version=4,
         contextdev_api_path="/web/scrape/markdown",
         hyperfusion_model=None,
         perflo_cli_version=None,
@@ -198,7 +198,7 @@ def test_verify_rejects_unredacted_artifact() -> None:
         compatibility=CompatibilityMetadata(
             settlediff_version="0.1.0",
             report_schema_version=report.schema_version,
-            database_schema_version=3,
+            database_schema_version=4,
             contextdev_api_path="/web/scrape/markdown",
             hyperfusion_model=None,
             perflo_cli_version=None,
@@ -278,7 +278,7 @@ def test_x402_report_round_trips_with_separate_settlement_evidence(tmp_path: Pat
         {"payment_adapter_id": "perflo"},
         {"x402_protocol_version": None},
         {"x402_signer_schema_version": None},
-        {"database_schema_version": 4},
+        {"database_schema_version": 5},
     ],
 )
 def test_verify_rejects_resigned_inconsistent_compatibility_metadata(

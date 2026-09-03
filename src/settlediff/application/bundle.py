@@ -16,7 +16,7 @@ from settlediff.domain.redaction import redact_artifact
 from settlediff.domain.verdict import derive_verdict
 
 Sha256Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-DATABASE_SCHEMA_VERSION = 3
+DATABASE_SCHEMA_VERSION = 4
 X402_PROTOCOL_VERSION = "2"
 X402_SIGNER_SCHEMA_VERSION = 2
 
