@@ -110,7 +110,7 @@ SettleDiff treats every external source as evidence, not truth.
 
 ## Payment-rail boundary
 
-Perflo is SettleDiff's first supported paid-execution adapter.
+[Perflo](https://perflo.ai) is SettleDiff's first supported paid-execution adapter.
 
 SettleDiff's core verifier is not Perflo-specific. The domain model operates on canonical
 evidence:
