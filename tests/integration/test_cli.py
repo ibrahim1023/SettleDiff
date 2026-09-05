@@ -47,6 +47,10 @@ def isolated_settings() -> Settings:
     return Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
 
 
+def available_executable(_command: str) -> str:
+    return "/usr/bin/synthetic-executable"
+
+
 def live_settings() -> Settings:
     return Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue]
@@ -119,11 +123,8 @@ def test_version_option_reports_package_version_without_running_a_command() -> N
 def test_doctor_checks_perflo_and_database_without_paid_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def executable(_command: str) -> str:
-        return "/usr/bin/perflo"
-
     monkeypatch.setattr("settlediff.cli.Settings", live_settings)
-    monkeypatch.setattr("settlediff.cli.shutil.which", executable)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
 
     result = runner.invoke(
         app,
@@ -134,6 +135,29 @@ def test_doctor_checks_perflo_and_database_without_paid_execution(
     assert "Database: writable" in result.stdout
     assert "Context.dev: configured" in result.stdout
     assert "Perflo: executable available" in result.stdout
+
+
+def test_live_run_rejects_missing_perflo_executable_before_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePerflo:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError(f"Perflo must not be called without its executable: {name}")
+
+    def missing_executable(_command: str) -> None:
+        return None
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    monkeypatch.setattr("settlediff.cli.shutil.which", missing_executable)
+
+    result = runner.invoke(
+        app,
+        ["run", "--url", "https://example.invalid", "--body", "{}", "--budget", "1"],
+    )
+
+    assert result.exit_code == 2
+    assert "Perflo executable is unavailable" in result.stderr
 
 
 def test_doctor_reports_x402_schema_payer_and_chain(
@@ -402,6 +426,7 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr("settlediff.cli.Settings", live_settings)
     monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
     result = runner.invoke(
         app,
         ["run", "--url", "https://example.invalid/search", "--body", "{}", "--budget", "0.01"],
@@ -524,6 +549,7 @@ def test_run_reports_unresolved_activity_recovery(
 
     monkeypatch.setattr("settlediff.cli.Settings", live_settings)
     monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
     result = runner.invoke(
         app,
         [
@@ -647,6 +673,7 @@ def test_live_run_renders_in_memory_report_when_persistence_fails(
             pass
 
     monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
     monkeypatch.setattr("settlediff.cli._execute_live_run", completed_run)
     monkeypatch.setattr("settlediff.cli.SQLiteReportRepository", FailingRepository)
 
