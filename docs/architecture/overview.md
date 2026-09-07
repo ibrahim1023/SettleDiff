@@ -129,7 +129,7 @@ One PydanticAI agent chooses among typed tools. Hyperfusion supplies the model t
 Matches persisted records using ordered deterministic strategies:
 
 1. transaction ID;
-2. session ID plus vendor;
+2. session ID plus execution vendor, or the authoritative selected contract vendor when execution omits it;
 3. transaction hash;
 4. vendor, amount, and bounded timestamp window.
 

@@ -49,6 +49,7 @@ def match_activity(
     execution: ExecutionRecord | None,
     candidates: tuple[LedgerRecord, ...],
     *,
+    expected_vendor_slug: str | None = None,
     window: timedelta = timedelta(minutes=5),
 ) -> MatchResult:
     """Apply documented matching strategies in fixed priority order.
@@ -68,7 +69,7 @@ def match_activity(
         ),
         (
             MatchStrategy.SESSION_VENDOR,
-            _matching_session_vendor(execution, candidates),
+            _matching_session_vendor(execution, candidates, expected_vendor_slug),
         ),
         (
             MatchStrategy.TRANSACTION_HASH,
@@ -92,14 +93,17 @@ def _matching_transaction_id(
 
 
 def _matching_session_vendor(
-    execution: ExecutionRecord, candidates: tuple[LedgerRecord, ...]
+    execution: ExecutionRecord,
+    candidates: tuple[LedgerRecord, ...],
+    expected_vendor_slug: str | None,
 ) -> tuple[LedgerRecord, ...]:
-    if execution.session_id is None or execution.vendor_slug is None:
+    vendor_slug = execution.vendor_slug or expected_vendor_slug
+    if execution.session_id is None or vendor_slug is None:
         return ()
     return tuple(
         record
         for record in candidates
-        if record.session_id == execution.session_id and record.vendor_slug == execution.vendor_slug
+        if record.session_id == execution.session_id and record.vendor_slug == vendor_slug
     )
 
 

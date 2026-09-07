@@ -58,7 +58,11 @@ def replay_fixture(path: Path) -> MachineReport:
         else None
     )
     activity = normalize_activity(_artifact(path, "activity.json", ArtifactType.ACTIVITY))
-    match = match_activity(execution, activity)
+    match = match_activity(
+        execution,
+        activity,
+        expected_vendor_slug=contract.vendor_slug,
+    )
     findings = run_checks(intent, contract, execution, match, receipt=receipt)
     report = MachineReport(
         run_id=intent.run_id,

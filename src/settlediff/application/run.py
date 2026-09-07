@@ -450,7 +450,11 @@ class LiveEvidenceCollector:
         with self._span(
             "settlediff.match_activity", {"run_id": request.run_id, "component": "matching"}
         ):
-            matched = match_activity(execution, normalize_activity(self._activity))
+            matched = match_activity(
+                execution,
+                normalize_activity(self._activity),
+                expected_vendor_slug=contract.vendor_slug,
+            )
         self._record_match_metrics(matched)
         intent = PurchaseIntent(
             run_id=request.run_id,

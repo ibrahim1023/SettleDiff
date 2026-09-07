@@ -84,6 +84,61 @@ def test_session_and_vendor_match_when_transaction_id_is_unavailable() -> None:
     assert result.matched_id == "syn_ledger_match"
 
 
+def test_session_matches_authoritative_contract_vendor_when_execution_omits_vendor() -> None:
+    result = match_activity(
+        execution(
+            vendor_slug=None,
+            transaction_id="syn_execution_attempt",
+            transaction_hash=None,
+            charge=None,
+            executed_at=None,
+        ),
+        (
+            record(
+                "syn_activity_attempt",
+                transaction_id=None,
+                transaction_hash=None,
+                status=LedgerStatus.FAILED,
+            ),
+        ),
+        expected_vendor_slug="synthetic-search",
+    )
+
+    assert result.status is MatchStatus.MATCHED
+    assert result.strategy is MatchStrategy.SESSION_VENDOR
+    assert result.confidence is MatchConfidence.HIGH
+    assert result.matched_id == "syn_activity_attempt"
+    assert result.matched is not None
+    assert result.matched.status is LedgerStatus.FAILED
+
+
+def test_execution_vendor_is_not_overridden_by_contract_vendor() -> None:
+    result = match_activity(
+        execution(vendor_slug="execution-vendor", transaction_id=None, transaction_hash=None),
+        (record("syn_activity", transaction_id=None, transaction_hash=None),),
+        expected_vendor_slug="synthetic-search",
+    )
+
+    assert result.status is MatchStatus.MISSING
+    assert result.strategy is MatchStrategy.NONE
+
+
+def test_contract_vendor_session_candidates_remain_ambiguous() -> None:
+    result = match_activity(
+        execution(vendor_slug=None, transaction_id=None, transaction_hash=None),
+        (
+            record("syn_activity_b", transaction_id=None, transaction_hash=None),
+            record("syn_activity_a", transaction_id=None, transaction_hash=None),
+        ),
+        expected_vendor_slug="synthetic-search",
+    )
+
+    assert result.status is MatchStatus.AMBIGUOUS
+    assert result.strategy is MatchStrategy.SESSION_VENDOR
+    assert result.matched is None
+    assert result.candidate_ids == ("syn_activity_a", "syn_activity_b")
+
+
 def test_transaction_hash_matches_after_session_vendor_is_unavailable() -> None:
     result = match_activity(
         execution(transaction_id=None, session_id=None),

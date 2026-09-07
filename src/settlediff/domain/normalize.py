@@ -406,7 +406,11 @@ def _ledger_status(
     if not isinstance(value, str):
         raise ArtifactParseError(raw.artifact_id, f"{prefix}status", "string or null")
     normalized = value.lower()
-    aliases = {"confirmed": LedgerStatus.CONFIRMED, "settled": LedgerStatus.CONFIRMED}
+    aliases = {
+        "broadcast_failed": LedgerStatus.FAILED,
+        "confirmed": LedgerStatus.CONFIRMED,
+        "settled": LedgerStatus.CONFIRMED,
+    }
     if normalized in aliases:
         return aliases[normalized]
     try:

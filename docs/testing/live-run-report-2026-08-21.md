@@ -42,10 +42,11 @@ money-moving command was retried after an uncertain submission.
 `fixtures/failed-broadcast/` (commit `e76ba71`) distills the 402-replay run into the
 offline corpus. It pins three behaviors:
 
-1. A `broadcast_failed` Activity record matches its own transaction ID
-   (`activity_persistence: PASS`).
+1. A `broadcast_failed` Activity record matches by session plus the authoritative contract vendor when execution omits vendor identity and Activity `id` is only the ledger-record ID (`activity_persistence: PASS`).
 2. The failed record is not counted as a charge (`budget`/`price: UNKNOWN`).
 3. The run remains `UNVERIFIABLE` rather than guessing settlement.
+
+A later reproduction (`live_6369…2d3b`) exposed that the collected Activity snapshot contained the candidate while execution omitted `vendor_slug`; export does not recollect Activity, so this was a matcher-key propagation defect rather than an eventual-consistency race. The sanitized fixture now keeps execution `transactionId` distinct from Activity `id`, preserves their shared session, and proves that matching occurs before storage/export redaction.
 
 Offline gate after the change: 397 passed, 2 skipped (live/paid opt-ins excluded);
 ruff and pyright clean.

@@ -70,6 +70,33 @@ def test_replay_returns_expected_deterministic_report(
     assert statuses.items() >= expected_statuses.items()
 
 
+def test_failed_broadcast_matches_activity_without_inventing_settlement() -> None:
+    report = replay_fixture(FIXTURES / "failed-broadcast")
+    assert report.contract is not None
+    assert report.execution is not None
+    assert report.ledger is not None
+    statuses = {finding.check_id: finding.status for finding in report.findings}
+
+    assert report.contract.chain == "base"
+    assert report.execution.chain == "tempo"
+    assert report.execution.vendor_slug is None
+    assert report.execution.transaction_id == "syn_execution_failed_broadcast"
+    assert report.execution.session_id == "syn_session_failed_broadcast"
+    assert report.execution.upstream_http_status == 402
+    assert report.execution.settlement_status.value == "unknown"
+    assert report.ledger.ledger_id == "syn_activity_failed_broadcast"
+    assert report.ledger.vendor_slug == "synthetic-search"
+    assert report.ledger.session_id == report.execution.session_id
+    assert report.ledger.transaction_id is None
+    assert report.ledger.transaction_hash is None
+    assert report.ledger.status.value == "failed"
+    assert statuses["chain"].value == "DIFF"
+    assert statuses["service_execution"].value == "FAIL"
+    assert statuses["settlement"].value == "UNKNOWN"
+    assert statuses["activity_persistence"].value == "PASS"
+    assert report.verdict is Verdict.UNVERIFIABLE
+
+
 @pytest.mark.parametrize(
     "scenario",
     [
