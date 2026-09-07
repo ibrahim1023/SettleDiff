@@ -1,0 +1,1 @@
+{"run_id":"syn_run_confirmed_activity_charge","task":"Synthetic confirmed Activity charge fallback","max_budget":{"amount":"0.01","unit":"USDC"},"requested_service":"synthetic-search","created_at":"2026-09-07T00:00:00Z"}

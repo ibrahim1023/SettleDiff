@@ -16,6 +16,11 @@ FIXTURES = Path(__file__).parents[2] / "fixtures"
     ("scenario", "verdict", "expected_statuses"),
     [
         ("clean-success", Verdict.VERIFIED, {"chain": "PASS", "activity_persistence": "PASS"}),
+        (
+            "confirmed-activity-charge",
+            Verdict.VERIFIED_WITH_WARNINGS,
+            {"budget": "PASS", "price": "PASS", "chain": "DIFF", "recipient": "WARN"},
+        ),
         ("chain-diff", Verdict.VERIFIED_WITH_WARNINGS, {"chain": "DIFF"}),
         ("paid-failure", Verdict.PAID_FAILURE, {"paid_failure": "FAIL"}),
         (

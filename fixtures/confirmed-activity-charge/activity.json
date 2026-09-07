@@ -1,0 +1,1 @@
+[{"id":"syn_activity_confirmed_charge","vendorSlug":"synthetic-search","amount":"$0.01","asset":"USDC","protocol":"mpp","chain":"tempo","recipient":"syn_recipient_activity","status":"confirmed","errorReason":null,"sessionId":"syn_session_confirmed_activity","txHash":"syn_hash_confirmed_activity","createdAt":"2026-09-07T00:00:01Z"}]

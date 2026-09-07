@@ -68,6 +68,7 @@ Initial scenarios:
 - recipient representation warning;
 - missing Activity;
 - ambiguous Activity candidates;
+- confirmed high-confidence Activity charge fallback;
 - payment failure;
 - malformed provider envelope preserved as unverifiable evidence.
 

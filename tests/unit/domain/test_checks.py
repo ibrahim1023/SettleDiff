@@ -406,6 +406,105 @@ def test_provider_receipt_and_independent_ledger_agree() -> None:
     assert derive_verdict(findings).value == "VERIFIED"
 
 
+def test_confirmed_activity_charge_requires_strong_complete_evidence() -> None:
+    intent, contract, execution, match, receipt = x402_evidence()
+    execution = execution.model_copy(update={"charge": None})
+
+    def statuses(
+        current_intent: PurchaseIntent, current_match: MatchResult
+    ) -> dict[str, CheckStatus]:
+        return {
+            finding.check_id: finding.status
+            for finding in run_checks(
+                current_intent,
+                contract,
+                execution,
+                current_match,
+                receipt=receipt,
+            )
+        }
+
+    confirmed = statuses(intent, match)
+    assert confirmed["budget"] is CheckStatus.PASS
+    assert confirmed["price"] is CheckStatus.PASS
+
+    assert match.matched is not None
+    for ledger_status in (LedgerStatus.FAILED, LedgerStatus.PENDING):
+        ineligible_record = match.matched.model_copy(update={"status": ledger_status})
+        ineligible = statuses(
+            intent,
+            MatchResult(
+                MatchStatus.MATCHED,
+                MatchStrategy.SESSION_VENDOR,
+                MatchConfidence.HIGH,
+                ineligible_record,
+                (ineligible_record.ledger_id,),
+            ),
+        )
+        assert ineligible["budget"] is CheckStatus.UNKNOWN
+        assert ineligible["price"] is CheckStatus.UNKNOWN
+
+    missing_amount_record = match.matched.model_copy(update={"amount": None})
+    missing_amount = statuses(
+        intent,
+        MatchResult(
+            MatchStatus.MATCHED,
+            MatchStrategy.SESSION_VENDOR,
+            MatchConfidence.HIGH,
+            missing_amount_record,
+            (missing_amount_record.ledger_id,),
+        ),
+    )
+    assert missing_amount["budget"] is CheckStatus.UNKNOWN
+    assert missing_amount["price"] is CheckStatus.UNKNOWN
+
+    low_confidence = statuses(
+        intent,
+        MatchResult(
+            MatchStatus.MATCHED,
+            MatchStrategy.VENDOR_AMOUNT_TIME,
+            MatchConfidence.LOW,
+            match.matched,
+            (match.matched.ledger_id,),
+        ),
+    )
+    assert low_confidence["budget"] is CheckStatus.UNKNOWN
+    assert low_confidence["price"] is CheckStatus.UNKNOWN
+
+    ambiguous = statuses(
+        intent,
+        MatchResult(
+            MatchStatus.AMBIGUOUS,
+            MatchStrategy.SESSION_VENDOR,
+            MatchConfidence.NONE,
+            None,
+            ("syn_candidate_a", "syn_candidate_b"),
+        ),
+    )
+    assert ambiguous["budget"] is CheckStatus.UNKNOWN
+    assert ambiguous["price"] is CheckStatus.UNKNOWN
+
+    different_amount = Money(amount=Decimal("0.002"), unit="USDC")
+    different_record = match.matched.model_copy(update={"amount": different_amount})
+    different_match = MatchResult(
+        MatchStatus.MATCHED,
+        MatchStrategy.SESSION_VENDOR,
+        MatchConfidence.HIGH,
+        different_record,
+        (different_record.ledger_id,),
+    )
+    larger_budget = intent.model_copy(
+        update={"max_budget": Money(amount=Decimal("0.003"), unit="USDC")}
+    )
+    different = statuses(larger_budget, different_match)
+    assert different["budget"] is CheckStatus.PASS
+    assert different["price"] is CheckStatus.DIFF
+
+    above_budget = statuses(intent, different_match)
+    assert above_budget["budget"] is CheckStatus.FAIL
+    assert above_budget["price"] is CheckStatus.DIFF
+
+
 def test_unknown_contract_value_cannot_be_discarded_into_a_pass() -> None:
     intent, contract, execution, match, receipt = x402_evidence()
     contract = contract.model_copy(update={"asset": "unknown"})

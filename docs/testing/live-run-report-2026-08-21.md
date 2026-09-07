@@ -48,6 +48,8 @@ offline corpus. It pins three behaviors:
 
 A later reproduction (`live_6369…2d3b`) exposed that the collected Activity snapshot contained the candidate while execution omitted `vendor_slug`; export does not recollect Activity, so this was a matcher-key propagation defect rather than an eventual-consistency race. The sanitized fixture now keeps execution `transactionId` distinct from Activity `id`, preserves their shared session, and proves that matching occurs before storage/export redaction.
 
+A subsequent success bundle for `live_880f…4fd` matched a fresh Activity record by transaction hash, but its raw status was `broadcast` with `confirmedAt: null`, not `confirmed`. Its amount therefore remains ineligible as proven charge evidence even though Activity persistence and provider-reported settlement pass. `broadcast` normalizes to canonical `PENDING`; budget and price remain unknown until confirmed evidence exists. The `confirmed-activity-charge` fixture separately proves that a high-confidence `CONFIRMED` Activity amount supplies a missing execution charge and yields `VERIFIED_WITH_WARNINGS` when only chain and recipient differences remain.
+
 Offline gate after the change: 397 passed, 2 skipped (live/paid opt-ins excluded);
 ruff and pyright clean.
 

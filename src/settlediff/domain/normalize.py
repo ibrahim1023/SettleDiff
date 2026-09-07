@@ -407,6 +407,7 @@ def _ledger_status(
         raise ArtifactParseError(raw.artifact_id, f"{prefix}status", "string or null")
     normalized = value.lower()
     aliases = {
+        "broadcast": LedgerStatus.PENDING,
         "broadcast_failed": LedgerStatus.FAILED,
         "confirmed": LedgerStatus.CONFIRMED,
         "settled": LedgerStatus.CONFIRMED,

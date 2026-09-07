@@ -1,0 +1,1 @@
+{"vendor_slug":null,"upstreamHttpStatus":200,"charge":null,"asset":"USDC","protocol":"mpp","chain":"tempo","recipient":"syn_recipient_execution","settlementStatus":"settled","transactionId":"syn_execution_confirmed_activity","sessionId":"syn_session_confirmed_activity","transactionHash":null,"responseBody":{"result":"synthetic success"},"executedAt":null}

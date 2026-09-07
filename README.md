@@ -149,6 +149,7 @@ Every scenario replays deterministically with no credentials, external requests,
 | Fixture | Key condition | Expected verdict |
 |---|---|---|
 | `clean-success` | all evidence agrees | `VERIFIED` |
+| `confirmed-activity-charge` | high-confidence confirmed Activity supplies missing execution charge | `VERIFIED_WITH_WARNINGS` |
 | `chain-diff` | advertised vs executed chain differs | `VERIFIED_WITH_WARNINGS` |
 | `paid-failure` | settlement proven, service failed | `PAID_FAILURE` |
 | `failed-broadcast` | failed 402 replay, no proven charge | `UNVERIFIABLE` |

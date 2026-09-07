@@ -373,6 +373,31 @@ def test_normalize_current_activity_millisecond_timestamp() -> None:
     assert record.transaction_hash == "syn_hash_current"
 
 
+@pytest.mark.parametrize(
+    ("raw_status", "expected"),
+    [("broadcast", LedgerStatus.PENDING), ("broadcast_failed", LedgerStatus.FAILED)],
+)
+def test_normalize_perflo_broadcast_statuses(raw_status: str, expected: LedgerStatus) -> None:
+    raw = artifact(
+        "artifact_activity_broadcast",
+        ArtifactType.ACTIVITY,
+        [
+            {
+                "id": "syn_activity_broadcast",
+                "amount": "$0.01",
+                "asset": "USDC",
+                "status": raw_status,
+                "createdAt": int(NOW.timestamp() * 1000),
+            }
+        ],
+    )
+
+    record = normalize_activity(raw)[0]
+
+    assert record.status is expected
+    assert record.amount == Money(amount=Decimal("0.01"), unit="USDC")
+
+
 def test_unknown_bounded_values_are_diagnostic_without_restricting_protocols() -> None:
     raw = artifact(
         "artifact_execution_unknown",
