@@ -1,0 +1,41 @@
+{
+  "x402Version": 2,
+  "error": "Payment required",
+  "resource": {
+    "url": "https://x402-paid-endpoint.selfradiance.workers.dev/artifact/vq00.json",
+    "description": "Sanitized public artifact challenge",
+    "mimeType": "application/json",
+    "serviceName": "Synthetic License"
+  },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "eip155:8453",
+      "amount": "1000000",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "payTo": "0x1111111111111111111111111111111111111111",
+      "maxTimeoutSeconds": 300,
+      "extra": {
+        "name": "USD Coin",
+        "version": "2"
+      }
+    }
+  ],
+  "extensions": {
+    "bazaar": {
+      "info": {
+        "input": {
+          "type": "http",
+          "method": "GET",
+          "queryParams": {}
+        },
+        "output": {
+          "type": "json"
+        }
+      },
+      "schema": {
+        "type": "object"
+      }
+    }
+  }
+}

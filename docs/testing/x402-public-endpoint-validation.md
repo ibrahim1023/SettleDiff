@@ -84,6 +84,19 @@ The public validation added:
 
 No live signature, payment payload, Keychain value, full transaction reference, or raw public challenge was committed.
 
+## 2026-09-08 mainnet compatibility probe
+
+An unpaid request to `https://x402-paid-endpoint.selfradiance.workers.dev/artifact/vq00.json`
+returned a valid x402 v2 `exact` primary requirement, but advertised Base mainnet
+(`eip155:8453`) and canonical Base mainnet USDC, not Base Sepolia. SettleDiff preserved its
+bounded `extra`, resource, and Bazaar extension metadata, then correctly rejected the
+unsupported primary before authorization or signer launch.
+
+A sanitized contract fixture preserves that observed profile. It proves that the mainnet
+primary remains unselectable and that the same valid metadata shape does not prevent
+selection when settlement-critical terms use the supported Base Sepolia profile. No signer,
+payment, or database write was used for this probe.
+
 ## Compatibility statement
 
 Demonstrated support is limited to x402 v2, selected requirement index 0, `exact`, Base Sepolia, canonical test USDC, GET without a body or POST with a bounded JSON value, and EIP-3009. A challenge may contain bounded unsupported alternatives after a supported primary entry. This does not establish support for selecting Algorand, Solana, other EVM networks, other assets, other schemes, mainnet, or arbitrary requirement ordering.

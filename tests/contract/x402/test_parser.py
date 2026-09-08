@@ -55,6 +55,36 @@ def test_parse_preserves_bounded_unsupported_alternatives_after_supported_primar
     assert parsed.accepts[2].network.startswith("solana:")
 
 
+def test_public_mainnet_challenge_metadata_parses_without_making_primary_selectable() -> None:
+    payload = json.loads((FIXTURES / "payment-required-public-mainnet-v2.json").read_text())
+
+    parsed = parse_payment_required(encoded(payload))
+
+    assert isinstance(parsed.accepts[0], AlternativePaymentRequirements)
+    assert parsed.accepts[0].network == "eip155:8453"
+    assert parsed.accepts[0].asset == "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    assert parsed.accepts[0].extra == {"name": "USD Coin", "version": "2"}
+    assert parsed.extensions["bazaar"] == payload["extensions"]["bazaar"]
+    with pytest.raises(ValueError, match="selected payment requirement is unsupported"):
+        parsed.selected_requirement()
+
+
+def test_public_metadata_shape_does_not_reject_supported_sepolia_terms() -> None:
+    payload = json.loads((FIXTURES / "payment-required-public-mainnet-v2.json").read_text())
+    payload["accepts"][0]["network"] = "eip155:84532"
+    payload["accepts"][0]["asset"] = BASE_SEPOLIA_USDC
+
+    parsed = parse_payment_required(encoded(payload))
+    requirement = parsed.selected_requirement()
+
+    assert isinstance(requirement, PaymentRequirements)
+    assert requirement.network == "eip155:84532"
+    assert requirement.asset == BASE_SEPOLIA_USDC
+    assert requirement.extra.name == "USD Coin"
+    assert requirement.extra.version == "2"
+    assert parsed.extensions["bazaar"] == payload["extensions"]["bazaar"]
+
+
 @pytest.mark.parametrize(
     ("case", "message"),
     [
