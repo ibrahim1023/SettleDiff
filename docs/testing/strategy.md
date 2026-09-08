@@ -72,6 +72,15 @@ Initial scenarios:
 - payment failure;
 - malformed provider envelope preserved as unverifiable evidence.
 
+The two Perflo Activity regressions preserve different financial semantics:
+
+- `failed-broadcast` proves that a failed Activity record can be matched without becoming
+  charge evidence; chain disagreement remains visible, settlement remains unknown, and the
+  verdict remains `UNVERIFIABLE`.
+- `confirmed-activity-charge` proves that a high-confidence matched `CONFIRMED` record with
+  a normalized amount can supply a missing execution charge. Budget and price pass; with
+  only chain `DIFF` and recipient `WARN`, the verdict is `VERIFIED_WITH_WARNINGS`.
+
 The x402 corpus adds complete schema-v2 canonical reports for clean success, confirmed
 settlement with service failure, uncertain submission, both directions of
 provider/independent settlement contradiction, and recipient/amount/asset/network

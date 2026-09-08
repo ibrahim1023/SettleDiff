@@ -46,12 +46,89 @@ offline corpus. It pins three behaviors:
 2. The failed record is not counted as a charge (`budget`/`price: UNKNOWN`).
 3. The run remains `UNVERIFIABLE` rather than guessing settlement.
 
-A later reproduction (`live_6369…2d3b`) exposed that the collected Activity snapshot contained the candidate while execution omitted `vendor_slug`; export does not recollect Activity, so this was a matcher-key propagation defect rather than an eventual-consistency race. The sanitized fixture now keeps execution `transactionId` distinct from Activity `id`, preserves their shared session, and proves that matching occurs before storage/export redaction.
+### 2026-09-07 reproduction — matcher defect exposed
 
-A subsequent success bundle for `live_880f…4fd` matched a fresh Activity record by transaction hash, but its raw status was `broadcast` with `confirmedAt: null`, not `confirmed`. Its amount therefore remains ineligible as proven charge evidence even though Activity persistence and provider-reported settlement pass. `broadcast` normalizes to canonical `PENDING`; budget and price remain unknown until confirmed evidence exists. The `confirmed-activity-charge` fixture separately proves that a high-confidence `CONFIRMED` Activity amount supplies a missing execution charge and yields `VERIFIED_WITH_WARNINGS` when only chain and recipient differences remain.
+A later reproduction (`live_6369…2d3b`) reproduced the original failure: Base was
+advertised, execution used Tempo, the service returned HTTP 402, and Activity recorded
+`broadcast_failed` without a transaction hash. The exported Activity artifact already
+contained the correct candidate, but the report said no matching persisted record was found.
 
-Offline gate after the change: 397 passed, 2 skipped (live/paid opt-ins excluded);
-ruff and pyright clean.
+This was not an Activity visibility race. Execution omitted `vendor_slug`, while the
+selected contract retained the authoritative vendor. Session/vendor matching now uses the
+execution vendor or, when execution omits it, the authoritative selected contract vendor.
+It never derives vendor identity from an arbitrary URL or Activity candidate. A subsequent
+live run returned `activity_persistence: PASS` and validated the corrected correlation path.
+
+### 2026-09-07 successful payment — pending Activity at verification time
+
+The subsequent run (`live_880f…4fd`) matched its Activity record by transaction hash. At
+verification time, the raw record contained:
+
+```text
+status = broadcast
+confirmedAt = null
+amount = $0.01
+transaction hash = present
+```
+
+The transaction later appeared as `confirmed`. The verifier correctly treats the earlier
+`broadcast` snapshot as `PENDING` and does not use its amount as proven charge evidence.
+Canonical Activity status mapping is conservative:
+
+```text
+broadcast        → PENDING
+broadcast_failed → FAILED
+confirmed        → CONFIRMED
+settled          → CONFIRMED
+```
+
+The `confirmed-activity-charge` fixture separately proves that only a high-confidence
+matched `CONFIRMED` record with a normalized amount can supply missing execution-charge
+evidence.
+
+### 2026-09-08 validation — upstream contract now aligns on Tempo
+
+On 2026-09-08, `perflo check` for `https://parallelmpp.dev/api/search` advertised Tempo and
+`$0.01 USDC`. SettleDiff's preflight independently displayed Tempo, a `0.010000 USDC` quote,
+and a `0.01 USDC` budget. One newly authorized paid request then produced:
+
+```text
+PASS: Recorded Activity amount is within the authorized budget.
+PASS: Quoted price matches the recorded Activity amount.
+PASS: Asset values agree across available evidence.
+PASS: Protocol values agree across available evidence.
+PASS: Chain values agree across available evidence.
+WARN: Recipient representations differ; no provider defect is inferred.
+PASS: Payment settled.
+PASS: Purchased service returned a successful HTTP response.
+PASS: No settled payment with a failed service response was observed.
+PASS: Persisted Activity and service outcome require no additional consistency warning.
+PASS: A deterministic Activity record match was found.
+```
+
+The final verdict was `VERIFIED_WITH_WARNINGS`. This run did not reproduce the historical
+Base-to-Tempo disagreement.
+
+### Three-run chronology
+
+```text
+Run 1 — original and reproduced failure
+Base advertised → Tempo execution → HTTP 402 → broadcast_failed
+→ settlement UNKNOWN → UNVERIFIABLE
+
+Run 2 — matcher and pending-state validation
+Base advertised → Tempo execution → successful service response
+→ Activity matched after the matcher fix → broadcast/PENDING at verification
+→ budget and price UNKNOWN → UNVERIFIABLE → Activity later confirmed
+
+Run 3 — current successful validation
+Tempo advertised → Tempo execution → confirmed $0.01 Activity
+→ budget PASS → price PASS → settlement PASS → service PASS
+→ activity persistence PASS → recipient WARN → VERIFIED_WITH_WARNINGS
+```
+
+Offline gate after the change: 664 passed, 2 skipped (live/paid opt-ins excluded); Ruff and
+Pyright clean.
 
 ## Product assessment
 
@@ -63,9 +140,17 @@ ruff and pyright clean.
   value of detection without automated recourse, and current coupling to the
   Perflo/MPP rail.
 
-## Open issues
+## Current status
 
-- Vendor-side 402 replay rejection and the base-vs-tempo chain mismatch on
-  `parallelmpp.dev` remain unresolved upstream; any paid re-run requires fresh
-  explicit authorization and must not retry the uncertain submission.
-- Live compatibility remains an opt-in pre-release gate per ADR 0005.
+The original Base-to-Tempo disagreement and 402 replay failure remain preserved as
+historical live evidence and regression fixtures. The disagreement reproduced again on
+2026-09-07. By 2026-09-08, Perflo's curated contract for the same endpoint advertised
+Tempo, and a fresh paid run aligned contract, execution, and Activity on Tempo.
+
+The historical root cause was never conclusively assigned to Perflo, the vendor, MPP
+routing, metadata, or another boundary. It remains an observed evidence disagreement, not
+a confirmed provider defect. The previously observed disagreement no longer reproduced
+after the advertised contract changed to Tempo.
+
+Live compatibility remains an opt-in pre-release gate per ADR 0005. Every paid re-run
+requires fresh explicit authorization, and an uncertain submission must never be retried.

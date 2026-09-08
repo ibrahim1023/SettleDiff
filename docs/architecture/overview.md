@@ -135,6 +135,19 @@ Matches persisted records using ordered deterministic strategies:
 
 Every result includes strategy and confidence. Ties or weak fallback matches remain ambiguous; the agent cannot promote them.
 
+Perflo Activity status is normalized conservatively:
+
+```text
+broadcast        → PENDING
+broadcast_failed → FAILED
+confirmed        → CONFIRMED
+settled          → CONFIRMED
+```
+
+A matched Activity record establishes charge evidence only when the match is
+high-confidence, the canonical status is `CONFIRMED`, and a normalized amount is present.
+`PENDING`, `FAILED`, ambiguous, or low-confidence records do not establish a charge.
+
 ### Storage
 
 SQLite schema 4 creates a durable run record before live preflight, appends redacted events and artifacts during execution, and attaches the final report and explanation when available. Failed and refused runs remain inspectable without a final report. Every run records `fixture`, `controlled_live`, or `external_live` provenance. Fixtures remain versioned JSON so CI and demos do not depend on a database.

@@ -16,7 +16,7 @@ evidence-backed verdicts.
 
 The LLM may gather and explain evidence. It cannot decide financial truth.
 
-## Real incident: advertised Base, executed Tempo, vendor rejected payment
+## Original live incident: advertised Base, executed Tempo, vendor rejected payment
 
 During the first live paid test cycle against a real Perflo/MPP vendor, SettleDiff
 observed:
@@ -35,6 +35,11 @@ SettleDiff did not infer a successful payment from the presence of an Activity r
 A failed Activity record proved that an attempt was recorded, but not that money settled.
 
 **Final verdict: `UNVERIFIABLE`**
+
+> **Historical incident.** This discrepancy was reproduced again on 2026-09-07. By
+> 2026-09-08, Perflo's curated contract for the same endpoint advertised `tempo`,
+> matching the observed execution path. A fresh live run subsequently completed
+> successfully with contract, execution, and Activity aligned on Tempo.
 
 The incident is reproduced offline as a sanitized regression fixture:
 
@@ -57,6 +62,39 @@ PASS: A deterministic Activity record match was found.
 Full cycle write-up: [live paid test cycle — 2026-08-21](docs/testing/live-run-report-2026-08-21.md).
 Regression fixture: [`fixtures/failed-broadcast/`](fixtures/failed-broadcast/). The raw live
 evidence bundle stays local and is never committed.
+
+## Later live validation: contract and execution aligned on Tempo
+
+On 2026-09-08, the same endpoint was inspected again:
+
+```text
+POST https://parallelmpp.dev/api/search
+```
+
+Perflo's read-only contract advertised `tempo`, USDC, and `$0.01`. SettleDiff bound those
+exact terms into a one-use authorization and executed one paid request.
+
+| Layer | Evidence | Result |
+|---|---|---|
+| Advertised chain | `tempo` | `PASS` |
+| Executed chain | `tempo` | `PASS` |
+| Activity chain | `tempo` | `PASS` |
+| Activity amount | `$0.01` | `PASS` |
+| Activity status | `confirmed` | `PASS` |
+| Transaction hash | present | `PASS` |
+| Budget | `$0.01` authorized / `$0.01` recorded | `PASS` |
+| Price | `$0.01` quoted / `$0.01` recorded | `PASS` |
+| Service response | successful HTTP response | `PASS` |
+| Settlement | established | `PASS` |
+| Activity correlation | deterministic match | `PASS` |
+| Recipient | representation difference | `WARN` |
+
+**Final verdict: `VERIFIED_WITH_WARNINGS`**
+
+The remaining warning was a recipient representation difference. No chain, price, or budget
+disagreement, settlement uncertainty, or Activity-correlation failure remained. The original
+incident remains historical evidence; its root cause is not assigned to Perflo, the vendor,
+MPP routing, metadata, or another boundary.
 
 ## Why this matters
 
