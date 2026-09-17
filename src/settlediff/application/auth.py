@@ -3,22 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 from datetime import UTC, datetime
-from typing import Annotated, Literal, Self
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from settlediff.domain.integrity import Sha256Digest, sha256_digest
 from settlediff.domain.models import AssetIdentity, Caip2Network, NonEmptyStr
 from settlediff.domain.money import Money
 
 
 class AuthorizationError(ValueError):
     """A paid request is not covered by its capability."""
-
-
-Sha256Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
 class PaymentTerms(BaseModel):
@@ -40,14 +36,8 @@ class PaymentTerms(BaseModel):
     body_digest: Sha256Digest
 
     @property
-    def digest(self) -> str:
-        canonical = json.dumps(
-            self.model_dump(mode="json"),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )
-        return hashlib.sha256(canonical.encode()).hexdigest()
+    def digest(self) -> Sha256Digest:
+        return sha256_digest(self.model_dump(mode="json"))
 
     @model_validator(mode="after")
     def require_consistent_asset(self) -> Self:
@@ -179,9 +169,8 @@ class PaidExecutionCapability:
         return self._payment_terms_digest
 
     @staticmethod
-    def body_digest_for(body: JsonValue | None) -> str:
-        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        return hashlib.sha256(canonical.encode()).hexdigest()
+    def body_digest_for(body: JsonValue | None) -> Sha256Digest:
+        return sha256_digest(body)
 
     async def consume(
         self,

@@ -9,5 +9,6 @@
 | [0005](0005-fixture-first-testing-and-evals.md) | Fixture-first tests and code-first agent evals | Accepted |
 | [0006](0006-opentelemetry-with-private-defaults.md) | Optional OpenTelemetry with private defaults | Accepted |
 | [0007](0007-rail-neutral-canonical-payment-evidence.md) | Rail-neutral canonical payment evidence | Accepted |
+| [0008](0008-assurance-evidence-and-publication.md) | Assurance evidence and publication | Accepted |
 
 New decisions use the next four-digit number. ADRs are immutable after acceptance except for typo/link corrections; changed decisions supersede earlier records.

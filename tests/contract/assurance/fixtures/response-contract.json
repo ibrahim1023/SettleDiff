@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "media_type": "application/json",
+  "json_schema": {
+    "type": "object",
+    "required": ["result"],
+    "properties": {
+      "result": {
+        "type": "string"
+      }
+    }
+  },
+  "source_fields": [
+    "resource.mimeType",
+    "extensions.bazaar.schema"
+  ]
+}

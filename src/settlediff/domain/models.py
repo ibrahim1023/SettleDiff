@@ -17,6 +17,7 @@ from pydantic import (
     model_validator,
 )
 
+from settlediff.domain.integrity import Sha256Digest, sha256_digest
 from settlediff.domain.money import Money
 
 
@@ -50,6 +51,19 @@ class CheckStatus(StrEnum):
     DIFF = "DIFF"
     FAIL = "FAIL"
     UNKNOWN = "UNKNOWN"
+
+
+class DeliveryStatus(StrEnum):
+    SATISFIED = "SATISFIED"
+    FAILED = "FAILED"
+    UNKNOWN = "UNKNOWN"
+    NOT_ASSESSED = "NOT_ASSESSED"
+
+
+class RetrySafety(StrEnum):
+    SAFE_TO_RETRY = "SAFE_TO_RETRY"
+    DO_NOT_RETRY = "DO_NOT_RETRY"
+    REQUIRES_HUMAN_DECISION = "REQUIRES_HUMAN_DECISION"
 
 
 class Severity(StrEnum):
@@ -97,6 +111,76 @@ def require_v2_fields(schema_version: int, fields: tuple[tuple[str, object | Non
         raise ValueError(f"schema version {schema_version} cannot contain {', '.join(present)}")
 
 
+class ResponseContract(CanonicalModel):
+    schema_version: int = Field(default=1, ge=1, le=1)
+    media_type: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+        | None
+    ) = None
+    json_schema: dict[str, JsonValue] | None = None
+    source_fields: tuple[NonEmptyStr, ...] = Field(min_length=1, max_length=8)
+
+    @model_validator(mode="after")
+    def require_advertised_promise(self) -> Self:
+        if self.media_type is None and self.json_schema is None:
+            raise ValueError("response contract requires an advertised media type or JSON schema")
+        return self
+
+    @property
+    def digest(self) -> Sha256Digest:
+        return sha256_digest(self.model_dump(mode="json"))
+
+
+class DeliveryObservation(CanonicalModel):
+    schema_version: int = Field(default=1, ge=1, le=1)
+    observed_at: UtcDatetime
+    status_code: int = Field(ge=100, le=599)
+    media_type: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+        | None
+    )
+    received_bytes: int = Field(ge=0, le=100_000_000)
+    truncated: bool
+    parsed_body: JsonValue | None
+    evidence_ids: tuple[NonEmptyStr, ...] = Field(min_length=1, max_length=16)
+
+    @model_validator(mode="after")
+    def require_coherent_body_evidence(self) -> Self:
+        if self.truncated and self.parsed_body is not None:
+            raise ValueError("truncated delivery observation cannot contain a parsed body")
+        return self
+
+
+class DeliveryAssessment(CanonicalModel):
+    schema_version: int = Field(default=1, ge=1, le=1)
+    status: DeliveryStatus
+    reason_code: NonEmptyStr
+    evidence_ids: tuple[NonEmptyStr, ...] = Field(min_length=1, max_length=16)
+    observation: DeliveryObservation | None = None
+    response_contract_digest: Sha256Digest | None = None
+
+    @model_validator(mode="after")
+    def require_coherent_assessment(self) -> Self:
+        if self.status in {DeliveryStatus.SATISFIED, DeliveryStatus.FAILED} and (
+            self.observation is None or self.response_contract_digest is None
+        ):
+            raise ValueError("assessed delivery requires an observation and response contract")
+        if self.status is DeliveryStatus.NOT_ASSESSED and (
+            self.observation is not None or self.response_contract_digest is not None
+        ):
+            raise ValueError(
+                "unassessed delivery cannot contain an observation or response contract"
+            )
+        return self
+
+
+class RetryAssessment(CanonicalModel):
+    schema_version: int = Field(default=1, ge=1, le=1)
+    safety: RetrySafety
+    reason_codes: tuple[NonEmptyStr, ...] = Field(min_length=1, max_length=16)
+    evidence_ids: tuple[NonEmptyStr, ...] = Field(min_length=1, max_length=16)
+
+
 class AssetIdentity(CanonicalModel):
     schema_version: int = Field(default=1, ge=1)
     symbol: NonEmptyStr
@@ -115,7 +199,7 @@ class PurchaseIntent(CanonicalModel):
 
 
 class ExpectedContract(CanonicalModel):
-    schema_version: int = Field(default=2, ge=1)
+    schema_version: int = Field(default=2, ge=1, le=3)
     vendor_slug: NonEmptyStr | None
     url: NonEmptyStr
     price: Money | None
@@ -128,6 +212,9 @@ class ExpectedContract(CanonicalModel):
     asset_identity: AssetIdentity | None = None
     recipient: NonEmptyStr | None = None
     max_timeout_seconds: int | None = Field(default=None, gt=0, le=86_400)
+    response_contract: ResponseContract | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     normalization_notes: tuple[NonEmptyStr, ...] = ()
 
     @model_validator(mode="after")
@@ -142,6 +229,10 @@ class ExpectedContract(CanonicalModel):
                 ("max_timeout_seconds", self.max_timeout_seconds),
             ),
         )
+        if self.schema_version < 3 and "response_contract" in self.model_fields_set:
+            raise ValueError(
+                f"schema version {self.schema_version} cannot contain response_contract"
+            )
         return self
 
 
@@ -271,7 +362,7 @@ class Finding(CanonicalModel):
 
 
 class MachineReport(CanonicalModel):
-    schema_version: int = Field(default=2, ge=1)
+    schema_version: int = Field(default=2, ge=1, le=3)
     run_id: NonEmptyStr
     intent: PurchaseIntent
     contract: ExpectedContract | None
@@ -281,10 +372,21 @@ class MachineReport(CanonicalModel):
     verdict: Verdict
     receipt: PaymentReceipt | None = None
     adapter_id: NonEmptyStr | None = None
+    delivery: DeliveryAssessment | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    retry: RetryAssessment | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def require_compatible_schema(self) -> Self:
         require_v2_fields(self.schema_version, (("receipt", self.receipt),))
+        future_fields = tuple(
+            field for field in ("delivery", "retry") if field in self.model_fields_set
+        )
+        if self.schema_version < 3 and future_fields:
+            raise ValueError(
+                f"schema version {self.schema_version} cannot contain {', '.join(future_fields)}"
+            )
         return self
 
 

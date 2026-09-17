@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping
-from hashlib import sha256
-from typing import Annotated, Literal, Protocol, cast
+from typing import Literal, Protocol, cast
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from settlediff import __version__
 from settlediff.application.run import RunEvent
+from settlediff.domain.integrity import Sha256Digest, canonical_json_bytes, sha256_digest
 from settlediff.domain.models import EvidenceArtifact, ExplanationRecord, MachineReport, NonEmptyStr
 from settlediff.domain.redaction import redact_artifact
 from settlediff.domain.verdict import derive_verdict
 
-Sha256Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 DATABASE_SCHEMA_VERSION = 4
 X402_PROTOCOL_VERSION = "2"
 X402_SIGNER_SCHEMA_VERSION = 2
@@ -62,15 +59,6 @@ class BundleRepository(Protocol):
     def explanation(self, run_id: str) -> ExplanationRecord | None: ...
 
 
-def _canonical_json(value: Mapping[str, object]) -> bytes:
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-
-
 def _bundle_payload(bundle: EvidenceBundle, *, include_integrity: bool) -> dict[str, object]:
     exclude: set[str] = set() if include_integrity else {"integrity"}
     payload = cast(dict[str, object], bundle.model_dump(mode="json", exclude=exclude))
@@ -106,7 +94,7 @@ def _payload(bundle: EvidenceBundle) -> dict[str, object]:
 
 
 def _digest(bundle: EvidenceBundle) -> str:
-    return sha256(_canonical_json(_payload(bundle))).hexdigest()
+    return sha256_digest(_payload(bundle))
 
 
 def export_bundle(repository: BundleRepository, run_id: str) -> EvidenceBundle:
@@ -199,7 +187,7 @@ def verify_bundle(bundle: EvidenceBundle) -> MachineReport:
 
 def serialize_bundle(bundle: EvidenceBundle) -> bytes:
     """Serialize a bundle as compact, sorted UTF-8 JSON."""
-    return _canonical_json(_bundle_payload(bundle, include_integrity=True))
+    return canonical_json_bytes(_bundle_payload(bundle, include_integrity=True))
 
 
 def load_bundle(data: bytes) -> EvidenceBundle:

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from enum import StrEnum
 from typing import Annotated, Literal, Self, cast
 
@@ -17,11 +15,11 @@ from pydantic import (
     model_validator,
 )
 
+from settlediff.domain.integrity import Sha256Digest, sha256_digest
 from settlediff.domain.models import NonEmptyStr
 from settlediff.domain.money import Money
 from settlediff.x402.urls import is_safe_x402_target
 
-Sha256Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 EvmAddress = Annotated[str, StringConstraints(pattern=r"^0x[0-9a-fA-F]{40}$")]
 _FORBIDDEN_OUTPUT_KEYS = frozenset(
     {
@@ -121,14 +119,8 @@ class ExternalSignerResult(SignerContractModel):
         return self
 
 
-def body_digest_for(body: JsonValue | None) -> str:
-    encoded = json.dumps(
-        body,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode()
-    return hashlib.sha256(encoded).hexdigest()
+def body_digest_for(body: JsonValue | None) -> Sha256Digest:
+    return sha256_digest(body)
 
 
 def _contains_forbidden_key(value: JsonValue) -> bool:
