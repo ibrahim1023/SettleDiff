@@ -23,6 +23,9 @@ AtomicAmount = Annotated[str, StringConstraints(pattern=r"^[0-9]+$")]
 BoundedExternalStr = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)
 ]
+BoundedMediaType = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
+]
 
 
 class X402ExternalModel(BaseModel):
@@ -31,11 +34,11 @@ class X402ExternalModel(BaseModel):
 
 class ResourceInfo(X402ExternalModel):
     url: NonEmptyStr
-    description: str | None = None
-    mime_type: str | None = Field(default=None, alias="mimeType")
-    service_name: str | None = Field(default=None, alias="serviceName")
-    tags: tuple[str, ...] | None = None
-    icon_url: str | None = Field(default=None, alias="iconUrl")
+    description: BoundedExternalStr | None = None
+    mime_type: BoundedMediaType | None = Field(default=None, alias="mimeType")
+    service_name: BoundedExternalStr | None = Field(default=None, alias="serviceName")
+    tags: tuple[BoundedExternalStr, ...] | None = Field(default=None, max_length=32)
+    icon_url: BoundedExternalStr | None = Field(default=None, alias="iconUrl")
 
     @field_validator("url")
     @classmethod

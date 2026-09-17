@@ -21,6 +21,7 @@ from settlediff.domain.models import (
     LedgerRecord,
     LedgerStatus,
     PaymentReceipt,
+    ResponseContract,
     SettlementStatus,
 )
 from settlediff.domain.money import Money
@@ -44,21 +45,26 @@ def normalize_contract(raw: EvidenceArtifact) -> ExpectedContract:
     data = _artifact_object(raw, ArtifactType.SERVICE_CONTRACT)
     notes = _stored_notes(data, raw)
     price = _money(data, raw, amount_field="price_minor", unit_field="asset", required=False)
-    return ExpectedContract(
-        vendor_slug=_optional_string(data, raw, "vendor_slug"),
-        url=_required_string(data, raw, "url"),
-        price=price,
-        asset=_normalized_name(data, raw, "asset", _RECOGNIZED_ASSETS, str.upper, notes),
-        protocol=_normalized_protocol(data, raw),
-        chain=_normalized_name(data, raw, "chain", _RECOGNIZED_CHAINS, str.lower, notes),
-        request_schema=_optional_schema(data, raw),
-        scheme=_optional_string(data, raw, "scheme"),
-        network=_optional_network(data, raw),
-        asset_identity=_optional_asset_identity(data, raw),
-        recipient=_optional_string(data, raw, "recipient"),
-        max_timeout_seconds=_optional_positive_int(data, raw, "max_timeout_seconds"),
-        normalization_notes=tuple(notes),
-    )
+    response_contract = _optional_response_contract(data, raw)
+    values: dict[str, object] = {
+        "schema_version": _contract_schema_version(data, raw),
+        "vendor_slug": _optional_string(data, raw, "vendor_slug"),
+        "url": _required_string(data, raw, "url"),
+        "price": price,
+        "asset": _normalized_name(data, raw, "asset", _RECOGNIZED_ASSETS, str.upper, notes),
+        "protocol": _normalized_protocol(data, raw),
+        "chain": _normalized_name(data, raw, "chain", _RECOGNIZED_CHAINS, str.lower, notes),
+        "request_schema": _optional_schema(data, raw),
+        "scheme": _optional_string(data, raw, "scheme"),
+        "network": _optional_network(data, raw),
+        "asset_identity": _optional_asset_identity(data, raw),
+        "recipient": _optional_string(data, raw, "recipient"),
+        "max_timeout_seconds": _optional_positive_int(data, raw, "max_timeout_seconds"),
+        "normalization_notes": tuple(notes),
+    }
+    if response_contract is not None:
+        values["response_contract"] = response_contract
+    return ExpectedContract.model_validate(values)
 
 
 def normalize_execution(raw: EvidenceArtifact) -> ExecutionRecord:
@@ -289,6 +295,29 @@ def _optional_asset_identity(
     except ValidationError as error:
         raise ArtifactParseError(
             raw.artifact_id, f"{prefix}asset_identity", "valid asset identity"
+        ) from error
+
+
+def _contract_schema_version(data: dict[str, JsonValue], raw: EvidenceArtifact) -> int:
+    value = data.get("schema_version", 2)
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 3:
+        raise ArtifactParseError(
+            raw.artifact_id, "data.schema_version", "supported integer version"
+        )
+    return value
+
+
+def _optional_response_contract(
+    data: dict[str, JsonValue], raw: EvidenceArtifact
+) -> ResponseContract | None:
+    value = data.get("response_contract")
+    if value is None:
+        return None
+    try:
+        return ResponseContract.model_validate_json(json.dumps(value), strict=True)
+    except (ValidationError, ValueError, TypeError) as error:
+        raise ArtifactParseError(
+            raw.artifact_id, "data.response_contract", "valid response contract"
         ) from error
 
 

@@ -14,6 +14,8 @@ from settlediff.x402.models import PaymentRequired, SettlementResponse
 DEFAULT_MAX_HEADER_BYTES = 65_536
 DEFAULT_MAX_DECODED_BYTES = 49_152
 DEFAULT_MAX_JSON_DEPTH = 16
+DEFAULT_MAX_JSON_PROPERTIES = 512
+DEFAULT_MAX_JSON_STRING_BYTES = 4_096
 
 
 class X402ProtocolError(ValueError):
@@ -26,6 +28,8 @@ def parse_payment_required(
     max_header_bytes: int = DEFAULT_MAX_HEADER_BYTES,
     max_decoded_bytes: int = DEFAULT_MAX_DECODED_BYTES,
     max_json_depth: int = DEFAULT_MAX_JSON_DEPTH,
+    max_json_properties: int = DEFAULT_MAX_JSON_PROPERTIES,
+    max_json_string_bytes: int = DEFAULT_MAX_JSON_STRING_BYTES,
 ) -> PaymentRequired:
     return _parse_header(
         header,
@@ -34,6 +38,8 @@ def parse_payment_required(
         max_header_bytes=max_header_bytes,
         max_decoded_bytes=max_decoded_bytes,
         max_json_depth=max_json_depth,
+        max_json_properties=max_json_properties,
+        max_json_string_bytes=max_json_string_bytes,
     )
 
 
@@ -43,6 +49,8 @@ def parse_payment_response(
     max_header_bytes: int = DEFAULT_MAX_HEADER_BYTES,
     max_decoded_bytes: int = DEFAULT_MAX_DECODED_BYTES,
     max_json_depth: int = DEFAULT_MAX_JSON_DEPTH,
+    max_json_properties: int = DEFAULT_MAX_JSON_PROPERTIES,
+    max_json_string_bytes: int = DEFAULT_MAX_JSON_STRING_BYTES,
 ) -> SettlementResponse:
     return _parse_header(
         header,
@@ -51,6 +59,8 @@ def parse_payment_response(
         max_header_bytes=max_header_bytes,
         max_decoded_bytes=max_decoded_bytes,
         max_json_depth=max_json_depth,
+        max_json_properties=max_json_properties,
+        max_json_string_bytes=max_json_string_bytes,
     )
 
 
@@ -62,8 +72,19 @@ def _parse_header[ModelT: BaseModel](
     max_header_bytes: int,
     max_decoded_bytes: int,
     max_json_depth: int,
+    max_json_properties: int,
+    max_json_string_bytes: int,
 ) -> ModelT:
-    if max_header_bytes < 1 or max_decoded_bytes < 1 or max_json_depth < 1:
+    if any(
+        limit < 1
+        for limit in (
+            max_header_bytes,
+            max_decoded_bytes,
+            max_json_depth,
+            max_json_properties,
+            max_json_string_bytes,
+        )
+    ):
         raise X402ProtocolError("x402 parser limits must be positive")
     if not isinstance(header, str):
         raise X402ProtocolError(f"{name} must be a string")
@@ -88,6 +109,10 @@ def _parse_header[ModelT: BaseModel](
     mapping = cast(dict[object, object], loaded)
     if _json_depth(mapping) > max_json_depth:
         raise X402ProtocolError(f"{name} JSON exceeded the depth limit")
+    if _json_property_count(mapping) > max_json_properties:
+        raise X402ProtocolError(f"{name} JSON exceeded the property-count limit")
+    if _max_json_string_bytes(mapping) > max_json_string_bytes:
+        raise X402ProtocolError(f"{name} JSON exceeded the string-size limit")
     try:
         return model.model_validate_json(decoded, strict=True)
     except ValidationError as error:
@@ -101,4 +126,36 @@ def _json_depth(value: object) -> int:
     if isinstance(value, list):
         items = cast(list[object], value)
         return 1 + max((_json_depth(child) for child in items), default=0)
+    return 0
+
+
+def _json_property_count(value: object) -> int:
+    if isinstance(value, dict):
+        mapping = cast(dict[object, object], value)
+        return len(mapping) + sum(_json_property_count(child) for child in mapping.values())
+    if isinstance(value, list):
+        return sum(_json_property_count(child) for child in cast(list[object], value))
+    return 0
+
+
+def _max_json_string_bytes(value: object) -> int:
+    if isinstance(value, str):
+        return len(value.encode("utf-8"))
+    if isinstance(value, dict):
+        mapping = cast(dict[object, object], value)
+        return max(
+            (
+                max(
+                    len(str(key).encode("utf-8")),
+                    _max_json_string_bytes(child),
+                )
+                for key, child in mapping.items()
+            ),
+            default=0,
+        )
+    if isinstance(value, list):
+        return max(
+            (_max_json_string_bytes(child) for child in cast(list[object], value)),
+            default=0,
+        )
     return 0

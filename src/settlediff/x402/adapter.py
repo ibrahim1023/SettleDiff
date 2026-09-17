@@ -309,6 +309,7 @@ def _payment_terms(contract: ExpectedContract, request: PaidExecutionRequest) ->
     if contract.price is None:
         raise AdapterProtocolError("x402 challenge omitted its quoted price")
     return PaymentTerms(
+        schema_version=2,
         adapter_id="x402",
         protocol_version="2",
         scheme=contract.scheme,
@@ -322,6 +323,9 @@ def _payment_terms(contract: ExpectedContract, request: PaidExecutionRequest) ->
         resource_url=contract.url,
         method=request.method,
         body_digest=PaidExecutionCapability.body_digest_for(request.body),
+        response_contract_digest=(
+            contract.response_contract.digest if contract.response_contract is not None else None
+        ),
     )
 
 

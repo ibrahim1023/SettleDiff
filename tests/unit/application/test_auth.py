@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -29,6 +30,7 @@ def request(**overrides: object) -> PaidExecutionRequest:
 
 def payment_terms(**overrides: object) -> PaymentTerms:
     values: dict[str, object] = {
+        "schema_version": 2,
         "adapter_id": "x402",
         "protocol_version": "2",
         "scheme": "exact",
@@ -47,6 +49,7 @@ def payment_terms(**overrides: object) -> PaymentTerms:
         "resource_url": "https://example.invalid/search",
         "method": "POST",
         "body_digest": PaidExecutionCapability.body_digest_for({"query": "synthetic"}),
+        "response_contract_digest": "a" * 64,
     }
     return PaymentTerms.model_validate(values | overrides)
 
@@ -150,6 +153,20 @@ def test_payment_terms_digest_is_canonical_and_covers_all_selected_terms() -> No
     assert len(first.digest) == 64
 
 
+def test_payment_terms_schema_v1_remains_readable_without_response_contract_digest() -> None:
+    legacy = payment_terms().model_dump(mode="json")
+    legacy["schema_version"] = 1
+    legacy.pop("response_contract_digest")
+
+    restored = PaymentTerms.model_validate_json(json.dumps(legacy))
+
+    assert restored.schema_version == 1
+    assert restored.response_contract_digest is None
+    assert "response_contract_digest" not in restored.model_dump(mode="json")
+    with pytest.raises(ValueError, match="schema version 1"):
+        PaymentTerms.model_validate_json(json.dumps(legacy | {"response_contract_digest": None}))
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "updates",
@@ -191,6 +208,7 @@ def test_payment_terms_digest_is_canonical_and_covers_all_selected_terms() -> No
         {"resource_url": "https://example.invalid/other"},
         {"method": "GET"},
         {"body_digest": "b" * 64},
+        {"response_contract_digest": "b" * 64},
     ],
 )
 async def test_payment_terms_drift_fails_without_consuming(

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from settlediff.domain.models import SettlementStatus
+from settlediff.domain.models import ResponseContract, SettlementStatus
 from settlediff.domain.money import Money
 from settlediff.x402.normalize import (
     X402NormalizationError,
@@ -47,11 +47,94 @@ def test_normalize_payment_required_maps_exact_base_sepolia_usdc() -> None:
     assert contract.network == "eip155:84532"
     assert contract.recipient == "0x1111111111111111111111111111111111111111"
     assert contract.max_timeout_seconds == 300
+    assert contract.response_contract == ResponseContract(
+        media_type="application/json",
+        json_schema=None,
+        source_fields=("resource.mimeType",),
+    )
     assert contract.asset_identity is not None
     assert contract.asset_identity.symbol == "USDC"
     assert contract.asset_identity.network == "eip155:84532"
     assert contract.asset_identity.reference == BASE_SEPOLIA_USDC
     assert contract.asset_identity.decimals == 6
+
+
+def test_normalize_payment_required_captures_resource_and_bazaar_response_contract() -> None:
+    payload = challenge()
+    payload["extensions"] = {
+        "bazaar": {
+            "info": {
+                "input": {"type": "http", "method": "GET", "queryParams": {}},
+                "output": {"type": "json"},
+            },
+            "schema": {
+                "type": "object",
+                "required": ["result"],
+                "properties": {"result": {"type": "string"}},
+            },
+        }
+    }
+
+    contract = normalize_payment_required(
+        parse_payment_required(encoded(payload)), request_schema={"method": "GET"}
+    )
+
+    assert contract.schema_version == 3
+    assert contract.response_contract == ResponseContract(
+        media_type="application/json",
+        json_schema={
+            "type": "object",
+            "required": ["result"],
+            "properties": {"result": {"type": "string"}},
+        },
+        source_fields=(
+            "resource.mimeType",
+            "extensions.bazaar.info.output.type",
+            "extensions.bazaar.schema",
+        ),
+    )
+
+
+def test_normalize_payment_required_preserves_absent_response_contract() -> None:
+    payload = challenge()
+    payload["resource"].pop("mimeType")
+
+    contract = normalize_payment_required(
+        parse_payment_required(encoded(payload)), request_schema={"method": "GET"}
+    )
+
+    assert contract.schema_version == 2
+    assert contract.response_contract is None
+    assert "response_contract" not in contract.model_dump(mode="json")
+
+
+@pytest.mark.parametrize(
+    ("bazaar", "message"),
+    [
+        (
+            {
+                "info": {"output": {"type": "json"}},
+                "schema": {
+                    "type": "object",
+                    "properties": {"result": {"type": "string", "maxLength": 20}},
+                },
+            },
+            "SCHEMA_UNSUPPORTED",
+        ),
+        ({"info": {"output": {"type": "html"}}, "schema": {"type": "object"}}, "BAZAAR_MALFORMED"),
+        (None, "BAZAAR_MALFORMED"),
+    ],
+)
+def test_normalize_payment_required_rejects_unsupported_or_malformed_bazaar_contract(
+    bazaar: object, message: str
+) -> None:
+    payload = challenge()
+    payload["extensions"] = {"bazaar": bazaar}
+
+    with pytest.raises(X402NormalizationError, match=message):
+        normalize_payment_required(
+            parse_payment_required(encoded(payload)), request_schema={"method": "GET"}
+        )
 
 
 def test_normalize_payment_required_rejects_unsupported_primary_requirement() -> None:

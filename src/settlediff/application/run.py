@@ -299,6 +299,7 @@ class LiveEvidenceCollector:
             )
         self._quote = contract.price
         self._payment_terms = PaymentTerms(
+            schema_version=2,
             adapter_id=self._adapter.adapter_id,
             protocol_version=contract_evidence.protocol_version,
             scheme=contract.scheme,
@@ -312,6 +313,11 @@ class LiveEvidenceCollector:
             resource_url=contract.url,
             method=request.method,
             body_digest=PaidExecutionCapability.body_digest_for(request.body),
+            response_contract_digest=(
+                contract.response_contract.digest
+                if contract.response_contract is not None
+                else None
+            ),
         )
         if contract.request_schema is not None:
             self._schema = _artifact(
@@ -465,6 +471,7 @@ class LiveEvidenceCollector:
         )
         findings = run_checks(intent, contract, execution, matched, receipt=receipt)
         report = MachineReport(
+            schema_version=3 if contract.response_contract is not None else 2,
             run_id=request.run_id,
             intent=intent,
             contract=contract,

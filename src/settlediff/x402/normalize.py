@@ -14,6 +14,7 @@ from settlediff.domain.models import (
     SettlementStatus,
 )
 from settlediff.domain.money import Money
+from settlediff.x402.bazaar import BazaarContractError, response_contract_from
 from settlediff.x402.models import PaymentRequired, PaymentRequirements, SettlementResponse
 
 BASE_SEPOLIA = "eip155:84532"
@@ -41,21 +42,29 @@ def normalize_payment_required(
         if "asset_transfer_method" not in requirement.extra.model_fields_set
         else ()
     )
-    return ExpectedContract(
-        vendor_slug=None,
-        url=required.resource.url,
-        price=_atomic_money(requirement.amount, identity),
-        asset=identity.symbol,
-        protocol="x402",
-        chain=None,
-        request_schema=request_schema,
-        scheme=requirement.scheme,
-        network=requirement.network,
-        asset_identity=identity,
-        recipient=requirement.pay_to,
-        max_timeout_seconds=requirement.max_timeout_seconds,
-        normalization_notes=notes,
-    )
+    try:
+        response_contract = response_contract_from(required.resource, required.extensions)
+    except BazaarContractError as error:
+        raise X402NormalizationError(str(error)) from error
+    values: dict[str, object] = {
+        "vendor_slug": None,
+        "url": required.resource.url,
+        "price": _atomic_money(requirement.amount, identity),
+        "asset": identity.symbol,
+        "protocol": "x402",
+        "chain": None,
+        "request_schema": request_schema,
+        "scheme": requirement.scheme,
+        "network": requirement.network,
+        "asset_identity": identity,
+        "recipient": requirement.pay_to,
+        "max_timeout_seconds": requirement.max_timeout_seconds,
+        "normalization_notes": notes,
+    }
+    if response_contract is not None:
+        values["schema_version"] = 3
+        values["response_contract"] = response_contract
+    return ExpectedContract.model_validate(values)
 
 
 def normalize_payment_response(

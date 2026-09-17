@@ -20,7 +20,7 @@ class AuthorizationError(ValueError):
 class PaymentTerms(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     adapter_id: NonEmptyStr
     protocol_version: NonEmptyStr | None
     scheme: NonEmptyStr | None
@@ -34,6 +34,9 @@ class PaymentTerms(BaseModel):
     resource_url: NonEmptyStr
     method: Literal["GET", "POST"]
     body_digest: Sha256Digest
+    response_contract_digest: Sha256Digest | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @property
     def digest(self) -> Sha256Digest:
@@ -41,6 +44,8 @@ class PaymentTerms(BaseModel):
 
     @model_validator(mode="after")
     def require_consistent_asset(self) -> Self:
+        if self.schema_version == 1 and "response_contract_digest" in self.model_fields_set:
+            raise ValueError("schema version 1 cannot contain response_contract_digest")
         if self.quoted_price.amount <= 0:
             raise ValueError("payment terms quote must be positive")
         if self.asset is not None:

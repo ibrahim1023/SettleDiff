@@ -168,6 +168,7 @@ def signer_result(
 def payment_terms(contract: ExpectedContract, value: PaidExecutionRequest) -> PaymentTerms:
     assert contract.price is not None
     return PaymentTerms(
+        schema_version=2,
         adapter_id="x402",
         protocol_version="2",
         scheme=contract.scheme,
@@ -181,6 +182,9 @@ def payment_terms(contract: ExpectedContract, value: PaidExecutionRequest) -> Pa
         resource_url=contract.url,
         method=value.method,
         body_digest=PaidExecutionCapability.body_digest_for(value.body),
+        response_contract_digest=(
+            contract.response_contract.digest if contract.response_contract is not None else None
+        ),
     )
 
 
@@ -233,6 +237,26 @@ async def test_changed_preflight_terms_fail_before_signer_invocation() -> None:
     changed = deepcopy(required_payload())
     accepts = cast(list[JsonValue], changed["accepts"])
     cast(dict[str, JsonValue], accepts[0])["payTo"] = "0x4444444444444444444444444444444444444444"
+    resource = FakeResource(response(required_header()), response(required_header(changed)))
+    signer = FakeSigner(signer_result())
+    adapter = X402Adapter(resource, signer, FakeRpc(receipt()))
+    value = request()
+    inspected = await adapter.inspect(value)
+    contract = ExpectedContract.model_validate_json(json.dumps(inspected.data))
+
+    with pytest.raises(ValueError, match="terms changed"):
+        await adapter.execute_once(
+            await authorization(contract, value), value, cast(Money, contract.price)
+        )
+
+    assert signer.requests == []
+
+
+@pytest.mark.asyncio
+async def test_changed_response_contract_fails_before_signer_invocation() -> None:
+    changed = deepcopy(required_payload())
+    resource_metadata = cast(dict[str, JsonValue], changed["resource"])
+    resource_metadata["mimeType"] = "text/plain"
     resource = FakeResource(response(required_header()), response(required_header(changed)))
     signer = FakeSigner(signer_result())
     adapter = X402Adapter(resource, signer, FakeRpc(receipt()))

@@ -133,6 +133,25 @@ def test_parse_payment_required_enforces_encoded_and_decoded_limits() -> None:
         parse_payment_required(header, max_decoded_bytes=10)
 
 
+def test_parse_payment_required_retains_bounded_unknown_extension_metadata() -> None:
+    payload = challenge()
+    payload["extensions"] = {"synthetic-additive": {"value": "bounded"}}
+
+    parsed = parse_payment_required(encoded(payload))
+
+    assert parsed.extensions["synthetic-additive"] == {"value": "bounded"}
+
+
+def test_parse_payment_required_enforces_property_and_string_limits() -> None:
+    payload = challenge()
+    payload["extensions"] = {"synthetic-additive": {"value": "x" * 20}}
+
+    with pytest.raises(X402ProtocolError, match="string"):
+        parse_payment_required(encoded(payload), max_json_string_bytes=10)
+    with pytest.raises(X402ProtocolError, match="property"):
+        parse_payment_required(encoded(payload), max_json_properties=5)
+
+
 def test_parse_payment_required_rejects_excessive_json_depth() -> None:
     payload = challenge()
     nested: dict[str, object] = {}
