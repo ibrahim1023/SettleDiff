@@ -355,9 +355,10 @@ def _execution(
     else:
         settlement_status = SettlementStatus.UNKNOWN
         charge = None
+    service_response = result.service_response
     return ExecutionRecord(
         vendor_slug=None,
-        upstream_http_status=result.service_response.status,
+        upstream_http_status=service_response.status if service_response is not None else None,
         charge=charge,
         asset=contract.asset,
         protocol="x402",
@@ -370,7 +371,7 @@ def _execution(
         transaction_id=None,
         session_id=None,
         transaction_hash=result.transaction_reference,
-        response_body=result.service_response.body,
+        response_body=service_response.parsed_body if service_response is not None else None,
         executed_at=observed_at,
         normalization_notes=(
             ("signer evidence contradicted authorized payment terms",) if force_unknown else ()

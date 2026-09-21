@@ -43,7 +43,13 @@ def result(**updates: object) -> ExternalSignerResult:
         "submission_state": SignerSubmissionState.SUBMITTED_CONFIRMED,
         "challenge": {"x402Version": 2},
         "provider_settlement": {"success": True},
-        "service_response": {"status": 200, "body": {"value": "synthetic"}},
+        "service_response": {
+            "status": 200,
+            "media_type": "application/json",
+            "received_bytes": 20,
+            "truncated": False,
+            "parsed_body": {"value": "synthetic"},
+        },
         "payment_reference": "syn_payment",
         "transaction_reference": "syn_transaction",
         "payer": PAYER,
@@ -124,13 +130,71 @@ def test_absent_body_has_one_canonical_digest() -> None:
 def test_signer_result_is_strict_and_carries_no_payment_payload() -> None:
     value = result()
 
-    assert value.schema_version == 2
+    assert value.schema_version == 3
     assert value.payer == PAYER
     assert value.submission_state is SignerSubmissionState.SUBMITTED_CONFIRMED
+    assert value.service_response is not None
+    assert value.service_response.media_type == "application/json"
+    assert value.service_response.received_bytes == 20
+    assert value.service_response.truncated is False
+    assert value.service_response.parsed_body == {"value": "synthetic"}
     assert not hasattr(value, "payment_payload")
     assert ExternalSignerResult.model_validate_json(value.model_dump_json()) == value
     with pytest.raises(ValidationError):
         ExternalSignerResult.model_validate({**value.model_dump(), "invented": True})
+
+
+def test_signer_result_rejects_schema_two_results() -> None:
+    with pytest.raises(ValidationError):
+        result(schema_version=2)
+
+
+@pytest.mark.parametrize(
+    "service_response",
+    [
+        {
+            "status": 200,
+            "media_type": "application/json",
+            "received_bytes": 2_000_000,
+            "truncated": True,
+            "parsed_body": {"value": "synthetic"},
+        },
+        {
+            "status": 200,
+            "media_type": None,
+            "received_bytes": 0,
+            "truncated": False,
+            "parsed_body": {"value": "synthetic"},
+        },
+    ],
+)
+def test_service_response_rejects_incoherent_body_evidence(
+    service_response: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        result(service_response=service_response)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        SignerSubmissionState.NOT_SUBMITTED,
+        SignerSubmissionState.SUBMISSION_UNCERTAIN,
+    ],
+)
+def test_absent_service_response_is_explicit_unknown_evidence(
+    state: SignerSubmissionState,
+) -> None:
+    value = result(
+        submission_state=state,
+        provider_settlement=None,
+        transaction_reference=None,
+        payer=None,
+        service_response=None,
+    )
+
+    assert value.service_response is None
+    assert value.submission_state is state
 
 
 def test_transaction_reference_requires_public_payer_attribution() -> None:

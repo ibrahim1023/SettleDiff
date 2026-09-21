@@ -79,18 +79,35 @@ class ExternalSignerRequest(SignerContractModel):
         return self
 
 
+SignerMediaType = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+]
+
+
 class SignerServiceResponse(SignerContractModel):
     status: int = Field(ge=100, le=599)
-    body: JsonValue | None
+    media_type: SignerMediaType | None
+    received_bytes: int = Field(ge=0, le=100_000_000)
+    truncated: bool
+    parsed_body: JsonValue | None
+
+    @model_validator(mode="after")
+    def require_coherent_body_evidence(self) -> Self:
+        if self.truncated and self.parsed_body is not None:
+            raise ValueError("truncated service response cannot contain a parsed body")
+        if self.received_bytes == 0 and self.parsed_body is not None:
+            raise ValueError("empty service response cannot contain a parsed body")
+        return self
 
 
 class ExternalSignerResult(SignerContractModel):
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     adapter: Literal["x402"]
     submission_state: SignerSubmissionState
     challenge: dict[str, JsonValue]
     provider_settlement: dict[str, JsonValue] | None
-    service_response: SignerServiceResponse
+    service_response: SignerServiceResponse | None
     payment_reference: NonEmptyStr | None
     transaction_reference: NonEmptyStr | None
     payer: EvmAddress | None

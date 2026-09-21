@@ -8,7 +8,15 @@ from pathlib import Path
 from typing import cast
 
 if sys.argv[-1] == "--version":
-    print(json.dumps({"schema_version": 2, "payer": "0x3333333333333333333333333333333333333333"}))
+    metadata_schema = 2 if "metadata-v2" in sys.argv else 3
+    print(
+        json.dumps(
+            {
+                "schema_version": metadata_schema,
+                "payer": "0x3333333333333333333333333333333333333333",
+            }
+        )
+    )
     raise SystemExit(0)
 
 mode = sys.argv[1]
@@ -28,18 +36,22 @@ if mode in {"oversized", "oversized-sleep"}:
         time.sleep(1)
     raise SystemExit(0)
 
+parsed_body = {
+    "body_digest": request["body_digest"],
+    "private_key_visible": "X402_PRIVATE_KEY" in os.environ,
+}
 result: dict[str, object] = {
-    "schema_version": 2,
+    "schema_version": 3,
     "adapter": "x402",
     "submission_state": "submitted_confirmed",
     "challenge": {"x402Version": 2},
     "provider_settlement": {"success": True},
     "service_response": {
         "status": 200,
-        "body": {
-            "body_digest": request["body_digest"],
-            "private_key_visible": "X402_PRIVATE_KEY" in os.environ,
-        },
+        "media_type": "application/json",
+        "received_bytes": len(json.dumps(parsed_body, separators=(",", ":")).encode()),
+        "truncated": False,
+        "parsed_body": parsed_body,
     },
     "payment_reference": "syn_payment",
     "transaction_reference": "syn_transaction",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -49,7 +50,7 @@ def _controlled_environment() -> dict[str, str]:
 class X402SignerMetadata(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
-    schema_version: int
+    schema_version: Literal[3]
     payer: EvmAddress
 
 
@@ -82,8 +83,6 @@ async def probe_x402_signer(
         metadata = X402SignerMetadata.model_validate_json(stdout, strict=True)
     except (ValidationError, ValueError) as error:
         raise X402ClientError("x402 signer metadata is invalid") from error
-    if metadata.schema_version != 2:
-        raise X402ClientError("x402 signer schema is incompatible")
     return metadata
 
 

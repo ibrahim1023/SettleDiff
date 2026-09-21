@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -57,14 +58,28 @@ def client(
 
 
 @pytest.mark.asyncio
-async def test_signer_metadata_probe_requires_schema_two_and_public_payer(tmp_path: Path) -> None:
+async def test_signer_metadata_probe_requires_schema_three_and_public_payer(
+    tmp_path: Path,
+) -> None:
     metadata = await probe_x402_signer(
         (sys.executable, str(FAKE), "success", str(tmp_path / "count"))
     )
 
-    assert metadata.schema_version == 2
+    assert metadata.schema_version == 3
     assert metadata.payer == "0x3333333333333333333333333333333333333333"
     assert not (tmp_path / "count").exists()
+
+
+@pytest.mark.asyncio
+async def test_signer_metadata_probe_rejects_schema_two_without_paid_launch(
+    tmp_path: Path,
+) -> None:
+    count_path = tmp_path / "count"
+
+    with pytest.raises(X402ClientError, match="metadata is invalid"):
+        await probe_x402_signer((sys.executable, str(FAKE), "metadata-v2", str(count_path)))
+
+    assert not count_path.exists()
 
 
 @pytest.mark.asyncio
@@ -79,10 +94,18 @@ async def test_external_client_sends_one_bounded_request_with_controlled_environ
     assert count_path.read_text() == "1"
     assert result.submission_state is SignerSubmissionState.SUBMITTED_CONFIRMED
     assert result.transaction_reference == "syn_transaction"
-    assert result.service_response.body == {
+    assert result.service_response is not None
+    assert result.service_response.status == 200
+    assert result.service_response.media_type == "application/json"
+    assert result.service_response.truncated is False
+    parsed_body = {
         "body_digest": request().body_digest,
         "private_key_visible": False,
     }
+    assert result.service_response.parsed_body == parsed_body
+    assert result.service_response.received_bytes == len(
+        json.dumps(parsed_body, separators=(",", ":")).encode()
+    )
 
 
 @pytest.mark.asyncio

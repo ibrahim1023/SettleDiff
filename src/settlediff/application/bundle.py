@@ -15,7 +15,7 @@ from settlediff.domain.verdict import derive_verdict
 
 DATABASE_SCHEMA_VERSION = 4
 X402_PROTOCOL_VERSION = "2"
-X402_SIGNER_SCHEMA_VERSION = 2
+X402_SIGNER_SCHEMA_VERSION = 3
 
 
 class BundleError(ValueError):
@@ -33,7 +33,7 @@ class CompatibilityMetadata(BaseModel):
     perflo_cli_version: NonEmptyStr | None
     payment_adapter_id: NonEmptyStr | None = None
     x402_protocol_version: Literal["2"] | None = None
-    x402_signer_schema_version: Literal[2] | None = None
+    x402_signer_schema_version: Literal[2, 3] | None = None
 
 
 class EvidenceBundle(BaseModel):

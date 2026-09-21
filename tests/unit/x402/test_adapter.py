@@ -157,7 +157,13 @@ def signer_result(
         submission_state=state,
         challenge=challenge or required_payload(),
         provider_settlement=provider,
-        service_response=SignerServiceResponse(status=200, body={"result": "synthetic"}),
+        service_response=SignerServiceResponse(
+            status=200,
+            media_type="application/json",
+            received_bytes=21,
+            truncated=False,
+            parsed_body={"result": "synthetic"},
+        ),
         payment_reference="syn_x402_payment",
         transaction_reference=TX_HASH,
         payer=PAYER,
@@ -222,6 +228,9 @@ async def test_adapter_revalidates_terms_and_keeps_provider_and_independent_evid
     assert signer.requests[0].selected_requirement == 0
     assert signer.requests[0].payment_terms_digest == payment_terms(contract, value).digest
     assert executed.artifact_type is ArtifactType.EXECUTION
+    execution = cast(dict[str, JsonValue], executed.data)
+    assert execution["upstream_http_status"] == 200
+    assert execution["response_body"] == {"result": "synthetic"}
     assert executed.provider_receipt is not None
     assert executed.transaction_reference == TX_HASH
     assert executed.submission_uncertain is False
@@ -331,6 +340,26 @@ async def test_uncertain_submission_exposes_read_only_recovery_without_resubmiss
     assert recovered.operation == "transaction_status"
     assert cast(dict[str, JsonValue], recovered.data)["status"] == "unresolved"
     assert len(signer.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_service_response_maps_to_unknown_execution_evidence() -> None:
+    result = signer_result(state=SignerSubmissionState.SUBMISSION_UNCERTAIN).model_copy(
+        update={"service_response": None}
+    )
+    resource = FakeResource(response(required_header()), response(required_header()))
+    signer = FakeSigner(result)
+    adapter = X402Adapter(resource, signer, FakeRpc(None))
+    value = request()
+    contract = ExpectedContract.model_validate_json(json.dumps((await adapter.inspect(value)).data))
+
+    executed = await adapter.execute_once(
+        await authorization(contract, value), value, cast(Money, contract.price)
+    )
+
+    execution = cast(dict[str, JsonValue], executed.data)
+    assert execution["upstream_http_status"] is None
+    assert execution["response_body"] is None
 
 
 @pytest.mark.asyncio
