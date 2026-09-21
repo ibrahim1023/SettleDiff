@@ -10,5 +10,6 @@
 | [0006](0006-opentelemetry-with-private-defaults.md) | Optional OpenTelemetry with private defaults | Accepted |
 | [0007](0007-rail-neutral-canonical-payment-evidence.md) | Rail-neutral canonical payment evidence | Accepted |
 | [0008](0008-assurance-evidence-and-publication.md) | Assurance evidence and publication | Accepted |
+| [0009](0009-defer-facilitator-comparison.md) | Defer facilitator comparison pending per-run provenance | Accepted |
 
 New decisions use the next four-digit number. ADRs are immutable after acceptance except for typo/link corrections; changed decisions supersede earlier records.

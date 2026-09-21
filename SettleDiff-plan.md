@@ -358,6 +358,12 @@ malformed/oversized extensions, and unsupported primary requirements.
 
 ### Task 9: Capture facilitator provenance and compare equivalent persisted runs
 
+**Gate result (2026-09-21):** the provenance audit found no reliable per-run facilitator
+identity source, so this task and Phase 3 are **deferred** by
+[ADR 0009](docs/decisions/0009-defer-facilitator-comparison.md). Do not implement until the
+reopening requirements there are met. The intended task text below is retained as future
+requirements.
+
 Do not begin this task until a captured, documented source establishes facilitator identity.
 The ADR amendment must state whether identity comes from the challenge, signer configuration,
 provider settlement, or another artifact and how conflicts are represented. If no reliable

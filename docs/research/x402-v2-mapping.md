@@ -150,6 +150,14 @@ plus the persisted run evidence it consumes. All claims remain
 provider-asserted: Bazaar metadata cannot confirm settlement, delivery, or
 catalog legitimacy by itself.
 
+## Facilitator provenance gate
+
+No current challenge, signer result, or settlement field carries facilitator
+identity. The independent EVM receipt `from` is submitter evidence only — it does
+not establish the facilitator operator. Phase 3 facilitator comparison is
+therefore deferred by ADR 0009 until a captured, versioned per-run provenance
+source exists.
+
 ## Sources
 
 - [x402 v2 protocol specification](https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md)
