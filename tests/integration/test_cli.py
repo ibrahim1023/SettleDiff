@@ -19,7 +19,13 @@ from settlediff.agent.grounding import fallback_explanation
 from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
 from settlediff.application.payment_rails import AdapterEvidence
 from settlediff.application.replay import replay_fixture
-from settlediff.application.run import InvestigationOutcome, RunEvent, RunState
+from settlediff.application.run import (
+    InvestigationOutcome,
+    RunEvent,
+    RunFailure,
+    RunProvenance,
+    RunState,
+)
 from settlediff.cli import (
     PaymentRail,
     _build_payment_adapter,  # pyright: ignore[reportPrivateUsage]
@@ -175,7 +181,7 @@ def test_doctor_reports_x402_schema_payer_and_chain(
     )
 
     assert result.exit_code == 0
-    assert "Signer schema: 2" in result.stdout
+    assert "Signer schema: 3" in result.stdout
     assert "Signer payer: 0x3333…3333" in result.stdout
     assert "RPC chain: 0x14a34 (Base Sepolia)" in result.stdout
 
@@ -812,6 +818,142 @@ def test_inspect_and_recover_use_persisted_evidence_only(tmp_path: Path) -> None
         "external_calls": 0,
         "paid_calls": 0,
     }
+
+
+def _run_snapshot(
+    database: Path, run_id: str
+) -> tuple[object, tuple[object, ...], tuple[object, ...], tuple[object, ...]]:
+    repository = SQLiteReportRepository(database)
+    try:
+        return (
+            repository.record(run_id),
+            repository.artifacts(run_id),
+            repository.events(run_id),
+            repository.timeline(run_id),
+        )
+    finally:
+        repository.close()
+
+
+def _forbid_live_composition(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("retry-analysis must not build live composition")
+
+    monkeypatch.setattr("settlediff.cli.Settings", forbidden)
+    monkeypatch.setattr("settlediff.cli._build_payment_adapter", forbidden)
+
+
+def test_retry_analysis_uses_persisted_evidence_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/x402-provider-success-independent-failure"))
+    recovery = EvidenceArtifact(
+        artifact_id=f"{report.run_id}:recovery",
+        artifact_type=ArtifactType.PAYMENT_RECEIPT,
+        source="x402.transaction",
+        collected_at=datetime(2026, 9, 3, tzinfo=UTC),
+        redacted=True,
+        data={"status": "failed"},
+    )
+    repository = SQLiteReportRepository(database)
+    repository.save(report, artifacts=(recovery,))
+    repository.close()
+    _forbid_live_composition(monkeypatch)
+    before = _run_snapshot(database, report.run_id)
+
+    result = runner.invoke(
+        app, ["retry-analysis", report.run_id, "--database", str(database), "--json"]
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "run_id": report.run_id,
+        "safety": "DO_NOT_RETRY",
+        "reason_codes": ["REVERTED_RECEIPT", "PROVIDER_PAYMENT_ATTEMPT"],
+        "evidence_ids": sorted([recovery.artifact_id, f"{report.run_id}:report"]),
+        "external_calls": 0,
+        "paid_calls": 0,
+    }
+    assert _run_snapshot(database, report.run_id) == before
+
+
+def test_retry_analysis_text_output_for_refused_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "reports.sqlite3"
+    repository = SQLiteReportRepository(database)
+    repository.begin_run(
+        "syn_refused",
+        task="refused synthetic run",
+        provenance=RunProvenance.EXTERNAL_LIVE,
+        created_at=datetime(2026, 9, 3, tzinfo=UTC),
+    )
+    repository.append_event(
+        "syn_refused",
+        RunEvent(state=RunState.REFUSED, occurred_at=datetime(2026, 9, 3, tzinfo=UTC)),
+    )
+    repository.close()
+    _forbid_live_composition(monkeypatch)
+
+    result = runner.invoke(app, ["retry-analysis", "syn_refused", "--database", str(database)])
+
+    assert result.exit_code == 0
+    assert "Run: syn_refused" in result.stdout
+    assert "Retry safety: SAFE_TO_RETRY" in result.stdout
+    assert "Reasons: RUN_REFUSED" in result.stdout
+    assert "Evidence: syn_refused:run_state" in result.stdout
+    assert "External calls: 0" in result.stdout
+    assert "Paid calls: 0" in result.stdout
+
+
+def test_retry_analysis_failed_uncertain_run_requires_human(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    repository = SQLiteReportRepository(database)
+    repository.begin_run(
+        "syn_uncertain",
+        task="uncertain synthetic run",
+        provenance=RunProvenance.EXTERNAL_LIVE,
+        created_at=datetime(2026, 9, 3, tzinfo=UTC),
+    )
+    repository.append_event(
+        "syn_uncertain",
+        RunEvent(state=RunState.EXECUTING, occurred_at=datetime(2026, 9, 3, tzinfo=UTC)),
+    )
+    repository.record_failure(
+        "syn_uncertain",
+        RunFailure(
+            stage=RunState.EXECUTING,
+            error_class="SubmissionUncertainError",
+            diagnostic="executing failed",
+            submission_uncertain=True,
+            occurred_at=datetime(2026, 9, 3, tzinfo=UTC),
+        ),
+    )
+    repository.close()
+
+    result = runner.invoke(
+        app, ["retry-analysis", "syn_uncertain", "--database", str(database), "--json"]
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["safety"] == "REQUIRES_HUMAN_DECISION"
+    assert payload["reason_codes"] == ["SUBMISSION_UNCERTAIN"]
+    assert payload["evidence_ids"] == ["syn_uncertain:run_state"]
+    assert payload["external_calls"] == 0
+    assert payload["paid_calls"] == 0
+
+
+def test_retry_analysis_missing_run_exits_1(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    SQLiteReportRepository(database).close()
+
+    result = runner.invoke(app, ["retry-analysis", "syn_missing", "--database", str(database)])
+
+    assert result.exit_code == 1
+    assert "was not found" in result.stderr
 
 
 def _persisted_fixture_report(tmp_path: Path) -> tuple[Path, str]:

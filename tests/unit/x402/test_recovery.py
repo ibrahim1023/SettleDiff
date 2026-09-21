@@ -10,9 +10,18 @@ from typing import cast
 import pytest
 from pydantic import JsonValue
 
+from settlediff.application.payment_rails import AdapterEvidence
 from settlediff.application.run import RecoveryState
-from settlediff.domain.models import LedgerStatus
+from settlediff.domain.models import EvidenceArtifact, LedgerStatus, RetrySafety
 from settlediff.domain.money import Money
+from settlediff.domain.retry import (
+    CONFIRMED_TRANSFER,
+    EXPLICIT_NON_SUBMISSION,
+    RECOVERY_UNAVAILABLE,
+    SUBMISSION_UNCERTAIN,
+    RetryRunStateSnapshot,
+    analyze_retry,
+)
 from settlediff.x402.client_contract import (
     ExternalSignerResult,
     SignerServiceResponse,
@@ -434,3 +443,73 @@ async def test_rpc_failure_preserves_uncertainty_without_exception_details() -> 
     evidence = x402_recovery_evidence(recovered, observed_at=NOW)
     assert evidence.source == "x402.read_only_recovery"
     assert cast(dict[str, JsonValue], evidence.data)["diagnostic"] == "rpc_unavailable"
+
+
+def _persisted(evidence: object) -> EvidenceArtifact:
+    adapter_evidence = cast(AdapterEvidence, evidence)
+    return EvidenceArtifact(
+        artifact_id="syn_run:recovery",
+        artifact_type=adapter_evidence.artifact_type,
+        source=adapter_evidence.source,
+        collected_at=NOW,
+        redacted=False,
+        data=adapter_evidence.data,
+    )
+
+
+@pytest.mark.asyncio
+async def test_recovery_evidence_maps_to_retry_classifications() -> None:
+    confirmed = await recover_x402_submission(
+        signer_result(SignerSubmissionState.SUBMISSION_UNCERTAIN),
+        FakeRpc(receipt()),
+        requirement(),
+        expected_payer=PAYER,
+        observed_at=NOW,
+    )
+    confirmed_assessment = analyze_retry(
+        None,
+        (_persisted(x402_recovery_evidence(confirmed, observed_at=NOW)),),
+        RetryRunStateSnapshot(
+            run_id="syn_run", state="evidence_recovery", submission_uncertain=True
+        ),
+    )
+    assert confirmed_assessment.safety is RetrySafety.DO_NOT_RETRY
+    assert CONFIRMED_TRANSFER in confirmed_assessment.reason_codes
+
+    proven = await recover_x402_submission(
+        signer_result(SignerSubmissionState.PROVEN_NOT_SUBMITTED),
+        FakeRpc(receipt()),
+        requirement(),
+        expected_payer=PAYER,
+        observed_at=NOW,
+    )
+    proven_assessment = analyze_retry(
+        None,
+        (_persisted(x402_recovery_evidence(proven, observed_at=NOW)),),
+        RetryRunStateSnapshot(
+            run_id="syn_run", state="evidence_recovery", submission_uncertain=True
+        ),
+    )
+    assert proven_assessment.safety is RetrySafety.REQUIRES_HUMAN_DECISION
+    assert SUBMISSION_UNCERTAIN in proven_assessment.reason_codes
+    assert EXPLICIT_NON_SUBMISSION in proven_assessment.reason_codes
+
+    class FailedRpc:
+        async def call(self, method: str, params: tuple[JsonValue, ...]) -> JsonValue:
+            del method, params
+            raise X402RpcError("synthetic RPC failure")
+
+    unavailable = await recover_x402_submission(
+        signer_result(SignerSubmissionState.SUBMISSION_UNCERTAIN),
+        FailedRpc(),
+        requirement(),
+        expected_payer=PAYER,
+        observed_at=NOW,
+    )
+    unavailable_assessment = analyze_retry(
+        None,
+        (_persisted(x402_recovery_evidence(unavailable, observed_at=NOW)),),
+        RetryRunStateSnapshot(run_id="syn_run", state="failed", submission_uncertain=True),
+    )
+    assert unavailable_assessment.safety is RetrySafety.REQUIRES_HUMAN_DECISION
+    assert RECOVERY_UNAVAILABLE in unavailable_assessment.reason_codes

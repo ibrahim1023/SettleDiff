@@ -67,6 +67,7 @@ from settlediff.domain.models import (
 )
 from settlediff.domain.money import Money
 from settlediff.domain.redaction import mask_identifier
+from settlediff.domain.retry import RetryRunStateSnapshot, analyze_retry
 from settlediff.perflo.adapter import PerfloAdapter
 from settlediff.perflo.client import PerfloClient, PerfloClientError
 from settlediff.storage.sqlite import SQLiteReportRepository
@@ -451,7 +452,7 @@ def doctor(
             typer.echo("Perflo: executable available")
         else:
             chain_id, payer = asyncio.run(_doctor_x402(settings))
-            typer.echo("Signer schema: 2")
+            typer.echo("Signer schema: 3")
             typer.echo(f"Signer payer: {payer}")
             typer.echo(f"RPC chain: {chain_id} (Base Sepolia)")
     except (OSError, X402ClientError, ValueError) as error:
@@ -744,6 +745,52 @@ def recover_run(
     typer.echo(
         f"Proof of non-submission: {'yes' if state is RecoveryState.NOT_SUBMITTED else 'no'}"
     )
+    typer.echo("External calls: 0")
+    typer.echo("Paid calls: 0")
+
+
+@app.command("retry-analysis")
+def retry_analysis(
+    run_id: str,
+    database: Path = DATABASE_OPTION,
+    json_mode: bool = JSON_OPTION,
+) -> None:
+    """Assess retry safety from persisted evidence only; no external or paid calls."""
+    repository = SQLiteReportRepository(database)
+    try:
+        record = repository.record(run_id)
+        artifacts = repository.artifacts(run_id) if record is not None else ()
+    finally:
+        repository.close()
+    if record is None:
+        typer.echo(f"Run {run_id} was not found.", err=True)
+        raise typer.Exit(code=1)
+    assessment = analyze_retry(
+        record.report,
+        artifacts,
+        RetryRunStateSnapshot(
+            run_id=record.run_id,
+            state=record.latest_state.value,
+            submission_uncertain=(
+                record.failure.submission_uncertain if record.failure is not None else False
+            ),
+        ),
+    )
+    payload = {
+        "run_id": run_id,
+        "safety": assessment.safety.value,
+        "reason_codes": list(assessment.reason_codes),
+        "evidence_ids": list(assessment.evidence_ids),
+        "external_calls": 0,
+        "paid_calls": 0,
+    }
+    if json_mode:
+        typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return
+    typer.echo(f"Run: {run_id}")
+    typer.echo(f"Retry safety: {assessment.safety.value}")
+    typer.echo(f"Reasons: {', '.join(assessment.reason_codes)}")
+    typer.echo(f"Evidence: {', '.join(assessment.evidence_ids)}")
     typer.echo("External calls: 0")
     typer.echo("Paid calls: 0")
 

@@ -15,8 +15,9 @@ from pydantic import JsonValue
 from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
 from settlediff.application.run import LiveEvidenceCollector
 from settlediff.contextdev.client import ContextEvidencePort
-from settlediff.domain.models import LedgerStatus, SettlementStatus, Verdict
+from settlediff.domain.models import LedgerStatus, RetrySafety, SettlementStatus, Verdict
 from settlediff.domain.money import Money
+from settlediff.domain.retry import CONFIRMED_TRANSFER
 from settlediff.x402.adapter import X402Adapter
 from settlediff.x402.client import X402ExternalClient
 from settlediff.x402.http import X402ResourceClient
@@ -155,3 +156,6 @@ async def test_offline_pipeline_composes_http_signer_rpc_and_canonical_verifier(
     assert report.receipt.settlement_status is SettlementStatus.SETTLED
     assert report.ledger is not None
     assert report.ledger.status is LedgerStatus.CONFIRMED
+    assert report.retry is not None
+    assert report.retry.safety is RetrySafety.DO_NOT_RETRY
+    assert CONFIRMED_TRANSFER in report.retry.reason_codes

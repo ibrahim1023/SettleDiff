@@ -262,9 +262,10 @@ Inspect durable state or classify already-persisted recovery evidence without ex
 ```bash
 uv run settlediff inspect RUN_ID --database /path/to/reports.sqlite3
 uv run settlediff recover RUN_ID --database /path/to/reports.sqlite3
+uv run settlediff retry-analysis RUN_ID --database /path/to/reports.sqlite3
 ```
 
-`recover` never invokes a payment adapter, signer, provider, or RPC. It cannot turn missing evidence into proof of non-submission.
+`recover` may classify or collect bounded read-only recovery evidence where the rail supports it. `retry-analysis` only interprets already-persisted evidence and can never invoke an adapter, signer, wallet, provider, RPC, capability, or paid request. Neither can turn missing evidence into proof of non-submission.
 
 ## Live findings become offline regression tests
 

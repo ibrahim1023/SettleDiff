@@ -73,6 +73,7 @@ from settlediff.domain.normalize import (
     normalize_receipt,
 )
 from settlediff.domain.redaction import redact_artifact, redact_embedded_identifiers
+from settlediff.domain.retry import RetryRunStateSnapshot, analyze_retry
 from settlediff.domain.verdict import derive_verdict
 
 
@@ -496,7 +497,16 @@ class LiveEvidenceCollector:
         )
         if execution is not None:
             await self._collect_context(request, execution)
-        return report
+        retry = analyze_retry(
+            report,
+            self.artifacts,
+            RetryRunStateSnapshot(
+                run_id=request.run_id,
+                state="verifying",
+                submission_uncertain=False,
+            ),
+        )
+        return report.model_copy(update={"retry": retry})
 
     async def _collect_context(
         self, request: PaidExecutionRequest, execution: ExecutionRecord

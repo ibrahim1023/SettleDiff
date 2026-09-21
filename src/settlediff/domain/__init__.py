@@ -31,6 +31,7 @@ from settlediff.domain.models import (
 )
 from settlediff.domain.money import Money, UnitMismatchError
 from settlediff.domain.redaction import mask_identifier, redact_artifact
+from settlediff.domain.retry import RetryRunStateSnapshot, analyze_retry
 from settlediff.domain.verdict import PRECEDENCE, derive_verdict
 
 __all__ = [
@@ -55,10 +56,12 @@ __all__ = [
     "PaymentReceipt",
     "PRECEDENCE",
     "PurchaseIntent",
+    "RetryRunStateSnapshot",
     "SettlementStatus",
     "Severity",
     "UnitMismatchError",
     "Verdict",
+    "analyze_retry",
     "assess_delivery",
     "mask_identifier",
     "match_activity",

@@ -42,9 +42,16 @@ from settlediff.domain.models import (
     ExplanationSource,
     InvestigationExplanation,
     MachineReport,
+    RetrySafety,
     Verdict,
 )
 from settlediff.domain.money import Money
+from settlediff.domain.retry import (
+    CONFIRMED_RECEIPT,
+    PROVIDER_PAYMENT_ATTEMPT,
+    RetryRunStateSnapshot,
+    analyze_retry,
+)
 from settlediff.perflo.adapter import PerfloAdapter, PerfloClientPort
 from settlediff.perflo.client import PerfloMutationUncertainError
 from settlediff.perflo.parser import PerfloSuccessEnvelope
@@ -356,6 +363,34 @@ async def test_collector_recovery_uses_transaction_status_without_a_second_mutat
 
 
 @pytest.mark.asyncio
+async def test_confirmed_recovery_receipt_forces_do_not_retry() -> None:
+    class FakePerflo:
+        async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
+            return _envelope({"status": "confirmed", "transaction_hash": transaction_hash})
+
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            raise AssertionError("recovery must not invoke paid execution")
+
+    collector = LiveEvidenceCollector(
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
+    )
+    state, artifacts = await collector.recover_submission("syn_run_uncertain", "syn_hash_uncertain")
+
+    assert state is RecoveryState.SUBMITTED
+    assessment = analyze_retry(
+        None,
+        artifacts,
+        RetryRunStateSnapshot(
+            run_id="syn_run_uncertain",
+            state="evidence_recovery",
+            submission_uncertain=True,
+        ),
+    )
+    assert assessment.safety is RetrySafety.DO_NOT_RETRY
+    assert CONFIRMED_RECEIPT in assessment.reason_codes
+
+
+@pytest.mark.asyncio
 async def test_collector_uncorrelated_activity_history_cannot_prove_submission() -> None:
     class FakePerflo:
         async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
@@ -660,6 +695,9 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
 
     assert collected.verdict == report.verdict
     assert collected.ledger == report.ledger
+    assert collected.retry is not None
+    assert collected.retry.safety is RetrySafety.REQUIRES_HUMAN_DECISION
+    assert PROVIDER_PAYMENT_ATTEMPT in collected.retry.reason_codes
     assert {artifact.artifact_type.value for artifact in collector.artifacts} == {
         "service_contract",
         "execution",
