@@ -5,7 +5,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from pydantic import JsonValue
@@ -25,6 +25,8 @@ from settlediff.x402.bazaar import (
     BazaarFieldCheck,
     BazaarStatus,
     assess_bazaar,
+    assess_bazaar_declaration,
+    bazaar_declaration_diagnostic,
 )
 from settlediff.x402.models import PaymentRequired
 from settlediff.x402.normalize import normalize_payment_required
@@ -130,7 +132,7 @@ def test_supported_extension_matches_current_contract() -> None:
     assert statuses["BAZAAR_EXTENSION"] is BazaarStatus.MATCH
     assert statuses["PRIMARY_REQUIREMENT"] is BazaarStatus.MATCH
     assert statuses["INPUT_METHOD"] is BazaarStatus.MATCH
-    assert statuses["RESPONSE_SCHEMA"] is BazaarStatus.MATCH
+    assert statuses["DECLARATION_SCHEMA"] is BazaarStatus.MATCH
     assert statuses["MEDIA_TYPE"] is BazaarStatus.MATCH
     assert statuses["PAID_EVIDENCE"] is BazaarStatus.UNAVAILABLE
 
@@ -172,7 +174,7 @@ def test_unsupported_schema_keyword_is_unsupported() -> None:
     assessment = assess_bazaar(req, request_method="GET", current_contract=None)
     statuses = check_map(assessment)
     assert statuses["BAZAAR_EXTENSION"] is BazaarStatus.MATCH
-    assert statuses["RESPONSE_SCHEMA"] is BazaarStatus.UNSUPPORTED
+    assert statuses["DECLARATION_SCHEMA"] is BazaarStatus.UNSUPPORTED
     assert assessment.status is BazaarStatus.UNSUPPORTED
 
 
@@ -182,7 +184,7 @@ def test_malformed_extension_is_unsupported() -> None:
     statuses = check_map(assessment)
     assert statuses["BAZAAR_EXTENSION"] is BazaarStatus.UNSUPPORTED
     assert statuses["PRIMARY_REQUIREMENT"] is BazaarStatus.MATCH
-    assert statuses["RESPONSE_SCHEMA"] is BazaarStatus.UNAVAILABLE
+    assert statuses["DECLARATION_SCHEMA"] is BazaarStatus.UNAVAILABLE
     assert assessment.status is BazaarStatus.UNSUPPORTED
 
 
@@ -203,7 +205,9 @@ def test_oversized_schema_bounds_is_unsupported() -> None:
         }
     )
     assessment = assess_bazaar(req, request_method="GET", current_contract=None)
-    assert check_map(assessment)["BAZAAR_EXTENSION"] is BazaarStatus.UNSUPPORTED
+    statuses = check_map(assessment)
+    assert statuses["BAZAAR_EXTENSION"] is BazaarStatus.MATCH
+    assert statuses["DECLARATION_SCHEMA"] is BazaarStatus.UNSUPPORTED
     assert assessment.status is BazaarStatus.UNSUPPORTED
 
 
@@ -246,7 +250,6 @@ def test_paid_economics_diff_and_match() -> None:
     assert statuses["SCHEME"] is BazaarStatus.MATCH
     assert statuses["PROTOCOL_VERSION"] is BazaarStatus.MATCH
     assert statuses["INPUT_CONTRACT"] is BazaarStatus.MATCH
-    assert statuses["PAID_RESPONSE_SCHEMA"] is BazaarStatus.MATCH
     assert statuses["PAID_MEDIA_TYPE"] is BazaarStatus.MATCH
     assert statuses["PAID_DELIVERY_CONTRACT"] is BazaarStatus.UNAVAILABLE
     assert assessment.status is BazaarStatus.MATCH
@@ -343,10 +346,9 @@ def test_persisted_redacted_report_never_fakes_identifier_comparison(
     assert statuses["SCHEME"] is BazaarStatus.MATCH
 
 
-def test_paid_schema_and_media_stale() -> None:
+def test_paid_media_and_delivery_stale() -> None:
     paid_contract = current_contract()
     stale_schema = paid_contract.model_dump(mode="json")
-    stale_schema["response_contract"]["json_schema"] = {"type": "object"}
     stale_schema["response_contract"]["media_type"] = "text/plain"
     stale = ExpectedContract.model_validate_json(json.dumps(stale_schema))
     assessment = assess_bazaar(
@@ -356,7 +358,6 @@ def test_paid_schema_and_media_stale() -> None:
         paid_report=paid_report(stale, observation_media="application/json"),
     )
     statuses = check_map(assessment)
-    assert statuses["PAID_RESPONSE_SCHEMA"] is BazaarStatus.DIFF
     assert statuses["PAID_MEDIA_TYPE"] is BazaarStatus.DIFF
     assert statuses["PAID_DELIVERY_CONTRACT"] is BazaarStatus.DIFF
     delivery_check = next(
@@ -431,6 +432,220 @@ def test_no_current_contract_paid_checks_unavailable() -> None:
         paid_report=paid_report(current_contract()),
     )
     assert check_map(assessment)["PRICE"] is BazaarStatus.UNAVAILABLE
+
+
+LIVE_FIXTURE = Path(
+    "tests/contract/x402/fixtures/payment-required-bazaar-live-mainnet-2026-09-21.json"
+)
+
+
+def live_required() -> PaymentRequired:
+    return PaymentRequired.model_validate(
+        cast(dict[str, JsonValue], json.loads(LIVE_FIXTURE.read_text()))
+    )
+
+
+def test_live_mainnet_fixture_declares_matching_schema() -> None:
+    req = live_required()
+    assessment = assess_bazaar(req, request_method="GET", current_contract=None)
+    statuses = check_map(assessment)
+    assert statuses["BAZAAR_EXTENSION"] is BazaarStatus.MATCH
+    assert statuses["DECLARATION_SCHEMA"] is BazaarStatus.MATCH
+    assert statuses["INPUT_METHOD"] is BazaarStatus.MATCH
+    assert statuses["MEDIA_TYPE"] is BazaarStatus.MATCH
+    assert statuses["PRIMARY_REQUIREMENT"] is BazaarStatus.UNSUPPORTED
+    assert assessment.status is BazaarStatus.UNSUPPORTED
+
+
+def test_captured_declaration_schema_validates_info() -> None:
+    bazaar = cast(
+        dict[str, JsonValue],
+        live_required().extensions["bazaar"],
+    )
+    result = assess_bazaar_declaration(bazaar["info"], bazaar["schema"])
+    assert result.status is BazaarStatus.MATCH
+    assert result.diagnostic == "BAZAAR_DECLARATION_MATCH"
+
+
+def test_declaration_value_mismatch_is_diff() -> None:
+    schema = {
+        "type": "object",
+        "required": ["input"],
+        "properties": {"input": {"type": "object"}},
+    }
+    result = assess_bazaar_declaration({"output": {}}, cast(JsonValue, schema))
+    assert result.status is BazaarStatus.DIFF
+    assert result.diagnostic == "BAZAAR_DECLARATION_DIFF"
+
+
+def test_declaration_unsupported_keyword_and_ref() -> None:
+    info: JsonValue = {"a": 1}
+    keyword = assess_bazaar_declaration(
+        info, cast(JsonValue, {"type": "object", "patternProperties": {}})
+    )
+    assert keyword.status is BazaarStatus.UNSUPPORTED
+    assert keyword.diagnostic == "BAZAAR_DECLARATION_SCHEMA_UNSUPPORTED"
+    ref = assess_bazaar_declaration(
+        info, cast(JsonValue, {"type": "object", "properties": {"a": {"$ref": "#/x"}}})
+    )
+    assert ref.diagnostic == "BAZAAR_DECLARATION_SCHEMA_UNSUPPORTED"
+    dialect = assess_bazaar_declaration(
+        info,
+        cast(JsonValue, {"$schema": "http://json-schema.org/draft-07/schema#", "type": "object"}),
+    )
+    assert dialect.diagnostic == "BAZAAR_DECLARATION_SCHEMA_UNSUPPORTED"
+    fmt = assess_bazaar_declaration(
+        info,
+        cast(
+            JsonValue,
+            {"type": "object", "properties": {"a": {"type": "string", "format": "email"}}},
+        ),
+    )
+    assert fmt.diagnostic == "BAZAAR_DECLARATION_SCHEMA_UNSUPPORTED"
+
+
+def test_declaration_malformed_schema_and_bounds() -> None:
+    malformed = assess_bazaar_declaration({}, cast(JsonValue, {"type": "wat"}))
+    assert malformed.status is BazaarStatus.UNSUPPORTED
+    assert malformed.diagnostic == "BAZAAR_DECLARATION_MALFORMED"
+    oversized = assess_bazaar_declaration(
+        {},
+        cast(
+            JsonValue,
+            {
+                "type": "object",
+                "properties": {f"k{index}": {"type": "null"} for index in range(200)},
+            },
+        ),
+    )
+    assert oversized.diagnostic == "BAZAAR_DECLARATION_MALFORMED"
+    deep_schema: dict[str, JsonValue] = {"type": "null"}
+    for _ in range(20):
+        deep_schema = {"type": "object", "properties": {"a": deep_schema}}
+    deep = assess_bazaar_declaration({}, cast(JsonValue, deep_schema))
+    assert deep.diagnostic == "BAZAAR_DECLARATION_MALFORMED"
+    oversized_info = assess_bazaar_declaration(
+        cast(JsonValue, {f"k{index}": None for index in range(200)}),
+        cast(JsonValue, {"type": "object"}),
+    )
+    assert oversized_info.status is BazaarStatus.UNSUPPORTED
+    assert oversized_info.diagnostic == "BAZAAR_DECLARATION_MALFORMED"
+    deep_info: JsonValue = None
+    for _ in range(20):
+        deep_info = {"a": deep_info}
+    deep_value = assess_bazaar_declaration(deep_info, cast(JsonValue, {"type": "object"}))
+    assert deep_value.diagnostic == "BAZAAR_DECLARATION_MALFORMED"
+    long_info = assess_bazaar_declaration({"note": "x" * 5000}, cast(JsonValue, {"type": "object"}))
+    assert long_info.status is BazaarStatus.UNSUPPORTED
+    assert long_info.diagnostic == "BAZAAR_DECLARATION_MALFORMED"
+    long_schema_value = assess_bazaar_declaration(
+        {}, cast(JsonValue, {"type": "object", "properties": {"k": {"const": "y" * 5000}}})
+    )
+    assert long_schema_value.diagnostic == "BAZAAR_DECLARATION_MALFORMED"
+    long_schema_key = assess_bazaar_declaration(
+        {},
+        cast(JsonValue, {"type": "object", "properties": {f"k{'x' * 5000}": {"type": "null"}}}),
+    )
+    assert long_schema_key.diagnostic == "BAZAAR_DECLARATION_MALFORMED"
+    duplicate_enum = assess_bazaar_declaration(
+        "x",
+        cast(JsonValue, {"type": "string", "enum": ["x", "x"]}),
+    )
+    assert duplicate_enum.diagnostic == "BAZAAR_DECLARATION_MALFORMED"
+    empty_enum = assess_bazaar_declaration("x", cast(JsonValue, {"type": "string", "enum": []}))
+    assert empty_enum.diagnostic == "BAZAAR_DECLARATION_MALFORMED"
+
+
+def test_declaration_uri_format_and_numeric_types() -> None:
+    uri_schema = cast(JsonValue, {"type": "string", "format": "uri"})
+    assert (
+        assess_bazaar_declaration("https://example.invalid/a", uri_schema).status
+        is BazaarStatus.MATCH
+    )
+    for bad in ("not-a-uri", "ftp://example.invalid", "https://u:p@example.invalid"):
+        assert assess_bazaar_declaration(bad, uri_schema).diagnostic == "BAZAAR_DECLARATION_DIFF"
+    integer = cast(JsonValue, {"type": "integer"})
+    number = cast(JsonValue, {"type": "number"})
+    assert assess_bazaar_declaration(True, integer).status is BazaarStatus.DIFF
+    assert assess_bazaar_declaration(True, number).status is BazaarStatus.DIFF
+    assert assess_bazaar_declaration(1.5, integer).status is BazaarStatus.DIFF
+    assert assess_bazaar_declaration(1.5, number).status is BazaarStatus.MATCH
+    assert assess_bazaar_declaration(2, integer).status is BazaarStatus.MATCH
+
+
+def test_declaration_items_const_enum_and_additional_properties() -> None:
+    schema = cast(
+        JsonValue,
+        {
+            "type": "object",
+            "required": ["kind", "tags"],
+            "additionalProperties": False,
+            "properties": {
+                "kind": {"const": "license"},
+                "state": {"enum": ["active", "paused"]},
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    )
+    good: JsonValue = {"kind": "license", "tags": ["a"], "state": "paused"}
+    assert assess_bazaar_declaration(good, schema).status is BazaarStatus.MATCH
+    assert (
+        assess_bazaar_declaration({"kind": "other", "tags": []}, schema).status is BazaarStatus.DIFF
+    )
+    assert (
+        assess_bazaar_declaration({"kind": "license", "tags": [1]}, schema).status
+        is BazaarStatus.DIFF
+    )
+    assert (
+        assess_bazaar_declaration({"kind": "license", "tags": [], "extra": 1}, schema).status
+        is BazaarStatus.DIFF
+    )
+
+
+def test_declaration_diagnostic_helper() -> None:
+    assert bazaar_declaration_diagnostic({}) is None
+    assert bazaar_declaration_diagnostic({"other": {}}) is None
+    assert (
+        bazaar_declaration_diagnostic(cast(dict[str, JsonValue], {"bazaar": "bad"}))
+        == "BAZAAR_DECLARATION_MALFORMED"
+    )
+    live = live_required().extensions
+    assert bazaar_declaration_diagnostic(live) is None
+    bad = deepcopy(live)
+    cast(dict[str, JsonValue], bad["bazaar"])["schema"] = {"type": "bogus"}
+    assert bazaar_declaration_diagnostic(bad) == "BAZAAR_DECLARATION_MALFORMED"
+
+
+DeclarationDiagnostic = Literal[
+    "BAZAAR_DECLARATION_MATCH",
+    "BAZAAR_DECLARATION_MALFORMED",
+    "BAZAAR_DECLARATION_SCHEMA_UNSUPPORTED",
+    "BAZAAR_DECLARATION_DIFF",
+]
+
+
+def test_declaration_result_enforces_status_diagnostic_coherence() -> None:
+    from settlediff.x402.bazaar import BazaarDeclarationResult
+
+    coherent: tuple[tuple[BazaarStatus, DeclarationDiagnostic], ...] = (
+        (BazaarStatus.MATCH, "BAZAAR_DECLARATION_MATCH"),
+        (BazaarStatus.DIFF, "BAZAAR_DECLARATION_DIFF"),
+        (BazaarStatus.UNSUPPORTED, "BAZAAR_DECLARATION_MALFORMED"),
+        (BazaarStatus.UNSUPPORTED, "BAZAAR_DECLARATION_SCHEMA_UNSUPPORTED"),
+    )
+    for status, diagnostic in coherent:
+        result = BazaarDeclarationResult(status=status, diagnostic=diagnostic)
+        assert result.status is status
+    mismatched: tuple[tuple[BazaarStatus, DeclarationDiagnostic], ...] = (
+        (BazaarStatus.MATCH, "BAZAAR_DECLARATION_DIFF"),
+        (BazaarStatus.DIFF, "BAZAAR_DECLARATION_MATCH"),
+        (BazaarStatus.UNSUPPORTED, "BAZAAR_DECLARATION_MATCH"),
+        (BazaarStatus.UNAVAILABLE, "BAZAAR_DECLARATION_MATCH"),
+        (BazaarStatus.UNAVAILABLE, "BAZAAR_DECLARATION_MALFORMED"),
+    )
+    for status, diagnostic in mismatched:
+        with pytest.raises(ValueError, match="mismatch"):
+            BazaarDeclarationResult(status=status, diagnostic=diagnostic)
 
 
 def test_assessment_validator_recomputes_status_and_rejects_duplicates() -> None:

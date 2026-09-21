@@ -129,10 +129,10 @@ has a named consumer in a later task.
 
 **Behavior:**
 
-- Parse only captured response-contract fields from `PaymentRequired.resource` and embedded
-  `extensions.bazaar` shapes.
-- Validate a documented JSON Schema subset: `type`, `required`, `properties`, and `items`.
-  Reject unsupported keywords anywhere in the consumed schema as `SCHEMA_UNSUPPORTED`.
+- Explicit x402 response promises come only from captured `PaymentRequired.resource.mimeType`.
+  Captured embedded `extensions.bazaar` shapes are parsed as separate provider declaration
+  evidence: `extensions.bazaar.schema` validates `info`, not the paid response body, and
+  never becomes `ResponseContract.json_schema`.
 - Enforce explicit encoded, decoded, nesting, property-count, and string-size limits.
 - Preserve raw bounded extension evidence separately from the canonical response promise.
 - Add PaymentTerms schema 2 with `response_contract_digest: Sha256Digest | None`.
@@ -347,9 +347,10 @@ bazaar-check ENDPOINT --database PATH [--run-id RUN_ID] [--json]
 ```
 
 The command performs one bounded unsigned challenge observation and cannot sign or pay.
-Tests cover absent metadata, exact match, stale economic terms, stale schema/media claims,
-unsupported version/keywords, malformed/oversized extensions, and unsupported primary
-requirements.
+The embedded declaration schema is assessed against `info` as a `DECLARATION_SCHEMA`
+check; it is never a paid-response schema. Tests cover absent metadata, exact match,
+stale economic terms, stale declaration/media claims, unsupported version/keywords,
+malformed/oversized extensions, and unsupported primary requirements.
 
 ---
 

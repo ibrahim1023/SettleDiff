@@ -1,0 +1,77 @@
+{
+  "x402Version": 2,
+  "error": "Payment required",
+  "resource": {
+    "url": "https://x402-paid-endpoint.selfradiance.workers.dev/artifact/vq00.json",
+    "description": "Sanitized public Bazaar compatibility challenge",
+    "mimeType": "application/json",
+    "serviceName": "Synthetic License"
+  },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "eip155:8453",
+      "amount": "1000000",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "payTo": "0x1111111111111111111111111111111111111111",
+      "maxTimeoutSeconds": 300,
+      "extra": {"name": "USD Coin", "version": "2"}
+    }
+  ],
+  "extensions": {
+    "bazaar": {
+      "info": {
+        "input": {"type": "http", "method": "GET", "queryParams": {}},
+        "output": {
+          "type": "json",
+          "example": {
+            "result": "synthetic",
+            "tags": ["synthetic"],
+            "verification": {"notary_url": "https://example.invalid/notary"}
+          }
+        }
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": ["input"],
+        "properties": {
+          "input": {
+            "type": "object",
+            "required": ["type", "method"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {"type": "string", "const": "http"},
+              "method": {"enum": ["GET"]},
+              "queryParams": {"type": "object"}
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {"type": "string"},
+              "example": {
+                "type": "object",
+                "required": ["result", "tags", "verification"],
+                "additionalProperties": false,
+                "properties": {
+                  "result": {"type": "string", "enum": ["synthetic"]},
+                  "tags": {"type": "array", "items": {"type": "string"}},
+                  "verification": {
+                    "type": "object",
+                    "required": ["notary_url"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "notary_url": {"type": "string", "format": "uri"}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

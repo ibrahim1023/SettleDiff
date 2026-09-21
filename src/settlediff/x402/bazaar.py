@@ -1,13 +1,15 @@
-"""Strict interpretation of captured embedded Bazaar response metadata."""
+"""Strict interpretation of captured embedded Bazaar declaration metadata."""
 
 from __future__ import annotations
 
 import re
 from enum import StrEnum
-from typing import cast
+from typing import Literal, cast
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from settlediff.domain.integrity import canonical_json_bytes
 from settlediff.domain.models import (
     ExpectedContract,
     MachineReport,
@@ -16,10 +18,7 @@ from settlediff.domain.models import (
 )
 from settlediff.x402.models import PaymentRequired, ResourceInfo
 
-_SCHEMA_KEYWORDS = frozenset({"type", "required", "properties", "items"})
-_SCHEMA_TYPES = frozenset({"object", "array", "string", "number", "integer", "boolean", "null"})
 _MEDIA_TYPE = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
-_MAX_SCHEMA_PROPERTIES = 128
 _HTTP_METHODS = frozenset({"GET", "HEAD", "DELETE", "POST", "PUT", "PATCH"})
 
 _CHALLENGE_EVIDENCE = ("bazaar:challenge",)
@@ -31,41 +30,14 @@ class BazaarContractError(ValueError):
         self.code = code
 
 
-def response_contract_from(
-    resource: ResourceInfo, extensions: dict[str, JsonValue]
-) -> ResponseContract | None:
+def response_contract_from(resource: ResourceInfo) -> ResponseContract | None:
     media_type = _media_type(resource.mime_type)
-    source_fields: list[str] = []
-    if media_type is not None:
-        source_fields.append("resource.mimeType")
-
-    if "bazaar" not in extensions:
-        if media_type is None:
-            return None
-        return ResponseContract(
-            media_type=media_type, json_schema=None, source_fields=tuple(source_fields)
-        )
-    bazaar = extensions["bazaar"]
-    if not isinstance(bazaar, dict):
-        raise BazaarContractError("BAZAAR_MALFORMED", "extensions.bazaar must be an object")
-    bazaar_mapping = cast(dict[str, JsonValue], bazaar)
-    info = bazaar_mapping.get("info")
-    schema = bazaar_mapping.get("schema")
-    if not isinstance(info, dict) or not isinstance(schema, dict):
-        raise BazaarContractError(
-            "BAZAAR_MALFORMED", "Bazaar response metadata requires info and schema objects"
-        )
-    output = cast(dict[str, JsonValue], info).get("output")
-    if not isinstance(output, dict) or cast(dict[str, JsonValue], output).get("type") != "json":
-        raise BazaarContractError(
-            "BAZAAR_MALFORMED", "Bazaar info.output.type must be the captured json shape"
-        )
-    canonical_schema = _json_schema(cast(dict[str, JsonValue], schema), path="schema")
-    source_fields.extend(("extensions.bazaar.info.output.type", "extensions.bazaar.schema"))
+    if media_type is None:
+        return None
     return ResponseContract(
         media_type=media_type,
-        json_schema=canonical_schema,
-        source_fields=tuple(source_fields),
+        json_schema=None,
+        source_fields=("resource.mimeType",),
     )
 
 
@@ -80,62 +52,35 @@ def _media_type(value: str | None) -> str | None:
     return media_type
 
 
-def _json_schema(schema: dict[str, JsonValue], *, path: str) -> dict[str, JsonValue]:
-    unsupported = tuple(sorted(set(schema) - _SCHEMA_KEYWORDS))
-    if unsupported:
-        raise BazaarContractError(
-            "SCHEMA_UNSUPPORTED", f"{path} contains unsupported keyword {unsupported[0]}"
-        )
-    schema_type = schema.get("type")
-    if not isinstance(schema_type, str) or schema_type not in _SCHEMA_TYPES:
-        raise BazaarContractError("BAZAAR_MALFORMED", f"{path}.type is unsupported or missing")
+_DECLARATION_KEYWORDS = frozenset(
+    {
+        "$schema",
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "const",
+        "enum",
+        "format",
+    }
+)
+_DECLARATION_TYPES = frozenset(
+    {"object", "array", "string", "number", "integer", "boolean", "null"}
+)
+_DECLARATION_SCHEMA_ID = "https://json-schema.org/draft/2020-12/schema"
+_MAX_DECLARATION_DEPTH = 16
+_MAX_DECLARATION_PROPERTIES = 128
+_MAX_DECLARATION_ENUM = 32
+_MAX_DECLARATION_STRING_BYTES = 4096
 
-    result: dict[str, JsonValue] = {"type": schema_type}
-    required = schema.get("required")
-    properties = schema.get("properties")
-    items = schema.get("items")
 
-    if required is not None or properties is not None:
-        if schema_type != "object" or not isinstance(properties, dict):
-            raise BazaarContractError(
-                "BAZAAR_MALFORMED", f"{path} object keywords require object type and properties"
-            )
-        property_mapping = cast(dict[str, JsonValue], properties)
-        if len(property_mapping) > _MAX_SCHEMA_PROPERTIES:
-            raise BazaarContractError("BAZAAR_MALFORMED", f"{path}.properties exceeds the limit")
-        canonical_properties: dict[str, JsonValue] = {}
-        for name, child in property_mapping.items():
-            if not name or not isinstance(child, dict):
-                raise BazaarContractError(
-                    "BAZAAR_MALFORMED", f"{path}.properties must map names to schemas"
-                )
-            canonical_properties[name] = _json_schema(
-                cast(dict[str, JsonValue], child), path=f"{path}.properties.{name}"
-            )
-        result["properties"] = canonical_properties
-        if required is not None:
-            if (
-                not isinstance(required, list)
-                or not required
-                or any(not isinstance(name, str) or not name for name in required)
-                or len(set(cast(list[str], required))) != len(required)
-                or any(name not in property_mapping for name in cast(list[str], required))
-            ):
-                raise BazaarContractError(
-                    "BAZAAR_MALFORMED", f"{path}.required must name unique declared properties"
-                )
-            result["required"] = cast(list[JsonValue], sorted(cast(list[str], required)))
+class _DeclarationMalformed(ValueError):
+    pass
 
-    if items is not None:
-        if schema_type != "array" or not isinstance(items, dict):
-            raise BazaarContractError(
-                "BAZAAR_MALFORMED", f"{path}.items requires array type and one schema"
-            )
-        result["items"] = _json_schema(cast(dict[str, JsonValue], items), path=f"{path}.items")
-    elif schema_type == "array":
-        raise BazaarContractError("BAZAAR_MALFORMED", f"{path} array schema requires items")
 
-    return result
+class _DeclarationUnsupported(ValueError):
+    pass
 
 
 class BazaarStatus(StrEnum):
@@ -143,6 +88,240 @@ class BazaarStatus(StrEnum):
     DIFF = "DIFF"
     UNAVAILABLE = "UNAVAILABLE"
     UNSUPPORTED = "UNSUPPORTED"
+
+
+class BazaarDeclarationResult(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    status: BazaarStatus
+    diagnostic: Literal[
+        "BAZAAR_DECLARATION_MATCH",
+        "BAZAAR_DECLARATION_MALFORMED",
+        "BAZAAR_DECLARATION_SCHEMA_UNSUPPORTED",
+        "BAZAAR_DECLARATION_DIFF",
+    ]
+
+    @model_validator(mode="after")
+    def _coherent_status_diagnostic(self) -> BazaarDeclarationResult:
+        coherent = {
+            (BazaarStatus.MATCH, "BAZAAR_DECLARATION_MATCH"),
+            (BazaarStatus.DIFF, "BAZAAR_DECLARATION_DIFF"),
+            (BazaarStatus.UNSUPPORTED, "BAZAAR_DECLARATION_MALFORMED"),
+            (BazaarStatus.UNSUPPORTED, "BAZAAR_DECLARATION_SCHEMA_UNSUPPORTED"),
+        }
+        if (self.status, self.diagnostic) not in coherent:
+            raise ValueError("declaration status/diagnostic mismatch")
+        return self
+
+
+def _canonical(value: JsonValue) -> bytes:
+    return canonical_json_bytes(value)
+
+
+def _check_declaration_schema(schema: object, *, depth: int, properties_seen: list[int]) -> None:
+    if not isinstance(schema, dict) or depth > _MAX_DECLARATION_DEPTH:
+        raise _DeclarationMalformed("declaration schema must be a bounded object")
+    mapping = cast(dict[str, JsonValue], schema)
+    unsupported = set(mapping) - _DECLARATION_KEYWORDS
+    if unsupported:
+        raise _DeclarationUnsupported(
+            f"declaration schema uses unsupported keyword {sorted(unsupported)[0]}"
+        )
+    dialect = mapping.get("$schema")
+    if dialect is not None and dialect != _DECLARATION_SCHEMA_ID:
+        raise _DeclarationUnsupported("declaration $schema is not the captured draft")
+    if "format" in mapping and mapping["format"] != "uri":
+        raise _DeclarationUnsupported("declaration format is unsupported")
+    schema_type = mapping.get("type")
+    if schema_type is not None and (
+        not isinstance(schema_type, str) or schema_type not in _DECLARATION_TYPES
+    ):
+        raise _DeclarationMalformed("declaration type is unsupported or missing")
+    enum = mapping.get("enum")
+    if enum is not None:
+        if not isinstance(enum, list) or not 1 <= len(enum) <= _MAX_DECLARATION_ENUM:
+            raise _DeclarationMalformed("declaration enum must contain 1..32 values")
+        if len({_canonical(item) for item in cast(list[JsonValue], enum)}) != len(enum):
+            raise _DeclarationMalformed("declaration enum values must be unique")
+    properties = mapping.get("properties")
+    if properties is not None:
+        if not isinstance(properties, dict):
+            raise _DeclarationMalformed("declaration properties must be an object")
+        property_mapping = cast(dict[str, JsonValue], properties)
+        properties_seen[0] += len(property_mapping)
+        if properties_seen[0] > _MAX_DECLARATION_PROPERTIES:
+            raise _DeclarationMalformed("declaration properties exceed the limit")
+        for child in property_mapping.values():
+            _check_declaration_schema(child, depth=depth + 1, properties_seen=properties_seen)
+    required = mapping.get("required")
+    if required is not None and (
+        not isinstance(required, list)
+        or any(not isinstance(name, str) or not name for name in required)
+        or len(set(cast(list[object], required))) != len(required)
+        or (
+            isinstance(properties, dict)
+            and any(name not in properties for name in cast(list[str], required))
+        )
+    ):
+        raise _DeclarationMalformed("declaration required must name declared properties")
+    additional = mapping.get("additionalProperties")
+    if additional is not None and not isinstance(additional, (bool, dict)):
+        raise _DeclarationMalformed("declaration additionalProperties must be bool or schema")
+    if isinstance(additional, dict):
+        _check_declaration_schema(additional, depth=depth + 1, properties_seen=properties_seen)
+    items = mapping.get("items")
+    if items is not None:
+        if not isinstance(items, dict):
+            raise _DeclarationMalformed("declaration items must be one schema")
+        _check_declaration_schema(items, depth=depth + 1, properties_seen=properties_seen)
+
+
+def _type_matches(value: JsonValue, schema_type: str) -> bool:
+    if schema_type == "object":
+        return isinstance(value, dict)
+    if schema_type == "array":
+        return isinstance(value, list)
+    if schema_type == "string":
+        return isinstance(value, str)
+    if schema_type == "boolean":
+        return isinstance(value, bool)
+    if schema_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if schema_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if schema_type == "null":
+        return value is None
+    return False
+
+
+def _is_declaration_uri(value: str) -> bool:
+    parsed = urlsplit(value)
+    return (
+        parsed.scheme in {"http", "https"}
+        and bool(parsed.netloc)
+        and parsed.username is None
+        and parsed.password is None
+    )
+
+
+def _declaration_matches(value: JsonValue, schema: dict[str, JsonValue], depth: int) -> bool:
+    if depth > _MAX_DECLARATION_DEPTH:
+        return False
+    schema_type = schema.get("type")
+    if isinstance(schema_type, str) and not _type_matches(value, schema_type):
+        return False
+    if "const" in schema and _canonical(value) != _canonical(schema["const"]):
+        return False
+    enum = schema.get("enum")
+    if isinstance(enum, list) and _canonical(value) not in {
+        _canonical(item) for item in cast(list[JsonValue], enum)
+    }:
+        return False
+    if schema.get("format") == "uri" and not (
+        isinstance(value, str) and _is_declaration_uri(value)
+    ):
+        return False
+    if isinstance(value, dict):
+        mapping = cast(dict[str, JsonValue], value)
+        required = schema.get("required")
+        if isinstance(required, list) and any(
+            name not in mapping for name in cast(list[object], required)
+        ):
+            return False
+        properties = schema.get("properties")
+        property_mapping = (
+            cast(dict[str, JsonValue], properties) if isinstance(properties, dict) else {}
+        )
+        for name, child in mapping.items():
+            child_schema = property_mapping.get(name)
+            if child_schema is not None:
+                if not _declaration_matches(
+                    child, cast(dict[str, JsonValue], child_schema), depth + 1
+                ):
+                    return False
+                continue
+            additional = schema.get("additionalProperties")
+            if additional is False:
+                return False
+            if isinstance(additional, dict) and not _declaration_matches(
+                child, cast(dict[str, JsonValue], additional), depth + 1
+            ):
+                return False
+    if isinstance(value, list):
+        items = schema.get("items")
+        if isinstance(items, dict):
+            item_schema = cast(dict[str, JsonValue], items)
+            if any(
+                not _declaration_matches(item, item_schema, depth + 1)
+                for item in cast(list[JsonValue], value)
+            ):
+                return False
+    return True
+
+
+def _declaration_string_bounded(value: str) -> bool:
+    return len(value.encode("utf-8")) <= _MAX_DECLARATION_STRING_BYTES
+
+
+def _check_declaration_value(value: JsonValue, *, depth: int, properties_seen: list[int]) -> None:
+    if depth > _MAX_DECLARATION_DEPTH:
+        raise _DeclarationMalformed("declaration value exceeds depth limit")
+    if isinstance(value, str) and not _declaration_string_bounded(value):
+        raise _DeclarationMalformed("declaration string exceeds the byte limit")
+    if isinstance(value, dict):
+        mapping = cast(dict[str, JsonValue], value)
+        properties_seen[0] += len(mapping)
+        if properties_seen[0] > _MAX_DECLARATION_PROPERTIES:
+            raise _DeclarationMalformed("declaration value exceeds property limit")
+        for key, child in mapping.items():
+            if not _declaration_string_bounded(key):
+                raise _DeclarationMalformed("declaration key exceeds the byte limit")
+            _check_declaration_value(child, depth=depth + 1, properties_seen=properties_seen)
+    elif isinstance(value, list):
+        for item in cast(list[JsonValue], value):
+            _check_declaration_value(item, depth=depth + 1, properties_seen=properties_seen)
+
+
+def assess_bazaar_declaration(info: JsonValue, schema: JsonValue) -> BazaarDeclarationResult:
+    """Validate the captured declaration schema and check ``info`` against it."""
+    try:
+        _check_declaration_value(info, depth=1, properties_seen=[0])
+        _check_declaration_value(schema, depth=1, properties_seen=[0])
+        _check_declaration_schema(schema, depth=1, properties_seen=[0])
+    except _DeclarationUnsupported:
+        return BazaarDeclarationResult(
+            status=BazaarStatus.UNSUPPORTED,
+            diagnostic="BAZAAR_DECLARATION_SCHEMA_UNSUPPORTED",
+        )
+    except _DeclarationMalformed:
+        return BazaarDeclarationResult(
+            status=BazaarStatus.UNSUPPORTED, diagnostic="BAZAAR_DECLARATION_MALFORMED"
+        )
+    if not isinstance(schema, dict) or not _declaration_matches(
+        info, cast(dict[str, JsonValue], schema), depth=1
+    ):
+        return BazaarDeclarationResult(
+            status=BazaarStatus.DIFF, diagnostic="BAZAAR_DECLARATION_DIFF"
+        )
+    return BazaarDeclarationResult(status=BazaarStatus.MATCH, diagnostic="BAZAAR_DECLARATION_MATCH")
+
+
+def bazaar_declaration_diagnostic(extensions: dict[str, JsonValue]) -> str | None:
+    """Return the stable declaration diagnostic, or None when absent or matching."""
+    if "bazaar" not in extensions:
+        return None
+    bazaar = extensions["bazaar"]
+    if not isinstance(bazaar, dict):
+        return "BAZAAR_DECLARATION_MALFORMED"
+    bazaar_mapping = cast(dict[str, JsonValue], bazaar)
+    info = bazaar_mapping.get("info")
+    schema = bazaar_mapping.get("schema")
+    if not isinstance(info, dict) or not isinstance(schema, dict):
+        return "BAZAAR_DECLARATION_MALFORMED"
+    result = assess_bazaar_declaration(info, schema)
+    if result.status is BazaarStatus.MATCH:
+        return None
+    return result.diagnostic
 
 
 class BazaarFieldCheck(BaseModel):
@@ -257,8 +436,7 @@ def assess_bazaar(
     evidence = _CHALLENGE_EVIDENCE
     checks: list[BazaarFieldCheck] = []
 
-    bazaar = required.extensions.get("bazaar")
-    if bazaar is None:
+    if "bazaar" not in required.extensions:
         checks.append(_check("BAZAAR_EXTENSION", BazaarStatus.UNAVAILABLE, evidence))
         return BazaarAssessment(
             status=_bazaar_status(tuple(checks)),
@@ -266,6 +444,7 @@ def assess_bazaar(
             run_id=paid_report.run_id if paid_report is not None else None,
         )
 
+    bazaar = required.extensions["bazaar"]
     extension_status = BazaarStatus.MATCH
     schema_status = BazaarStatus.UNAVAILABLE
     input_status = BazaarStatus.UNAVAILABLE
@@ -302,15 +481,8 @@ def assess_bazaar(
                             else BazaarStatus.DIFF
                         )
                     )
-                try:
-                    _json_schema(cast(dict[str, JsonValue], schema), path="schema")
-                except BazaarContractError as error:
-                    if error.code == "SCHEMA_UNSUPPORTED":
-                        schema_status = BazaarStatus.UNSUPPORTED
-                    else:
-                        extension_status = BazaarStatus.UNSUPPORTED
-                else:
-                    schema_status = BazaarStatus.MATCH
+                declaration = assess_bazaar_declaration(info, cast(JsonValue, schema))
+                schema_status = declaration.status
     checks.append(_check("BAZAAR_EXTENSION", extension_status, evidence))
 
     try:
@@ -321,7 +493,7 @@ def assess_bazaar(
         primary_status = BazaarStatus.MATCH
     checks.append(_check("PRIMARY_REQUIREMENT", primary_status, evidence))
     checks.append(_check("INPUT_METHOD", input_status, evidence))
-    checks.append(_check("RESPONSE_SCHEMA", schema_status, evidence))
+    checks.append(_check("DECLARATION_SCHEMA", schema_status, evidence))
     checks.append(_check("MEDIA_TYPE", media_status, evidence))
 
     if paid_report is None:
@@ -350,7 +522,6 @@ def _paid_checks(
         "SCHEME",
         "PROTOCOL_VERSION",
         "INPUT_CONTRACT",
-        "PAID_RESPONSE_SCHEMA",
         "PAID_MEDIA_TYPE",
         "PAID_DELIVERY_CONTRACT",
     )
@@ -402,10 +573,6 @@ def _paid_checks(
         "SCHEME": (current.scheme, paid.scheme),
         "PROTOCOL_VERSION": (current.protocol, paid.protocol),
         "INPUT_CONTRACT": (current.request_schema, paid.request_schema),
-        "PAID_RESPONSE_SCHEMA": (
-            current_response.json_schema if current_response is not None else None,
-            paid_response.json_schema if paid_response is not None else None,
-        ),
     }
     checks: list[BazaarFieldCheck] = []
     for check_id in paid_ids:

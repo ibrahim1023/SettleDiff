@@ -33,9 +33,23 @@
       },
       "schema": {
         "type": "object",
-        "required": ["result"],
+        "required": ["input", "output"],
         "properties": {
-          "result": {"type": "string"}
+          "input": {
+            "type": "object",
+            "required": ["type", "method"],
+            "properties": {
+              "type": {"const": "http"},
+              "method": {"enum": ["GET", "HEAD", "DELETE", "POST", "PUT", "PATCH"]}
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {"const": "json"}
+            }
+          }
         }
       }
     }

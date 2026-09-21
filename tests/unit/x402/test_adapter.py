@@ -407,6 +407,32 @@ async def test_collector_keeps_provider_receipt_separate_from_independent_ledger
 
 
 @pytest.mark.asyncio
+async def test_unsupported_bazaar_declaration_never_blocks_inspection_or_authorization() -> None:
+    payload = required_payload()
+    payload["extensions"] = {
+        "bazaar": {
+            "info": {"input": {"type": "http", "method": "GET"}, "output": {"type": "json"}},
+            "schema": {"type": "object", "patternProperties": {"^x": {}}},
+        }
+    }
+    resource = FakeResource(response(required_header(payload)))
+    adapter = X402Adapter(resource, FakeSigner(signer_result()), FakeRpc(None))
+    value = request()
+
+    inspected = await adapter.inspect(value)
+    contract = ExpectedContract.model_validate_json(json.dumps(inspected.data))
+
+    assert contract.response_contract is not None
+    assert contract.response_contract.json_schema is None
+    assert contract.response_contract.source_fields == ("resource.mimeType",)
+    assert "x402 Bazaar declaration: BAZAAR_DECLARATION_SCHEMA_UNSUPPORTED" in (
+        contract.normalization_notes
+    )
+    terms = payment_terms(contract, value)
+    assert terms.response_contract_digest == contract.response_contract.digest
+
+
+@pytest.mark.asyncio
 async def test_inspect_carries_raw_source_contract() -> None:
     adapter = X402Adapter(
         FakeResource(response(required_header())), FakeSigner(signer_result()), FakeRpc(None)

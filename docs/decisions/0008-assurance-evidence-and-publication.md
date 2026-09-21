@@ -24,11 +24,11 @@ Provider and independent evidence remain separate even when they agree. Missing,
 
 ### Response promises
 
-`ResponseContract` is a strict persisted promise containing only an explicitly advertised media type and/or the accepted JSON Schema subset, together with bounded source-field codes. Descriptions, examples, paid output, and MIME guesses cannot create a response promise.
+`ResponseContract` is a strict persisted promise containing only an explicitly advertised media type and/or an accepted authoritative paid-response schema, together with bounded source-field codes. Descriptions, examples, paid output, and MIME guesses cannot create a response promise. For current x402 evidence, only an explicit `resource.mimeType` supplies a response promise; an embedded Bazaar declaration schema never does.
 
 A response promise captured during preflight is part of the exact payment terms. PaymentTerms schema 2 carries its canonical SHA-256 digest. The same promise is rebuilt from the second unsigned challenge immediately before signer launch. Any difference fails before the signer can run.
 
-The accepted JSON Schema subset is `type`, `required`, `properties`, and `items`. Unsupported keywords anywhere in a consumed schema produce `SCHEMA_UNSUPPORTED`; malformed or excessive shapes fail closed. Raw bounded x402 extensions remain provider evidence separate from the canonical response promise.
+Embedded `extensions.bazaar.schema` is a declaration schema: it validates the discovery `info` object, not the paid HTTP response body. It is provider evidence and is never a paid-response JSON schema; it cannot block contract normalization or payment preflight. A separate bounded, dependency-free declaration validator accepts only the captured subset (`$schema` draft 2020-12, `type`, `properties`, `required`, `additionalProperties`, `items`, `const`, `enum`, `format: uri`) and reports statuses `MATCH`, `DIFF`, or `UNSUPPORTED` accompanied by stable `MATCH`, `DIFF`, `MALFORMED`, or `SCHEMA_UNSUPPORTED` diagnostics. Output examples and `output.type` never infer a response schema or media type. Raw bounded x402 extensions remain provider evidence separate from the canonical response promise.
 
 ### Delivery evidence and assessment
 

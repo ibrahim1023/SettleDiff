@@ -59,18 +59,21 @@ def test_normalize_payment_required_maps_exact_base_sepolia_usdc() -> None:
     assert contract.asset_identity.decimals == 6
 
 
-def test_normalize_payment_required_captures_resource_and_bazaar_response_contract() -> None:
+def test_normalize_payment_required_never_promotes_bazaar_schema_to_response_contract() -> None:
     payload = challenge()
     payload["extensions"] = {
         "bazaar": {
             "info": {
                 "input": {"type": "http", "method": "GET", "queryParams": {}},
-                "output": {"type": "json"},
+                "output": {"type": "json", "example": {"result": "ok"}},
             },
             "schema": {
                 "type": "object",
-                "required": ["result"],
-                "properties": {"result": {"type": "string"}},
+                "required": ["input", "output"],
+                "properties": {
+                    "input": {"type": "object"},
+                    "output": {"type": "object"},
+                },
             },
         }
     }
@@ -82,22 +85,26 @@ def test_normalize_payment_required_captures_resource_and_bazaar_response_contra
     assert contract.schema_version == 3
     assert contract.response_contract == ResponseContract(
         media_type="application/json",
-        json_schema={
-            "type": "object",
-            "required": ["result"],
-            "properties": {"result": {"type": "string"}},
-        },
-        source_fields=(
-            "resource.mimeType",
-            "extensions.bazaar.info.output.type",
-            "extensions.bazaar.schema",
-        ),
+        json_schema=None,
+        source_fields=("resource.mimeType",),
+    )
+    assert not any(
+        note.startswith("x402 Bazaar declaration:") for note in contract.normalization_notes
     )
 
 
 def test_normalize_payment_required_preserves_absent_response_contract() -> None:
     payload = challenge()
     payload["resource"].pop("mimeType")
+    payload["extensions"] = {
+        "bazaar": {
+            "info": {
+                "input": {"type": "http", "method": "GET"},
+                "output": {"type": "json", "example": {"result": "ok"}},
+            },
+            "schema": {"type": "object"},
+        }
+    }
 
     contract = normalize_payment_required(
         parse_payment_required(encoded(payload)), request_schema={"method": "GET"}
@@ -109,32 +116,48 @@ def test_normalize_payment_required_preserves_absent_response_contract() -> None
 
 
 @pytest.mark.parametrize(
-    ("bazaar", "message"),
+    ("bazaar", "diagnostic"),
     [
         (
             {
                 "info": {"output": {"type": "json"}},
                 "schema": {
                     "type": "object",
-                    "properties": {"result": {"type": "string", "maxLength": 20}},
+                    "properties": {"info": {"type": "object", "maxLength": 20}},
                 },
             },
-            "SCHEMA_UNSUPPORTED",
+            "BAZAAR_DECLARATION_SCHEMA_UNSUPPORTED",
         ),
-        ({"info": {"output": {"type": "html"}}, "schema": {"type": "object"}}, "BAZAAR_MALFORMED"),
-        (None, "BAZAAR_MALFORMED"),
+        (
+            {
+                "info": {"output": {"type": "json"}},
+                "schema": {"type": "bogus"},
+            },
+            "BAZAAR_DECLARATION_MALFORMED",
+        ),
+        (
+            {
+                "info": {"output": {"type": "json"}},
+                "schema": {"type": "object", "required": ["missing"]},
+            },
+            "BAZAAR_DECLARATION_DIFF",
+        ),
+        (None, "BAZAAR_DECLARATION_MALFORMED"),
     ],
 )
-def test_normalize_payment_required_rejects_unsupported_or_malformed_bazaar_contract(
-    bazaar: object, message: str
+def test_normalize_payment_required_flags_bazaar_declaration_without_raising(
+    bazaar: object, diagnostic: str
 ) -> None:
     payload = challenge()
     payload["extensions"] = {"bazaar": bazaar}
 
-    with pytest.raises(X402NormalizationError, match=message):
-        normalize_payment_required(
-            parse_payment_required(encoded(payload)), request_schema={"method": "GET"}
-        )
+    contract = normalize_payment_required(
+        parse_payment_required(encoded(payload)), request_schema={"method": "GET"}
+    )
+
+    assert f"x402 Bazaar declaration: {diagnostic}" in contract.normalization_notes
+    assert contract.response_contract is not None
+    assert contract.response_contract.json_schema is None
 
 
 def test_normalize_payment_required_rejects_unsupported_primary_requirement() -> None:

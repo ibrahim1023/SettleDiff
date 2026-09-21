@@ -14,7 +14,11 @@ from settlediff.domain.models import (
     SettlementStatus,
 )
 from settlediff.domain.money import Money
-from settlediff.x402.bazaar import BazaarContractError, response_contract_from
+from settlediff.x402.bazaar import (
+    BazaarContractError,
+    bazaar_declaration_diagnostic,
+    response_contract_from,
+)
 from settlediff.x402.models import PaymentRequired, PaymentRequirements, SettlementResponse
 
 BASE_SEPOLIA = "eip155:84532"
@@ -42,8 +46,11 @@ def normalize_payment_required(
         if "asset_transfer_method" not in requirement.extra.model_fields_set
         else ()
     )
+    declaration = bazaar_declaration_diagnostic(required.extensions)
+    if declaration is not None:
+        notes = (*notes, f"x402 Bazaar declaration: {declaration}")
     try:
-        response_contract = response_contract_from(required.resource, required.extensions)
+        response_contract = response_contract_from(required.resource)
     except BazaarContractError as error:
         raise X402NormalizationError(str(error)) from error
     values: dict[str, object] = {

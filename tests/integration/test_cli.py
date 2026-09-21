@@ -1410,6 +1410,54 @@ def test_bazaar_check_observes_challenge_without_paid_paths(
     assert database.read_bytes() == before
 
 
+def test_bazaar_check_live_mainnet_shape_reports_declaration_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = json.loads(
+        Path(
+            "tests/contract/x402/fixtures/payment-required-bazaar-live-mainnet-2026-09-21.json"
+        ).read_text()
+    )
+    header = _bazaar_header(payload)
+
+    class FakeResourceClient:
+        def __init__(self, _client: object) -> None:
+            pass
+
+        async def challenge(self, _request: object) -> object:
+            from settlediff.x402.http import X402ResourceResponse
+
+            return X402ResourceResponse(
+                status_code=402,
+                payment_required=header,
+                body=None,
+                observed_at=datetime(2026, 9, 21, tzinfo=UTC),
+            )
+
+    monkeypatch.setattr("settlediff.cli.X402ResourceClient", FakeResourceClient)
+    database = tmp_path / "reports.sqlite3"
+    SQLiteReportRepository(database).close()
+
+    result = runner.invoke(
+        app,
+        [
+            "bazaar-check",
+            "https://x402-paid-endpoint.selfradiance.workers.dev/artifact/vq00.json",
+            "--database",
+            str(database),
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    output = json.loads(result.stdout)
+    assert output["status"] == "UNSUPPORTED"
+    checks = {check["check_id"]: check["status"] for check in output["checks"]}
+    assert checks["DECLARATION_SCHEMA"] == "MATCH"
+    assert checks["INPUT_METHOD"] == "MATCH"
+    assert checks["MEDIA_TYPE"] == "MATCH"
+    assert checks["PRIMARY_REQUIREMENT"] == "UNSUPPORTED"
+
+
 def test_bazaar_check_flags_unsupported_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

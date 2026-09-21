@@ -97,6 +97,34 @@ primary remains unselectable and that the same valid metadata shape does not pre
 selection when settlement-critical terms use the supported Base Sepolia profile. No signer,
 payment, or database write was used for this probe.
 
+## 2026-09-21 unsigned Bazaar compatibility capture
+
+In this conversation, two separately authorized unsigned GET requests were made to
+`https://x402-paid-endpoint.selfradiance.workers.dev/artifact/vq00.json`: the first
+for assessment and the second for a temporary raw capture. Both returned HTTP 402
+with a `PAYMENT-REQUIRED` header. Total external calls: 2; paid, signing, and RPC
+calls: 0.
+
+The first assessment ran under the pre-correction interpretation and reported the
+declaration-schema keywords as unsupported. Inspection against the official
+specification established the semantic error — the declaration schema validates
+`extensions.bazaar.info`, not the paid response body — and the offline correction
+now validates the sanitized captured shape. No third request was made.
+
+The challenge advertised x402 v2 with a Base mainnet (`eip155:8453`) `exact` primary
+requirement for canonical mainnet USDC, which remains unsupported and unselectable.
+An embedded `extensions.bazaar` declaration was present; its `schema` matched the
+official purpose — validating `extensions.bazaar.info`, not the paid response body —
+and used the keyword classes `$schema` (draft 2020-12), `type`, `properties`,
+`required`, `additionalProperties`, `items`, `const`, `enum`, and `format: uri`.
+
+The raw payload was retained only temporarily under `/tmp` and then deleted. A
+sanitized structural derivative — not a byte-exact copy of raw evidence — is
+committed at
+`tests/contract/x402/fixtures/payment-required-bazaar-live-mainnet-2026-09-21.json`.
+This capture is not an endorsement or availability claim, and no endpoint SDK version
+is asserted.
+
 ## Compatibility statement
 
 Demonstrated support is limited to x402 v2, selected requirement index 0, `exact`, Base Sepolia, canonical test USDC, GET without a body or POST with a bounded JSON value, and EIP-3009. A challenge may contain bounded unsupported alternatives after a supported primary entry. This does not establish support for selecting Algorand, Solana, other EVM networks, other assets, other schemes, mainnet, or arbitrary requirement ordering.

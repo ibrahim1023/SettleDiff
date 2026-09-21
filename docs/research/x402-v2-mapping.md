@@ -102,11 +102,13 @@ recipient, and amount. Because the facilitator may submit the transaction,
 ## Embedded Bazaar metadata
 
 x402 v2 challenges may embed a `extensions.bazaar` object describing the
-advertised request (`info.input`) and response shape (`info.output`, `schema`).
-SettleDiff interprets this extension strictly as **provider-asserted** metadata
-captured inside the unsigned challenge; it is never treated as independent
-catalog, facilitator, or marketplace verification, and no `metadata_url` or
-remote Bazaar client exists. Only the captured bytes are assessed.
+advertised request (`info.input`) and output declaration (`info.output`,
+`schema`). The declaration `schema` validates the `info` object itself — it is
+not a schema for the paid HTTP response body. SettleDiff interprets this
+extension strictly as **provider-asserted** metadata captured inside the
+unsigned challenge; it is never treated as independent catalog, facilitator, or
+marketplace verification, and no `metadata_url` or remote Bazaar client exists.
+Only the captured bytes are assessed.
 
 `x402.bazaar.assess_bazaar` produces a `BazaarAssessment` of objective
 `BazaarFieldCheck` results (`MATCH`, `DIFF`, `UNAVAILABLE`, `UNSUPPORTED`) with
@@ -116,20 +118,26 @@ exactly one unsigned GET challenge, optionally compares a persisted paid report
 by `--run-id`, and never signs, pays, mutates storage, or invokes signer, RPC,
 capability, model, or Context.dev paths.
 
+The x402 `ResponseContract` is built only from an explicit `resource.mimeType`.
+Bazaar declaration schemas, `info.output` examples, and `info.output.type`
+never create a paid-response JSON schema. Malformed or unsupported declaration
+metadata is recorded as a normalization diagnostic instead of failing
+normalization or payment preflight.
+
 | Challenge evidence | Check | Interpretation |
 |---|---|---|
 | `extensions.bazaar` absent | `BAZAAR_EXTENSION` | `UNAVAILABLE`; resource fields alone are not Bazaar claims |
 | malformed shape or accepted-bound violation | `BAZAAR_EXTENSION` | `UNSUPPORTED`; malformed evidence is classified, never an exception |
-| unsupported JSON Schema keyword | `RESPONSE_SCHEMA` | `UNSUPPORTED`; the accepted subset is unchanged |
+| unsupported declaration keyword/`$schema`/`format` | `DECLARATION_SCHEMA` | `UNSUPPORTED`; only the captured subset is assessed (`$schema` draft 2020-12, `type`, `properties`, `required`, `additionalProperties`, `items`, `const`, `enum`, `format: uri`) |
 | selected primary requirement unsupported | `PRIMARY_REQUIREMENT` | `UNSUPPORTED` |
 | `info.input` (`type: http`, bounded method set) | `INPUT_METHOD` | `MATCH`/`DIFF` against the observed request method; malformed input is `UNSUPPORTED` |
 | `info.output.type: json` vs normalized `resource.mimeType` | `MEDIA_TYPE` | `application/json` `MATCH`, missing `UNAVAILABLE`, other valid media `DIFF` |
-| `schema` under the accepted subset/bounds | `RESPONSE_SCHEMA` | `MATCH` for challenge-only claims |
+| declaration `schema` validated against `info` | `DECLARATION_SCHEMA` | `MATCH` when `info` validates; `DIFF` on mismatch; never feeds `ResponseContract.json_schema` |
 | `x402Version != 2` | `VERSION` | `UNSUPPORTED`; classified without entering the payment path |
 | no persisted run supplied | `PAID_EVIDENCE` | `UNAVAILABLE` |
 | persisted paid report (`adapter_id == "x402"`) | `RESOURCE` | endpoint URL equivalence gate; a `DIFF` suppresses every other paid check to `UNAVAILABLE` so economics are never compared across resources |
 | persisted paid report (`adapter_id == "x402"`) | `PRICE`, `NETWORK`, `ASSET`, `RECIPIENT`, `SCHEME`, `PROTOCOL_VERSION`, `INPUT_CONTRACT` | field-level canonical comparison against the current contract |
-| paid report response contract | `PAID_RESPONSE_SCHEMA`, `PAID_MEDIA_TYPE` | advertised schema/media equality; a delivery observation additionally requires its media type to match the current claim |
+| paid report response contract | `PAID_MEDIA_TYPE` | advertised media equality; a delivery observation additionally requires its media type to match the current claim |
 | `delivery.response_contract_digest` | `PAID_DELIVERY_CONTRACT` | digest equality only; paid body content is never treated as a contract |
 
 Wrong-rail paid reports mark all paid checks `UNSUPPORTED`; a missing persisted
