@@ -165,7 +165,7 @@ def verify_bundle(bundle: EvidenceBundle) -> MachineReport:
         raise BundleError("bundle, report, and intent run IDs do not match")
     if any(not artifact.redacted for artifact in bundle.artifacts):
         raise BundleError("bundle contains an unredacted artifact")
-    if derive_verdict(report.findings) is not report.verdict:
+    if derive_verdict(report.findings, delivery=report.delivery) is not report.verdict:
         raise BundleError("report verdict does not match its persisted findings")
 
     finding_ids = tuple(finding.finding_id for finding in report.findings)

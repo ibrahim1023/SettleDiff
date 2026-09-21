@@ -10,6 +10,9 @@ from settlediff.domain.matching import MatchConfidence, MatchResult, MatchStatus
 from settlediff.domain.models import (
     AssetIdentity,
     CheckStatus,
+    DeliveryAssessment,
+    DeliveryObservation,
+    DeliveryStatus,
     ExecutionRecord,
     ExpectedContract,
     Finding,
@@ -18,6 +21,7 @@ from settlediff.domain.models import (
     PaymentReceipt,
     PurchaseIntent,
     SettlementStatus,
+    Severity,
     Verdict,
 )
 from settlediff.domain.money import Money
@@ -596,3 +600,73 @@ def test_missing_evidence_is_unknown_not_a_pass() -> None:
     assert all(finding.status.value == "UNKNOWN" for finding in findings[:-1])
     assert findings[-1].check_id == "activity_persistence"
     assert findings[-1].status.value == "WARN"
+
+
+def _delivery_assessment(status: DeliveryStatus) -> DeliveryAssessment:
+    observation = None
+    digest = None
+    if status is not DeliveryStatus.NOT_ASSESSED:
+        digest = "a" * 64
+        observation = DeliveryObservation(
+            observed_at=NOW,
+            status_code=200,
+            media_type="application/json",
+            received_bytes=21,
+            truncated=False,
+            parsed_body={"result": "synthetic"},
+            evidence_ids=("syn_x402_run:execution",),
+        )
+    return DeliveryAssessment(
+        status=status,
+        reason_code="SYNTHETIC",
+        evidence_ids=("syn_x402_run:contract", "syn_x402_run:execution")
+        if observation is not None
+        else ("syn_x402_run:contract",),
+        observation=observation,
+        response_contract_digest=digest,
+    )
+
+
+@pytest.mark.parametrize(
+    ("delivery_status", "check_status", "severity"),
+    [
+        (DeliveryStatus.SATISFIED, CheckStatus.PASS, Severity.INFO),
+        (DeliveryStatus.FAILED, CheckStatus.FAIL, Severity.HIGH),
+        (DeliveryStatus.UNKNOWN, CheckStatus.UNKNOWN, Severity.WARNING),
+    ],
+)
+def test_delivery_assessment_maps_to_one_delivery_finding(
+    delivery_status: DeliveryStatus, check_status: CheckStatus, severity: Severity
+) -> None:
+    intent, contract, execution, match, receipt = x402_evidence()
+    delivery = _delivery_assessment(delivery_status)
+
+    findings = run_checks(intent, contract, execution, match, receipt=receipt, delivery=delivery)
+    delivery_findings = [finding for finding in findings if finding.check_id == "delivery"]
+
+    assert len(delivery_findings) == 1
+    finding = delivery_findings[0]
+    assert finding.status is check_status
+    assert finding.severity is severity
+    assert finding.expected == DeliveryStatus.SATISFIED.value
+    assert finding.observed == delivery_status.value
+    assert finding.artifact_ids == delivery.evidence_ids
+    assert finding.field_paths == ("delivery.status",)
+
+
+def test_not_assessed_delivery_adds_no_finding_and_preserves_verdict() -> None:
+    intent, contract, execution, match, receipt = x402_evidence()
+
+    baseline = run_checks(intent, contract, execution, match, receipt=receipt)
+    assessed = run_checks(
+        intent,
+        contract,
+        execution,
+        match,
+        receipt=receipt,
+        delivery=_delivery_assessment(DeliveryStatus.NOT_ASSESSED),
+    )
+
+    assert assessed == baseline
+    assert all(finding.check_id != "delivery" for finding in assessed)
+    assert derive_verdict(assessed).value == "VERIFIED"

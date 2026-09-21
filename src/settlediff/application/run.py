@@ -53,9 +53,11 @@ from settlediff.contextdev.client import (
     eligible_evidence_url,
 )
 from settlediff.domain.checks import run_checks
+from settlediff.domain.delivery import assess_delivery
 from settlediff.domain.matching import MatchResult, MatchStatus, match_activity
 from settlediff.domain.models import (
     ArtifactType,
+    DeliveryObservation,
     EvidenceArtifact,
     ExecutionRecord,
     ExplanationRecord,
@@ -237,6 +239,7 @@ class LiveEvidenceCollector:
         self._activity: EvidenceArtifact | None = None
         self._context: EvidenceArtifact | None = None
         self._recovery: EvidenceArtifact | None = None
+        self._delivery_observation: DeliveryObservation | None = None
         self._transaction_reference: str | None = None
 
     @property
@@ -373,6 +376,7 @@ class LiveEvidenceCollector:
                 redacted=False,
                 data=execution_evidence.provider_receipt,
             )
+        self._delivery_observation = execution_evidence.delivery_observation
         self._transaction_reference = execution_evidence.transaction_reference
         if execution_evidence.submission_uncertain:
             raise SubmissionUncertainError(
@@ -469,18 +473,26 @@ class LiveEvidenceCollector:
             requested_service=contract.vendor_slug,
             created_at=datetime.now(UTC),
         )
-        findings = run_checks(intent, contract, execution, matched, receipt=receipt)
+        delivery = assess_delivery(
+            contract.response_contract,
+            self._delivery_observation,
+            contract_evidence_id=self._contract.artifact_id,
+        )
+        findings = run_checks(
+            intent, contract, execution, matched, receipt=receipt, delivery=delivery
+        )
         report = MachineReport(
-            schema_version=3 if contract.response_contract is not None else 2,
+            schema_version=3,
             run_id=request.run_id,
             intent=intent,
             contract=contract,
             execution=execution,
             ledger=matched.matched,
             findings=findings,
-            verdict=derive_verdict(findings),
+            verdict=derive_verdict(findings, delivery=delivery),
             receipt=receipt,
             adapter_id=self._adapter.adapter_id,
+            delivery=delivery,
         )
         if execution is not None:
             await self._collect_context(request, execution)

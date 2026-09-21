@@ -156,3 +156,28 @@ def test_redact_artifact_is_idempotent(data: dict[str, str]) -> None:
     twice = redact_artifact(once)
 
     assert twice == once
+
+
+def test_only_the_persisted_contract_digest_key_survives_hex_masking() -> None:
+    artifact = EvidenceArtifact(
+        artifact_id="artifact_syn_digest",
+        artifact_type=ArtifactType.SERVICE_CONTRACT,
+        source="synthetic_fixture",
+        collected_at=NOW,
+        redacted=False,
+        data={
+            "response_contract_digest": "a" * 64,
+            "body_digest": "b" * 64,
+            "content_sha256": "c" * 64,
+            "credential_digest": "d" * 64,
+            "credential": "e" * 64,
+        },
+    )
+
+    redacted = cast(dict[str, JsonValue], redact_artifact(artifact).data)
+
+    assert redacted["response_contract_digest"] == "a" * 64
+    assert redacted["body_digest"] == "bbbb…bbbb"
+    assert redacted["content_sha256"] == "cccc…cccc"
+    assert redacted["credential_digest"] == "dddd…dddd"
+    assert redacted["credential"] == "[REDACTED]"

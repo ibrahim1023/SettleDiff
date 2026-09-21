@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from settlediff.domain.models import CheckStatus, Finding, Verdict
+from settlediff.domain.models import (
+    CheckStatus,
+    DeliveryAssessment,
+    DeliveryStatus,
+    Finding,
+    Verdict,
+)
 
 PRECEDENCE = (
     Verdict.PAYMENT_FAILURE,
@@ -13,11 +19,19 @@ PRECEDENCE = (
 )
 
 
-def derive_verdict(findings: tuple[Finding, ...]) -> Verdict:
+def derive_verdict(
+    findings: tuple[Finding, ...], *, delivery: DeliveryAssessment | None = None
+) -> Verdict:
     """Apply explicit precedence independent of finding order."""
     check_statuses = {finding.check_id: finding.status for finding in findings}
     if check_statuses.get("settlement") is CheckStatus.FAIL:
         return Verdict.PAYMENT_FAILURE
+    if (
+        check_statuses.get("settlement") is CheckStatus.PASS
+        and delivery is not None
+        and delivery.status is DeliveryStatus.FAILED
+    ):
+        return Verdict.PAID_FAILURE
     if check_statuses.get("paid_failure") is CheckStatus.FAIL:
         return Verdict.PAID_FAILURE
     if check_statuses.get("ledger_outcome") is CheckStatus.FAIL:

@@ -231,6 +231,15 @@ async def test_adapter_revalidates_terms_and_keeps_provider_and_independent_evid
     execution = cast(dict[str, JsonValue], executed.data)
     assert execution["upstream_http_status"] == 200
     assert execution["response_body"] == {"result": "synthetic"}
+    observation = executed.delivery_observation
+    assert observation is not None
+    assert observation.status_code == 200
+    assert observation.media_type == "application/json"
+    assert observation.received_bytes == 21
+    assert observation.truncated is False
+    assert observation.parsed_body == {"result": "synthetic"}
+    assert observation.evidence_ids == (f"{value.run_id}:execution",)
+    assert observation.observed_at.tzinfo is UTC
     assert executed.provider_receipt is not None
     assert executed.transaction_reference == TX_HASH
     assert executed.submission_uncertain is False
@@ -360,6 +369,7 @@ async def test_missing_service_response_maps_to_unknown_execution_evidence() -> 
     execution = cast(dict[str, JsonValue], executed.data)
     assert execution["upstream_http_status"] is None
     assert execution["response_body"] is None
+    assert executed.delivery_observation is None
 
 
 @pytest.mark.asyncio

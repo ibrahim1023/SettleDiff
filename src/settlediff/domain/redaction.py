@@ -46,6 +46,7 @@ IDENTIFIER_KEYS = {
     "wallet",
     "walletaddress",
 }
+_UNMASKED_DIGEST_KEYS = frozenset({"responsecontractdigest"})
 
 
 def normalize_key(key: str) -> str:
@@ -112,6 +113,8 @@ def redact_value(
         items = cast(list[JsonValue], value)
         return [redact_value(item, mask_keyed_identifiers=mask_keyed_identifiers) for item in items]
     if isinstance(value, str):
+        if normalized_key in _UNMASKED_DIGEST_KEYS:
+            return value
         return redact_embedded_identifiers(value)
     return value
 

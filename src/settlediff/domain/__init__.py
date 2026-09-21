@@ -1,6 +1,7 @@
 """Deterministic SettleDiff domain types and rules."""
 
 from settlediff.domain.checks import run_checks
+from settlediff.domain.delivery import assess_delivery
 from settlediff.domain.matching import (
     MatchConfidence,
     MatchResult,
@@ -58,6 +59,7 @@ __all__ = [
     "Severity",
     "UnitMismatchError",
     "Verdict",
+    "assess_delivery",
     "mask_identifier",
     "match_activity",
     "derive_verdict",

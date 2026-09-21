@@ -14,6 +14,9 @@ from settlediff.application.run import RunEvent, RunFailure, RunProvenance, RunS
 from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
+    DeliveryAssessment,
+    DeliveryObservation,
+    DeliveryStatus,
     EvidenceArtifact,
     ExplanationRecord,
     ExplanationSource,
@@ -418,4 +421,57 @@ def test_explanation_failure_rolls_back_report_events_and_artifacts(tmp_path: Pa
     assert repository.events(report.run_id) == timeline.events
     assert repository.artifacts(report.run_id) == (artifact.model_copy(update={"redacted": True}),)
     assert repository.explanation(report.run_id) == explanation
+    repository.close()
+
+
+def test_schema3_delivery_observation_is_redacted_without_losing_exact_evidence(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "reports.sqlite3"
+    original = replay_fixture(Path("fixtures/clean-success"))
+    observation = DeliveryObservation(
+        observed_at=datetime(2026, 9, 1, tzinfo=UTC),
+        status_code=200,
+        media_type="application/json",
+        received_bytes=64,
+        truncated=False,
+        parsed_body={
+            "result": "synthetic",
+            "api_key": CANARY,
+            "wallet_address": "0x3333333333333333333333333333333333333333",
+        },
+        evidence_ids=("syn_run:execution",),
+    )
+    delivery = DeliveryAssessment(
+        status=DeliveryStatus.SATISFIED,
+        reason_code="DELIVERY_SATISFIED",
+        evidence_ids=("syn_run:contract", "syn_run:execution"),
+        observation=observation,
+        response_contract_digest="a" * 64,
+    )
+    report = original.model_copy(update={"schema_version": 3, "delivery": delivery})
+    repository = SQLiteReportRepository(database)
+
+    repository.save(report)
+
+    with closing(sqlite3.connect(database)) as connection:
+        stored_json = cast(
+            str,
+            connection.execute(
+                "SELECT report_json FROM reports WHERE run_id = ?", (report.run_id,)
+            ).fetchone()[0],
+        )
+    loaded = repository.get(report.run_id)
+    assert loaded is not None
+    assert loaded == redact_report(report)
+    assert loaded.delivery is not None
+    assert loaded.delivery.observation is not None
+    assert loaded.delivery.observation.status_code == 200
+    assert loaded.delivery.observation.received_bytes == 64
+    assert loaded.delivery.observation.truncated is False
+    parsed = cast(dict[str, object], loaded.delivery.observation.parsed_body)
+    assert CANARY not in stored_json
+    assert "0x3333333333333333333333333333333333333333" not in stored_json
+    assert parsed["api_key"] == "[REDACTED]"
+    assert parsed["wallet_address"] == "0x3333…3333"
     repository.close()

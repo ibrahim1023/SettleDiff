@@ -1,0 +1,117 @@
+{
+  "contract": {
+    "media_type": "application/json",
+    "json_schema": {
+      "type": "object",
+      "required": ["result"],
+      "properties": {"result": {"type": "string"}}
+    },
+    "source_fields": ["resource.mimeType", "extensions.bazaar.schema"]
+  },
+  "cases": [
+    {
+      "name": "valid JSON response satisfies the advertised contract",
+      "observation": {
+        "observed_at": "2026-09-01T00:00:00Z",
+        "status_code": 200,
+        "media_type": "application/json",
+        "received_bytes": 21,
+        "truncated": false,
+        "parsed_body": {"result": "synthetic"},
+        "evidence_ids": ["syn_run:execution"]
+      },
+      "expected_status": "SATISFIED",
+      "expected_reason": "DELIVERY_SATISFIED"
+    },
+    {
+      "name": "HTTP 500 fails delivery",
+      "observation": {
+        "observed_at": "2026-09-01T00:00:00Z",
+        "status_code": 500,
+        "media_type": "application/json",
+        "received_bytes": 21,
+        "truncated": false,
+        "parsed_body": {"result": "synthetic"},
+        "evidence_ids": ["syn_run:execution"]
+      },
+      "expected_status": "FAILED",
+      "expected_reason": "HTTP_STATUS_NOT_SUCCESS"
+    },
+    {
+      "name": "empty response body is unknown",
+      "observation": {
+        "observed_at": "2026-09-01T00:00:00Z",
+        "status_code": 200,
+        "media_type": "application/json",
+        "received_bytes": 0,
+        "truncated": false,
+        "parsed_body": null,
+        "evidence_ids": ["syn_run:execution"]
+      },
+      "expected_status": "UNKNOWN",
+      "expected_reason": "BODY_MISSING"
+    },
+    {
+      "name": "wrong media type fails delivery",
+      "observation": {
+        "observed_at": "2026-09-01T00:00:00Z",
+        "status_code": 200,
+        "media_type": "text/plain",
+        "received_bytes": 21,
+        "truncated": false,
+        "parsed_body": {"result": "synthetic"},
+        "evidence_ids": ["syn_run:execution"]
+      },
+      "expected_status": "FAILED",
+      "expected_reason": "MEDIA_TYPE_MISMATCH"
+    },
+    {
+      "name": "invalid JSON bytes without a parsed body is unknown",
+      "observation": {
+        "observed_at": "2026-09-01T00:00:00Z",
+        "status_code": 200,
+        "media_type": "application/json",
+        "received_bytes": 9,
+        "truncated": false,
+        "parsed_body": null,
+        "evidence_ids": ["syn_run:execution"]
+      },
+      "expected_status": "UNKNOWN",
+      "expected_reason": "BODY_MISSING"
+    },
+    {
+      "name": "parsed body violating the advertised schema fails",
+      "observation": {
+        "observed_at": "2026-09-01T00:00:00Z",
+        "status_code": 200,
+        "media_type": "application/json",
+        "received_bytes": 15,
+        "truncated": false,
+        "parsed_body": {"result": 7},
+        "evidence_ids": ["syn_run:execution"]
+      },
+      "expected_status": "FAILED",
+      "expected_reason": "SCHEMA_MISMATCH"
+    },
+    {
+      "name": "truncated response stays unknown even with another mismatch",
+      "observation": {
+        "observed_at": "2026-09-01T00:00:00Z",
+        "status_code": 500,
+        "media_type": "text/plain",
+        "received_bytes": 2000000,
+        "truncated": true,
+        "parsed_body": null,
+        "evidence_ids": ["syn_run:execution"]
+      },
+      "expected_status": "UNKNOWN",
+      "expected_reason": "RESPONSE_TRUNCATED"
+    },
+    {
+      "name": "missing observation is unknown",
+      "observation": null,
+      "expected_status": "UNKNOWN",
+      "expected_reason": "RESPONSE_EVIDENCE_MISSING"
+    }
+  ]
+}

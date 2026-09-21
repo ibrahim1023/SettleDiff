@@ -5,6 +5,8 @@ from __future__ import annotations
 from settlediff.domain.matching import MatchConfidence, MatchResult, MatchStatus
 from settlediff.domain.models import (
     CheckStatus,
+    DeliveryAssessment,
+    DeliveryStatus,
     EvidenceValue,
     ExecutionRecord,
     ExpectedContract,
@@ -25,6 +27,7 @@ def run_checks(
     match: MatchResult,
     *,
     receipt: PaymentReceipt | None = None,
+    delivery: DeliveryAssessment | None = None,
 ) -> tuple[Finding, ...]:
     """Run the fixed verification suite without I/O, model calls, or check dependencies."""
     network_present = any(
@@ -63,6 +66,39 @@ def run_checks(
         _paid_failure(execution, match, receipt),
         _ledger_outcome(execution, match, receipt),
         _activity_persistence(match),
+        *(_delivery(delivery) if _assesses_delivery(delivery) else ()),
+    )
+
+
+def _assesses_delivery(delivery: DeliveryAssessment | None) -> bool:
+    return delivery is not None and delivery.status is not DeliveryStatus.NOT_ASSESSED
+
+
+def _delivery(delivery: DeliveryAssessment | None) -> tuple[Finding, ...]:
+    assert delivery is not None
+    if delivery.status is DeliveryStatus.SATISFIED:
+        severity = Severity.INFO
+        status = CheckStatus.PASS
+        message = "Delivered response satisfies the advertised response contract."
+    elif delivery.status is DeliveryStatus.FAILED:
+        severity = Severity.HIGH
+        status = CheckStatus.FAIL
+        message = "Delivered response violates the advertised response contract."
+    else:
+        severity = Severity.WARNING
+        status = CheckStatus.UNKNOWN
+        message = "Delivery evidence is unavailable or incomplete for the advertised contract."
+    return (
+        _finding(
+            "delivery",
+            severity,
+            status,
+            DeliveryStatus.SATISFIED.value,
+            delivery.status.value,
+            message,
+            delivery.evidence_ids,
+            ("delivery.status",),
+        ),
     )
 
 

@@ -18,6 +18,7 @@ from settlediff.application.auth import (
 from settlediff.application.payment_rails import AdapterEvidence, AdapterProtocolError
 from settlediff.domain.models import (
     ArtifactType,
+    DeliveryObservation,
     ExecutionRecord,
     ExpectedContract,
     LedgerStatus,
@@ -112,6 +113,7 @@ class X402Adapter:
             payment_terms_digest=terms.digest,
         )
         result = await self._signer.execute_once(signer_request)
+        observation = _delivery_observation(result, request)
         try:
             returned_requirement = self._require_returned_terms(result, request, terms)
             provider_receipt = self._provider_receipt(
@@ -134,7 +136,9 @@ class X402Adapter:
                 observed.observed_at,
                 force_unknown=True,
             )
-            return _execution_evidence(result, execution, observed.observed_at, None, True)
+            return _execution_evidence(
+                result, execution, observed.observed_at, None, True, observation
+            )
         self._recovery = await recover_x402_submission(
             result,
             self._rpc,
@@ -156,6 +160,7 @@ class X402Adapter:
             observed.observed_at,
             provider_receipt,
             result.submission_state is SignerSubmissionState.SUBMISSION_UNCERTAIN,
+            observation,
         )
 
     async def collect_activity(self) -> AdapterEvidence:
@@ -257,12 +262,30 @@ class X402Adapter:
             ) from error
 
 
+def _delivery_observation(
+    result: ExternalSignerResult, request: PaidExecutionRequest
+) -> DeliveryObservation | None:
+    service_response = result.service_response
+    if service_response is None:
+        return None
+    return DeliveryObservation(
+        observed_at=datetime.now(UTC),
+        status_code=service_response.status,
+        media_type=service_response.media_type,
+        received_bytes=service_response.received_bytes,
+        truncated=service_response.truncated,
+        parsed_body=service_response.parsed_body,
+        evidence_ids=(f"{request.run_id}:execution",),
+    )
+
+
 def _execution_evidence(
     result: ExternalSignerResult,
     execution: ExecutionRecord,
     observed_at: datetime,
     provider_receipt: PaymentReceipt | None,
     submission_uncertain: bool,
+    delivery_observation: DeliveryObservation | None,
 ) -> AdapterEvidence:
     return AdapterEvidence(
         adapter_id="x402",
@@ -280,6 +303,7 @@ def _execution_evidence(
             if provider_receipt is not None
             else None
         ),
+        delivery_observation=delivery_observation,
     )
 
 

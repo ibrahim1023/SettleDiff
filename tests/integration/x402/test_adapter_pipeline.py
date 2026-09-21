@@ -135,7 +135,22 @@ async def test_offline_pipeline_composes_http_signer_rpc_and_canonical_verifier(
     assert count_path.read_text() == "1"
     assert rpc_methods == ["eth_chainId", "eth_getTransactionReceipt"]
     assert report.adapter_id == "x402"
+    assert report.schema_version == 3
     assert report.verdict is Verdict.VERIFIED
+    assert report.delivery is not None
+    assert report.delivery.status.value == "SATISFIED"
+    assert report.delivery.reason_code == "DELIVERY_SATISFIED"
+    observation = report.delivery.observation
+    assert observation is not None
+    assert observation.status_code == 200
+    assert observation.media_type == "application/json"
+    assert observation.truncated is False
+    assert observation.received_bytes > 0
+    assert observation.evidence_ids == ("syn_x402_pipeline:execution",)
+    delivery_finding = next(
+        finding for finding in report.findings if finding.check_id == "delivery"
+    )
+    assert delivery_finding.status.value == "PASS"
     assert report.receipt is not None
     assert report.receipt.settlement_status is SettlementStatus.SETTLED
     assert report.ledger is not None
