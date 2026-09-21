@@ -634,8 +634,9 @@ def test_live_signer_launch_failure_remains_visible_without_traceback(
     repository.close()
 
 
+@pytest.mark.parametrize("failure_kind", ["sqlite", "timeline"])
 def test_live_run_renders_in_memory_report_when_persistence_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_kind: str
 ) -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     explanation = ExplanationRecord(
@@ -667,7 +668,8 @@ def test_live_run_renders_in_memory_report_when_persistence_fails(
             pass
 
         def finalize_run(self, *_args: object, **_kwargs: object) -> None:
-            raise sqlite3.OperationalError("syn-sensitive-storage-detail")
+            if failure_kind == "sqlite":
+                raise sqlite3.OperationalError("syn-sensitive-storage-detail")
 
         def close(self) -> None:
             pass
@@ -676,6 +678,12 @@ def test_live_run_renders_in_memory_report_when_persistence_fails(
     monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
     monkeypatch.setattr("settlediff.cli._execute_live_run", completed_run)
     monkeypatch.setattr("settlediff.cli.SQLiteReportRepository", FailingRepository)
+    if failure_kind == "timeline":
+
+        def unbounded_source(*_args: object, **_kwargs: object) -> object:
+            raise ValueError("syn-sensitive-timeline-detail")
+
+        monkeypatch.setattr("settlediff.cli.build_evidence_timeline", unbounded_source)
 
     result = runner.invoke(
         app,
@@ -697,6 +705,8 @@ def test_live_run_renders_in_memory_report_when_persistence_fails(
     assert '"verdict":"VERIFIED"' in result.stdout
     assert "durable run remains available" in result.stderr
     assert "syn-sensitive-storage-detail" not in result.stderr
+    assert "syn-sensitive-timeline-detail" not in result.stderr
+    assert "Traceback" not in result.output
 
 
 def test_show_renders_persisted_explanation_without_recomputing(tmp_path: Path) -> None:

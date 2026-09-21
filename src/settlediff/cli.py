@@ -55,6 +55,7 @@ from settlediff.application.run import (
     RunState,
     SubmissionRecovery,
 )
+from settlediff.application.timeline import build_evidence_timeline
 from settlediff.config import Settings
 from settlediff.contextdev.client import ContextDevClient
 from settlediff.domain.models import (
@@ -605,8 +606,11 @@ def run(
                     repository.finalize_run(
                         outcome.report,
                         explanation=outcome.explanation,
+                        timeline=build_evidence_timeline(
+                            outcome.report, outcome.events, collector.artifacts
+                        ),
                     )
-            except (OSError, sqlite3.Error):
+            except (OSError, sqlite3.Error, ValueError):
                 persistence_failed = True
                 typer.echo(
                     "Critical: report finalization failed; the durable run remains available.",

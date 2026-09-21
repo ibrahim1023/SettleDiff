@@ -18,6 +18,11 @@ from settlediff.application.run import (
     RunRecord,
     RunState,
 )
+from settlediff.application.timeline import (
+    EvidenceTimelineEvent,
+    build_evidence_timeline,
+    redact_timeline_event,
+)
 from settlediff.domain.models import EvidenceArtifact, ExplanationRecord, MachineReport
 from settlediff.domain.redaction import (
     redact_artifact,
@@ -180,11 +185,26 @@ class SQLiteReportRepository:
             if updated.rowcount != 1:
                 raise ValueError("run record not found")
 
+    def _insert_timeline(self, run_id: str, timeline: tuple[EvidenceTimelineEvent, ...]) -> None:
+        if not timeline:
+            raise ValueError("final evidence timeline cannot be empty")
+        for position, event in enumerate(timeline):
+            if event.sequence != position:
+                raise ValueError("timeline event sequence does not match its position")
+        self._connection.executemany(
+            "INSERT INTO evidence_timeline_events(run_id, sequence, event_json) VALUES (?, ?, ?)",
+            (
+                (run_id, event.sequence, redact_timeline_event(event).model_dump_json())
+                for event in timeline
+            ),
+        )
+
     def finalize_run(
         self,
         report: MachineReport,
         *,
         explanation: ExplanationRecord | None,
+        timeline: tuple[EvidenceTimelineEvent, ...],
     ) -> None:
         persisted_report = redact_report(report)
         persisted_explanation = (
@@ -220,6 +240,7 @@ class SQLiteReportRepository:
                     "INSERT INTO explanations(run_id, explanation_json) VALUES (?, ?)",
                     (report.run_id, persisted_explanation.model_dump_json()),
                 )
+            self._insert_timeline(report.run_id, timeline)
 
     def save(
         self,
@@ -300,6 +321,15 @@ class SQLiteReportRepository:
                     "INSERT INTO run_record_explanations(run_id, explanation_json) VALUES (?, ?)",
                     (report.run_id, explanation_json),
                 )
+            has_timeline = self._connection.execute(
+                "SELECT 1 FROM evidence_timeline_events WHERE run_id = ? LIMIT 1",
+                (report.run_id,),
+            ).fetchone()
+            if has_timeline is None:
+                self._insert_timeline(
+                    report.run_id,
+                    build_evidence_timeline(persisted_report, events, persisted_artifacts),
+                )
 
     def record(self, run_id: str) -> RunRecord | None:
         with self._lock:
@@ -356,6 +386,18 @@ class SQLiteReportRepository:
                 (run_id,),
             ).fetchall()
         return tuple(RunEvent.model_validate_json(cast(str, row[0])) for row in rows)
+
+    def timeline(self, run_id: str) -> tuple[EvidenceTimelineEvent, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT event_json FROM evidence_timeline_events "
+                "WHERE run_id = ? ORDER BY sequence",
+                (run_id,),
+            ).fetchall()
+        return tuple(
+            EvidenceTimelineEvent.model_validate_json(cast(str, row[0]), strict=True)
+            for row in rows
+        )
 
     def artifacts(self, run_id: str) -> tuple[EvidenceArtifact, ...]:
         with self._lock:

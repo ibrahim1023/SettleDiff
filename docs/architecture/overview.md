@@ -150,7 +150,7 @@ high-confidence, the canonical status is `CONFIRMED`, and a normalized amount is
 
 ### Storage
 
-SQLite schema 4 creates a durable run record before live preflight, appends redacted events and artifacts during execution, and attaches the final report and explanation when available. Failed and refused runs remain inspectable without a final report. Every run records `fixture`, `controlled_live`, or `external_live` provenance. Fixtures remain versioned JSON so CI and demos do not depend on a database.
+SQLite schema 5 creates a durable run record before live preflight, appends redacted events and artifacts during execution, and attaches the final report, explanation, and immutable evidence timeline when available. Timeline rows are insert-only: they are written once in the same transaction as the final report and are never updated or deleted individually. Timeline source timestamps are used only when canonical evidence supplies them; otherwise observation time and generation order provide a deterministic supported partial order, not a claim of exact chronology. Failed and refused runs remain inspectable without a final report. Every run records `fixture`, `controlled_live`, or `external_live` provenance. Fixtures remain versioned JSON so CI and demos do not depend on a database.
 
 ### Interfaces
 

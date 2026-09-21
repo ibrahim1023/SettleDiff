@@ -11,6 +11,10 @@ import pytest
 
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import RunEvent, RunFailure, RunProvenance, RunState, RunTimeline
+from settlediff.application.timeline import (
+    EvidenceTimelineEvent,
+    build_evidence_timeline,
+)
 from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
@@ -81,11 +85,15 @@ def test_live_run_is_durable_before_final_report(tmp_path: Path) -> None:
     assert active.failure == failure
     assert repository.artifacts(report.run_id)[0].redacted
 
-    repository.finalize_run(report, explanation=None)
+    timeline = build_evidence_timeline(
+        report, repository.events(report.run_id), repository.artifacts(report.run_id)
+    )
+    repository.finalize_run(report, explanation=None, timeline=timeline)
 
     completed = repository.record(report.run_id)
     assert completed is not None
     assert completed.report == redact_report(report)
+    assert repository.timeline(report.run_id) == timeline
     assert completed.latest_state is RunState.COMPLETE
     assert completed.failure is None
     repository.close()
@@ -474,4 +482,203 @@ def test_schema3_delivery_observation_is_redacted_without_losing_exact_evidence(
     assert "0x3333333333333333333333333333333333333333" not in stored_json
     assert parsed["api_key"] == "[REDACTED]"
     assert parsed["wallet_address"] == "0x3333…3333"
+    repository.close()
+
+
+def test_migration_five_is_applied_and_idempotent(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    repository = SQLiteReportRepository(database)
+
+    with closing(sqlite3.connect(database)) as connection:
+        versions = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
+        columns = connection.execute("PRAGMA table_info(evidence_timeline_events)").fetchall()
+
+    assert 5 in versions
+    assert {column[1] for column in columns} == {"run_id", "sequence", "event_json"}
+    SQLiteReportRepository(database).close()
+    repository.close()
+
+
+def test_save_persists_timeline_and_repeat_save_never_mutates_it(tmp_path: Path) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+
+    repository.save(report)
+    first = repository.timeline(report.run_id)
+    repository.save(report)
+    second = repository.timeline(report.run_id)
+
+    assert first
+    assert first == second
+    assert first[0].source == "settlediff.intent"
+    assert [event.sequence for event in first] == list(range(len(first)))
+    repository.close()
+
+
+def test_finalize_run_persists_report_and_timeline_atomically(tmp_path: Path) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    created_at = datetime(2026, 9, 3, tzinfo=UTC)
+    repository.begin_run(
+        report.run_id,
+        task=report.intent.task,
+        provenance=RunProvenance.EXTERNAL_LIVE,
+        created_at=created_at,
+    )
+    timeline = build_evidence_timeline(report, repository.events(report.run_id), ())
+
+    repository.finalize_run(report, explanation=None, timeline=timeline)
+
+    assert repository.get(report.run_id) == redact_report(report)
+    persisted = repository.timeline(report.run_id)
+    assert persisted == build_evidence_timeline(
+        redact_report(report), repository.events(report.run_id), ()
+    )
+    assert [event.sequence for event in persisted] == list(range(len(persisted)))
+    repository.close()
+
+
+def test_invalid_timeline_insert_rolls_back_finalization(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(database)
+    created_at = datetime(2026, 9, 3, tzinfo=UTC)
+    repository.begin_run(
+        report.run_id,
+        task=report.intent.task,
+        provenance=RunProvenance.EXTERNAL_LIVE,
+        created_at=created_at,
+    )
+    valid = build_evidence_timeline(report, repository.events(report.run_id), ())
+    duplicate = valid[:1] + valid[:1]
+
+    with pytest.raises((ValueError, sqlite3.IntegrityError)):
+        repository.finalize_run(report, explanation=None, timeline=duplicate)
+
+    record = repository.record(report.run_id)
+    assert record is not None
+    assert record.report is None
+    assert repository.timeline(report.run_id) == ()
+    repository.close()
+
+
+def test_empty_final_timeline_rolls_back_finalization(tmp_path: Path) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    created_at = datetime(2026, 9, 3, tzinfo=UTC)
+    repository.begin_run(
+        report.run_id,
+        task=report.intent.task,
+        provenance=RunProvenance.EXTERNAL_LIVE,
+        created_at=created_at,
+    )
+
+    with pytest.raises(ValueError, match="timeline cannot be empty"):
+        repository.finalize_run(report, explanation=None, timeline=())
+
+    record = repository.record(report.run_id)
+    assert record is not None
+    assert record.report is None
+    assert repository.timeline(report.run_id) == ()
+    repository.close()
+
+
+def test_manually_built_timeline_events_are_redacted_before_insert(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(database)
+    created_at = datetime(2026, 9, 3, tzinfo=UTC)
+    repository.begin_run(
+        report.run_id,
+        task=report.intent.task,
+        provenance=RunProvenance.EXTERNAL_LIVE,
+        created_at=created_at,
+    )
+    event = EvidenceTimelineEvent(
+        sequence=0,
+        source_time=None,
+        observed_at=created_at,
+        source="synthetic.manual",
+        artifact_ids=(),
+        finding_ids=(),
+        attributes={
+            "event": "artifact_observed",
+            "status_code": 200,
+            "api_key": CANARY,
+            "wallet_address": "0x3333333333333333333333333333333333333333",
+            "note": "saw 0x9999999999999999999999999999999999999999 embedded",
+        },
+    )
+
+    repository.finalize_run(report, explanation=None, timeline=(event,))
+
+    persisted = repository.timeline(report.run_id)
+    assert len(persisted) == 1
+    assert persisted != (event,)
+    attributes = persisted[0].attributes
+    assert attributes["status_code"] == 200
+    assert attributes["api_key"] == "[REDACTED]"
+    assert attributes["wallet_address"] == "0x3333…3333"
+    assert attributes["note"] == "saw 0x9999…9999 embedded"
+    assert event.attributes["api_key"] == CANARY
+    with closing(sqlite3.connect(database)) as connection:
+        stored_json = cast(
+            str,
+            connection.execute(
+                "SELECT event_json FROM evidence_timeline_events WHERE run_id = ?",
+                (report.run_id,),
+            ).fetchone()[0],
+        )
+    assert CANARY not in stored_json
+    assert "0x3333333333333333333333333333333333333333" not in stored_json
+    repository.close()
+
+
+def test_timeline_sequence_order_and_run_delete_cascade(tmp_path: Path) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    database = tmp_path / "reports.sqlite3"
+    repository = SQLiteReportRepository(database)
+    repository.save(report)
+    persisted = repository.timeline(report.run_id)
+    assert [event.sequence for event in persisted] == list(range(len(persisted)))
+
+    assert repository.delete(report.run_id)
+
+    assert repository.timeline(report.run_id) == ()
+    with closing(sqlite3.connect(database)) as connection:
+        remaining = connection.execute(
+            "SELECT COUNT(*) FROM evidence_timeline_events WHERE run_id = ?",
+            (report.run_id,),
+        ).fetchone()[0]
+    assert remaining == 0
+    repository.close()
+
+
+def test_partial_run_exposes_events_and_artifacts_with_empty_timeline(
+    tmp_path: Path,
+) -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    created_at = datetime(2026, 9, 3, tzinfo=UTC)
+    artifact = EvidenceArtifact(
+        artifact_id=f"{report.run_id}:preflight",
+        artifact_type=ArtifactType.SERVICE_CONTRACT,
+        source="synthetic.live",
+        collected_at=created_at,
+        redacted=False,
+        data={"recipient": "syn_live_recipient"},
+    )
+    repository.begin_run(
+        report.run_id,
+        task=report.intent.task,
+        provenance=RunProvenance.EXTERNAL_LIVE,
+        created_at=created_at,
+    )
+    repository.save_artifacts(report.run_id, (artifact,))
+
+    assert repository.timeline(report.run_id) == ()
+    assert repository.events(report.run_id)
+    assert repository.artifacts(report.run_id)
     repository.close()

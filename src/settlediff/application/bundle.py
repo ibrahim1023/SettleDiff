@@ -13,7 +13,7 @@ from settlediff.domain.models import EvidenceArtifact, ExplanationRecord, Machin
 from settlediff.domain.redaction import redact_artifact
 from settlediff.domain.verdict import derive_verdict
 
-DATABASE_SCHEMA_VERSION = 4
+DATABASE_SCHEMA_VERSION = 5
 X402_PROTOCOL_VERSION = "2"
 X402_SIGNER_SCHEMA_VERSION = 3
 
