@@ -70,6 +70,7 @@ from settlediff.domain.drift import (
 from settlediff.domain.models import (
     ArtifactType,
     EvidenceArtifact,
+    ExpectedContract,
     ExplanationRecord,
     ExplanationSource,
     MachineReport,
@@ -83,8 +84,17 @@ from settlediff.perflo.client import PerfloClient, PerfloClientError
 from settlediff.storage.sqlite import SQLiteReportRepository
 from settlediff.telemetry.setup import TelemetryRuntime, configure_telemetry
 from settlediff.x402.adapter import X402Adapter
+from settlediff.x402.bazaar import (
+    BazaarAssessment,
+    BazaarFieldCheck,
+    BazaarStatus,
+    assess_bazaar,
+)
 from settlediff.x402.client import X402ClientError, X402ExternalClient, probe_x402_signer
-from settlediff.x402.http import X402ResourceClient
+from settlediff.x402.http import X402ResourceClient, X402ResourceResponse
+from settlediff.x402.models import PaymentRequired
+from settlediff.x402.normalize import normalize_payment_required
+from settlediff.x402.parser import X402ProtocolError, decode_payment_required
 from settlediff.x402.rpc import X402RpcClient
 from settlediff.x402.urls import is_safe_x402_target
 
@@ -940,6 +950,112 @@ def drift(
     typer.echo(f"Changes: {', '.join(result.change_codes) if result.change_codes else 'none'}")
     typer.echo(f"Previous: {result.previous_snapshot_digest or 'none'}")
     typer.echo(f"Current: {result.current_snapshot_digest}")
+    typer.echo("External calls: 1")
+    typer.echo("Paid calls: 0")
+
+
+async def _bazaar_challenge(endpoint: str) -> X402ResourceResponse:
+    request = PaidExecutionRequest(
+        run_id=f"inspection_{uuid4().hex}",
+        target=endpoint,
+        method="GET",
+        body=None,
+        budget=Money(amount=Decimal(1), unit="USDC"),
+    )
+    client = httpx.AsyncClient(follow_redirects=False)
+    try:
+        return await X402ResourceClient(client).challenge(request)
+    finally:
+        await client.aclose()
+
+
+def _unsupported_bazaar(check_id: str, run_id: str | None) -> BazaarAssessment:
+    checks = (
+        BazaarFieldCheck(
+            check_id=check_id,
+            status=BazaarStatus.UNSUPPORTED,
+            evidence_ids=("bazaar:challenge",),
+        ),
+    )
+    return BazaarAssessment(status=BazaarStatus.UNSUPPORTED, checks=checks, run_id=run_id)
+
+
+@app.command("bazaar-check")
+def bazaar_check(
+    endpoint: str,
+    database: Path = DATABASE_OPTION,
+    run_id: str | None = typer.Option(None, "--run-id"),
+    json_mode: bool = JSON_OPTION,
+) -> None:
+    """Compare one live x402 Bazaar challenge against persisted evidence."""
+    if not is_safe_x402_target(endpoint):
+        typer.echo(
+            "endpoint requires HTTPS, except loopback HTTP, without credentials or fragment",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    report: MachineReport | None = None
+    if run_id is not None:
+        repository = SQLiteReportRepository(database)
+        try:
+            report = repository.get(run_id)
+        finally:
+            repository.close()
+        if report is None:
+            typer.echo(f"Run {run_id} was not found.", err=True)
+            raise typer.Exit(code=1)
+    try:
+        observed = asyncio.run(_bazaar_challenge(endpoint))
+        if observed.status_code != 402 or observed.payment_required is None:
+            raise ValueError("endpoint did not return an HTTP 402 PAYMENT-REQUIRED challenge")
+        raw = decode_payment_required(observed.payment_required)
+        if raw.get("x402Version") != 2:
+            assessment = _unsupported_bazaar("VERSION", run_id)
+        else:
+            try:
+                required = PaymentRequired.model_validate(raw, strict=True)
+            except ValueError:
+                assessment = _unsupported_bazaar("CHALLENGE", run_id)
+            else:
+                contract: ExpectedContract | None = None
+                try:
+                    contract = normalize_payment_required(
+                        required, request_schema={"method": "GET", "body": None}
+                    )
+                except ValueError:
+                    contract = None
+                assessment = assess_bazaar(
+                    required,
+                    request_method="GET",
+                    current_contract=contract,
+                    paid_report=report,
+                )
+    except (OSError, sqlite3.Error, X402ProtocolError, ValueError) as error:
+        typer.echo(f"Bazaar check failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    payload = {
+        "endpoint": endpoint,
+        "run_id": run_id,
+        "status": assessment.status.value,
+        "checks": [
+            {
+                "check_id": check.check_id,
+                "status": check.status.value,
+                "evidence_ids": list(check.evidence_ids),
+            }
+            for check in assessment.checks
+        ],
+        "external_calls": 1,
+        "paid_calls": 0,
+    }
+    if json_mode:
+        typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return
+    typer.echo(f"Endpoint: {endpoint}")
+    typer.echo(f"Run: {run_id or 'none'}")
+    typer.echo(f"Bazaar status: {assessment.status.value}")
+    for check in assessment.checks:
+        typer.echo(f"{check.check_id}: {check.status.value}")
     typer.echo("External calls: 1")
     typer.echo("Paid calls: 0")
 

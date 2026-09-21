@@ -1,0 +1,43 @@
+{
+  "x402Version": 2,
+  "error": "Payment required",
+  "resource": {
+    "url": "https://example.invalid/weather",
+    "description": "Synthetic weather evidence",
+    "mimeType": "application/json"
+  },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "eip155:84532",
+      "amount": "1000",
+      "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "payTo": "0x1111111111111111111111111111111111111111",
+      "maxTimeoutSeconds": 300,
+      "extra": {
+        "name": "USDC",
+        "version": "2"
+      }
+    }
+  ],
+  "extensions": {
+    "bazaar": {
+      "info": {
+        "input": {
+          "type": "http",
+          "method": "GET"
+        },
+        "output": {
+          "type": "json"
+        }
+      },
+      "schema": {
+        "type": "object",
+        "required": ["result"],
+        "properties": {
+          "result": {"type": "string"}
+        }
+      }
+    }
+  }
+}

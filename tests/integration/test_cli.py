@@ -1337,3 +1337,207 @@ def test_x402_snapshot_uses_inspection_only_adapter(
         repository.close()
     assert len(stored) == 1
     assert stored[0].rail == "x402"
+
+
+def _bazaar_header(payload: dict[str, JsonValue]) -> str:
+    import base64 as _base64
+
+    return _base64.b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
+
+
+def _bazaar_payload(**edits: object) -> dict[str, JsonValue]:
+    payload: dict[str, JsonValue] = json.loads(
+        Path("tests/contract/x402/fixtures/payment-required-bazaar-v2.json").read_text()
+    )
+    for key, value in edits.items():
+        payload[key] = cast(JsonValue, value)
+    return payload
+
+
+def test_bazaar_check_observes_challenge_without_paid_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    header = _bazaar_header(_bazaar_payload())
+
+    class FakeResourceClient:
+        def __init__(self, _client: object) -> None:
+            self.calls: list[object] = []
+
+        async def challenge(self, request: object) -> object:
+            self.calls.append(request)
+            from settlediff.x402.http import X402ResourceResponse
+
+            return X402ResourceResponse(
+                status_code=402,
+                payment_required=header,
+                body=None,
+                observed_at=datetime(2026, 9, 10, tzinfo=UTC),
+            )
+
+    def forbidden_settings(*_args: object, **_kwargs: object) -> Settings:
+        raise AssertionError("bazaar-check must not build live settings")
+
+    def forbidden_adapter(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("bazaar-check must not build adapters")
+
+    monkeypatch.setattr("settlediff.cli.X402ResourceClient", FakeResourceClient)
+    monkeypatch.setattr("settlediff.cli.Settings", forbidden_settings)
+    monkeypatch.setattr("settlediff.cli.X402Adapter", forbidden_adapter)
+    database = tmp_path / "reports.sqlite3"
+    SQLiteReportRepository(database).close()
+    before = database.read_bytes()
+
+    result = runner.invoke(
+        app,
+        [
+            "bazaar-check",
+            "https://example.invalid/weather",
+            "--database",
+            str(database),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "MATCH"
+    assert payload["external_calls"] == 1
+    assert payload["paid_calls"] == 0
+    assert payload["run_id"] is None
+    checks = {check["check_id"]: check["status"] for check in payload["checks"]}
+    assert checks["BAZAAR_EXTENSION"] == "MATCH"
+    assert checks["PAID_EVIDENCE"] == "UNAVAILABLE"
+    assert database.read_bytes() == before
+
+
+def test_bazaar_check_flags_unsupported_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    header = _bazaar_header(_bazaar_payload(x402Version=7))
+
+    class FakeResourceClient:
+        def __init__(self, _client: object) -> None:
+            pass
+
+        async def challenge(self, _request: object) -> object:
+            from settlediff.x402.http import X402ResourceResponse
+
+            return X402ResourceResponse(
+                status_code=402,
+                payment_required=header,
+                body=None,
+                observed_at=datetime(2026, 9, 10, tzinfo=UTC),
+            )
+
+    monkeypatch.setattr("settlediff.cli.X402ResourceClient", FakeResourceClient)
+    database = tmp_path / "reports.sqlite3"
+    SQLiteReportRepository(database).close()
+
+    result = runner.invoke(
+        app,
+        [
+            "bazaar-check",
+            "https://example.invalid/weather",
+            "--database",
+            str(database),
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "UNSUPPORTED"
+    assert [check["check_id"] for check in payload["checks"]] == ["VERSION"]
+
+
+def test_bazaar_check_missing_run_never_observes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[object] = []
+
+    class FakeResourceClient:
+        def __init__(self, _client: object) -> None:
+            pass
+
+        async def challenge(self, request: object) -> object:
+            calls.append(request)
+            raise AssertionError("missing run must not reach the network")
+
+    monkeypatch.setattr("settlediff.cli.X402ResourceClient", FakeResourceClient)
+    database = tmp_path / "reports.sqlite3"
+    SQLiteReportRepository(database).close()
+
+    result = runner.invoke(
+        app,
+        [
+            "bazaar-check",
+            "https://example.invalid/weather",
+            "--database",
+            str(database),
+            "--run-id",
+            "run_missing",
+        ],
+    )
+    assert result.exit_code == 1
+    assert calls == []
+
+
+def test_bazaar_check_compares_persisted_paid_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from settlediff.x402.models import PaymentRequired
+    from settlediff.x402.normalize import normalize_payment_required
+
+    paid_contract = normalize_payment_required(
+        PaymentRequired.model_validate(_bazaar_payload()),
+        request_schema={"method": "GET", "body": None},
+    )
+    report = replay_fixture(Path("fixtures/x402-clean-success")).model_copy(
+        update={"adapter_id": "x402", "contract": paid_contract}
+    )
+    database = tmp_path / "reports.sqlite3"
+    repository = SQLiteReportRepository(database)
+    repository.save(report)
+    repository.close()
+    before = database.read_bytes()
+
+    header = _bazaar_header(_bazaar_payload())
+
+    class FakeResourceClient:
+        def __init__(self, _client: object) -> None:
+            pass
+
+        async def challenge(self, _request: object) -> object:
+            from settlediff.x402.http import X402ResourceResponse
+
+            return X402ResourceResponse(
+                status_code=402,
+                payment_required=header,
+                body=None,
+                observed_at=datetime(2026, 9, 10, tzinfo=UTC),
+            )
+
+    monkeypatch.setattr("settlediff.cli.X402ResourceClient", FakeResourceClient)
+
+    result = runner.invoke(
+        app,
+        [
+            "bazaar-check",
+            "https://example.invalid/weather",
+            "--database",
+            str(database),
+            "--run-id",
+            report.run_id,
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["run_id"] == report.run_id
+    checks = {check["check_id"]: check["status"] for check in payload["checks"]}
+    assert checks["RESOURCE"] == "MATCH"
+    assert checks["RECIPIENT"] == "UNAVAILABLE"
+    assert checks["ASSET"] == "UNAVAILABLE"
+    assert checks["PRICE"] in {"MATCH", "DIFF", "UNAVAILABLE"}
+    assert "PAID_EVIDENCE" not in checks
+    assert database.read_bytes() == before
+    assert "PAID_EVIDENCE" not in checks

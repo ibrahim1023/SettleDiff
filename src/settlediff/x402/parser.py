@@ -7,7 +7,7 @@ import binascii
 import json
 from typing import cast
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from settlediff.x402.models import PaymentRequired, SettlementResponse
 
@@ -34,6 +34,27 @@ def parse_payment_required(
     return _parse_header(
         header,
         PaymentRequired,
+        "PAYMENT-REQUIRED",
+        max_header_bytes=max_header_bytes,
+        max_decoded_bytes=max_decoded_bytes,
+        max_json_depth=max_json_depth,
+        max_json_properties=max_json_properties,
+        max_json_string_bytes=max_json_string_bytes,
+    )
+
+
+def decode_payment_required(
+    header: object,
+    *,
+    max_header_bytes: int = DEFAULT_MAX_HEADER_BYTES,
+    max_decoded_bytes: int = DEFAULT_MAX_DECODED_BYTES,
+    max_json_depth: int = DEFAULT_MAX_JSON_DEPTH,
+    max_json_properties: int = DEFAULT_MAX_JSON_PROPERTIES,
+    max_json_string_bytes: int = DEFAULT_MAX_JSON_STRING_BYTES,
+) -> dict[str, JsonValue]:
+    """Decode a PAYMENT-REQUIRED header to its bounded JSON object, without validation."""
+    return _decode_header(
+        header,
         "PAYMENT-REQUIRED",
         max_header_bytes=max_header_bytes,
         max_decoded_bytes=max_decoded_bytes,
@@ -75,6 +96,31 @@ def _parse_header[ModelT: BaseModel](
     max_json_properties: int,
     max_json_string_bytes: int,
 ) -> ModelT:
+    mapping = _decode_header(
+        header,
+        name,
+        max_header_bytes=max_header_bytes,
+        max_decoded_bytes=max_decoded_bytes,
+        max_json_depth=max_json_depth,
+        max_json_properties=max_json_properties,
+        max_json_string_bytes=max_json_string_bytes,
+    )
+    try:
+        return model.model_validate(mapping, strict=True)
+    except ValidationError as error:
+        raise X402ProtocolError(f"invalid {name} evidence: {error}") from error
+
+
+def _decode_header(
+    header: object,
+    name: str,
+    *,
+    max_header_bytes: int,
+    max_decoded_bytes: int,
+    max_json_depth: int,
+    max_json_properties: int,
+    max_json_string_bytes: int,
+) -> dict[str, JsonValue]:
     if any(
         limit < 1
         for limit in (
@@ -113,10 +159,7 @@ def _parse_header[ModelT: BaseModel](
         raise X402ProtocolError(f"{name} JSON exceeded the property-count limit")
     if _max_json_string_bytes(mapping) > max_json_string_bytes:
         raise X402ProtocolError(f"{name} JSON exceeded the string-size limit")
-    try:
-        return model.model_validate_json(decoded, strict=True)
-    except ValidationError as error:
-        raise X402ProtocolError(f"invalid {name} evidence: {error}") from error
+    return cast(dict[str, JsonValue], mapping)
 
 
 def _json_depth(value: object) -> int:

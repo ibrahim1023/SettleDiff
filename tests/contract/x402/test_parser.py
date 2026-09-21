@@ -11,6 +11,7 @@ import pytest
 from settlediff.x402.models import AlternativePaymentRequirements, PaymentRequirements
 from settlediff.x402.parser import (
     X402ProtocolError,
+    decode_payment_required,
     parse_payment_required,
     parse_payment_response,
 )
@@ -222,3 +223,51 @@ def test_parse_payment_response_rejects_incoherent_or_unsupported_shapes(
 ) -> None:
     with pytest.raises(X402ProtocolError):
         parse_payment_response(encoded(payload))
+
+
+def test_decode_payment_required_returns_bounded_object_without_validation() -> None:
+    payload = challenge()
+    raw = decode_payment_required(encoded(payload))
+    assert raw["x402Version"] == 2
+    assert raw["resource"]["url"] == payload["resource"]["url"]  # type: ignore[index]
+
+    payload["x402Version"] = 7
+    raw = decode_payment_required(encoded(payload))
+    assert raw["x402Version"] == 7
+    with pytest.raises(X402ProtocolError, match="invalid PAYMENT-REQUIRED"):
+        parse_payment_required(encoded(payload))
+
+
+def test_decode_payment_required_enforces_limits_without_validation() -> None:
+    with pytest.raises(X402ProtocolError, match="encoded header limit"):
+        decode_payment_required(encoded(challenge()), max_header_bytes=16)
+    with pytest.raises(X402ProtocolError, match="decoded JSON limit"):
+        decode_payment_required(encoded(challenge()), max_decoded_bytes=64)
+    with pytest.raises(X402ProtocolError, match="depth limit"):
+        decode_payment_required(encoded(challenge()), max_json_depth=2)
+    with pytest.raises(X402ProtocolError, match="property-count limit"):
+        decode_payment_required(encoded(challenge()), max_json_properties=4)
+    with pytest.raises(X402ProtocolError, match="string-size limit"):
+        decode_payment_required(encoded(challenge()), max_json_string_bytes=8)
+    with pytest.raises(X402ProtocolError, match="valid base64"):
+        decode_payment_required("not-base64!!!")
+
+
+def test_decode_payment_required_bounds_oversized_embedded_extension() -> None:
+    payload = challenge()
+    payload["extensions"] = {
+        "bazaar": {
+            "schema": {
+                "type": "object",
+                "properties": {f"p{i}": {"type": "string"} for i in range(600)},
+            }
+        }
+    }
+    with pytest.raises(X402ProtocolError, match="property-count limit"):
+        decode_payment_required(encoded(payload))
+    oversized = challenge()
+    oversized["extensions"] = {
+        "bazaar": {"schema": {"type": "object", "properties": {"blob": {"type": "x" * 5000}}}}
+    }
+    with pytest.raises(X402ProtocolError, match="string-size limit"):
+        decode_payment_required(encoded(oversized))
