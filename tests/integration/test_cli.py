@@ -956,12 +956,38 @@ def test_retry_analysis_missing_run_exits_1(tmp_path: Path) -> None:
     assert "was not found" in result.stderr
 
 
+_CLI_ARTIFACT_FILES = {
+    "contract.json": ArtifactType.SERVICE_CONTRACT,
+    "execution.json": ArtifactType.EXECUTION,
+    "activity.json": ArtifactType.ACTIVITY,
+}
+
+
+def _cli_fixture_artifacts(scenario: str, run_id: str) -> tuple[EvidenceArtifact, ...]:
+    artifacts: list[EvidenceArtifact] = []
+    for name, artifact_type in _CLI_ARTIFACT_FILES.items():
+        path = Path("fixtures") / scenario / name
+        if not path.is_file():
+            continue
+        artifacts.append(
+            EvidenceArtifact(
+                artifact_id=f"{run_id}:{artifact_type.value}",
+                artifact_type=artifact_type,
+                source="fixture",
+                collected_at=datetime(2026, 8, 12, tzinfo=UTC),
+                redacted=False,
+                data=json.loads(path.read_text()),
+            )
+        )
+    return tuple(artifacts)
+
+
 def _persisted_fixture_report(tmp_path: Path) -> tuple[Path, str]:
     """Persist the clean-success fixture (created 2026-08-12) and return (database, run_id)."""
     database = tmp_path / "reports.sqlite3"
     report = replay_fixture(Path("fixtures/clean-success"))
     repository = SQLiteReportRepository(database)
-    repository.save(report)
+    repository.save(report, artifacts=_cli_fixture_artifacts("clean-success", report.run_id))
     repository.close()
     return database, report.run_id
 
@@ -1112,7 +1138,7 @@ def test_export_and_verify_bundle_round_trip(tmp_path: Path) -> None:
     output = tmp_path / "run.bundle.json"
     report = replay_fixture(Path("fixtures/clean-success"))
     repository = SQLiteReportRepository(database)
-    repository.save(report)
+    repository.save(report, artifacts=_cli_fixture_artifacts("clean-success", report.run_id))
     repository.close()
 
     exported = runner.invoke(
@@ -1159,7 +1185,7 @@ def test_export_missing_run_and_tampered_bundle_fail_cleanly(tmp_path: Path) -> 
     )
     assert exported.exit_code == 0
     payload = json.loads(output.read_text())
-    payload["integrity"] = "0" * 64
+    payload["bundle_sha256"] = "0" * 64
     output.write_text(json.dumps(payload))
 
     verified = runner.invoke(app, ["verify-bundle", str(output)])

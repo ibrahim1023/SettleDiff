@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
-from typing import Literal, cast
-
-from pydantic import JsonValue, TypeAdapter, ValidationError
+from typing import cast
 
 from settlediff.application.run import (
     RunEvent,
@@ -28,44 +25,10 @@ from settlediff.domain.models import EvidenceArtifact, ExplanationRecord, Machin
 from settlediff.domain.redaction import (
     redact_artifact,
     redact_contract,
-    redact_embedded_identifiers,
+    redact_explanation_record,
     redact_report,
     redact_value,
 )
-
-_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
-
-
-def _redact_rejected_output(value: str) -> str:
-    try:
-        parsed = _JSON_VALUE_ADAPTER.validate_python(json.loads(value))
-    except (json.JSONDecodeError, ValidationError):
-        return redact_embedded_identifiers(value)
-    return json.dumps(redact_value(parsed), sort_keys=True, separators=(",", ":"))
-
-
-def _redact_explanation(record: ExplanationRecord) -> ExplanationRecord:
-    explanation = record.explanation
-    redacted_explanation = explanation.model_copy(
-        update={
-            "summary": redact_embedded_identifiers(explanation.summary),
-            "recommended_next_step": (
-                redact_embedded_identifiers(explanation.recommended_next_step)
-                if explanation.recommended_next_step is not None
-                else None
-            ),
-        }
-    )
-    return record.model_copy(
-        update={
-            "explanation": redacted_explanation,
-            "rejected_output": (
-                _redact_rejected_output(record.rejected_output)
-                if record.rejected_output is not None
-                else None
-            ),
-        }
-    )
 
 
 class SQLiteReportRepository:
@@ -210,7 +173,7 @@ class SQLiteReportRepository:
     ) -> None:
         persisted_report = redact_report(report)
         persisted_explanation = (
-            _redact_explanation(explanation) if explanation is not None else None
+            redact_explanation_record(explanation) if explanation is not None else None
         )
         with self._lock, self._connection:
             updated = self._connection.execute(
@@ -254,7 +217,7 @@ class SQLiteReportRepository:
     ) -> None:
         persisted_report = redact_report(report)
         persisted_explanation = (
-            _redact_explanation(explanation) if explanation is not None else None
+            redact_explanation_record(explanation) if explanation is not None else None
         )
         persisted_artifacts = tuple(redact_artifact(artifact) for artifact in artifacts)
         with self._lock, self._connection:
@@ -450,9 +413,9 @@ class SQLiteReportRepository:
                 (snapshot.snapshot_digest, observed_at.isoformat()),
             )
 
-    def contract_snapshots(
-        self, target: str, rail: Literal["perflo", "x402"]
-    ) -> tuple[ContractSnapshot, ...]:
+    def contract_snapshots(self, target: str, rail: str) -> tuple[ContractSnapshot, ...]:
+        if rail not in {"perflo", "x402"}:
+            raise ValueError("unsupported contract snapshot rail")
         with self._lock:
             rows = self._connection.execute(
                 "SELECT s.snapshot_json FROM contract_snapshots s "
@@ -466,9 +429,9 @@ class SQLiteReportRepository:
             ContractSnapshot.model_validate_json(cast(str, row[0]), strict=True) for row in rows
         )
 
-    def latest_contract_snapshot(
-        self, target: str, rail: Literal["perflo", "x402"]
-    ) -> ContractSnapshot | None:
+    def latest_contract_snapshot(self, target: str, rail: str) -> ContractSnapshot | None:
+        if rail not in {"perflo", "x402"}:
+            raise ValueError("unsupported contract snapshot rail")
         with self._lock:
             row = self._connection.execute(
                 "SELECT s.snapshot_json FROM contract_snapshots s "

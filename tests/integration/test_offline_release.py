@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import socket
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import NoReturn
 
@@ -10,9 +12,17 @@ from pydantic_ai import models
 from typer.testing import CliRunner
 
 from settlediff.api.app import create_app
+from settlediff.application.bundle import (
+    EvidenceBundleV3,
+    export_bundle,
+    load_bundle,
+    serialize_bundle,
+    verify_bundle,
+)
 from settlediff.application.replay import replay_fixture
+from settlediff.application.run import RunEvent, RunState
 from settlediff.cli import app
-from settlediff.domain.models import MachineReport
+from settlediff.domain.models import ArtifactType, EvidenceArtifact, MachineReport
 from settlediff.domain.redaction import redact_report
 from settlediff.storage.sqlite import SQLiteReportRepository
 
@@ -75,4 +85,44 @@ def test_complete_fixture_path_remains_offline(
         assert detail.status_code == 200
         assert report.verdict.value in detail.text
         assert "Expected · Executed · Recorded" in detail.text
+    repository.close()
+
+
+def test_schema_3_bundle_round_trip_from_persisted_fixture(tmp_path: Path) -> None:
+    fixture = Path("fixtures/clean-success")
+    report = replay_fixture(fixture)
+    artifacts = tuple(
+        EvidenceArtifact(
+            artifact_id=f"{report.run_id}:{name}",
+            artifact_type=artifact_type,
+            source="fixture",
+            collected_at=datetime(2026, 8, 12, tzinfo=UTC),
+            redacted=False,
+            data=json.loads((fixture / filename).read_text()),
+        )
+        for filename, name, artifact_type in (
+            ("contract.json", "service_contract", ArtifactType.SERVICE_CONTRACT),
+            ("execution.json", "execution", ArtifactType.EXECUTION),
+            ("activity.json", "activity", ArtifactType.ACTIVITY),
+        )
+    )
+    repository = SQLiteReportRepository(tmp_path / "bundle.sqlite3")
+    repository.save(
+        report,
+        events=(RunEvent(state=RunState.COMPLETE, occurred_at=datetime(2026, 8, 12, tzinfo=UTC)),),
+        artifacts=artifacts,
+    )
+
+    bundle = load_bundle(serialize_bundle(export_bundle(repository, report.run_id)))
+
+    assert isinstance(bundle, EvidenceBundleV3)
+    assert bundle.schema_version == 3
+    assert {
+        "report.json",
+        "timeline.json",
+        "run-events.json",
+    } <= set(bundle.objects)
+    assert not any(path in bundle.objects for path in ("manifest.json", "bundle_sha256"))
+    assert sum(path.startswith("artifacts/a-") for path in bundle.objects) == 3
+    assert verify_bundle(bundle) == redact_report(report)
     repository.close()

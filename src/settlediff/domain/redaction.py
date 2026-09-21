@@ -6,9 +6,14 @@ import json
 import re
 from typing import cast
 
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from settlediff.domain.models import EvidenceArtifact, ExpectedContract, MachineReport
+from settlediff.domain.models import (
+    EvidenceArtifact,
+    ExpectedContract,
+    ExplanationRecord,
+    MachineReport,
+)
 
 REDACTED = "[REDACTED]"
 EMAIL_PATTERN = re.compile(
@@ -47,6 +52,7 @@ IDENTIFIER_KEYS = {
     "walletaddress",
 }
 _UNMASKED_DIGEST_KEYS = frozenset({"responsecontractdigest"})
+_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
 def normalize_key(key: str) -> str:
@@ -122,6 +128,40 @@ def redact_value(
 def redact_artifact(artifact: EvidenceArtifact) -> EvidenceArtifact:
     """Return a redacted copy of an evidence artifact."""
     return artifact.model_copy(update={"data": redact_value(artifact.data), "redacted": True})
+
+
+def redact_rejected_output(value: str) -> str:
+    """Redact a stored rejected model-output string, preserving JSON structure."""
+    try:
+        parsed = _JSON_VALUE_ADAPTER.validate_python(json.loads(value))
+    except (json.JSONDecodeError, ValidationError):
+        return redact_embedded_identifiers(value)
+    return json.dumps(redact_value(parsed), sort_keys=True, separators=(",", ":"))
+
+
+def redact_explanation_record(record: ExplanationRecord) -> ExplanationRecord:
+    """Redact an explanation record's free text and rejected output."""
+    explanation = record.explanation
+    redacted_explanation = explanation.model_copy(
+        update={
+            "summary": redact_embedded_identifiers(explanation.summary),
+            "recommended_next_step": (
+                redact_embedded_identifiers(explanation.recommended_next_step)
+                if explanation.recommended_next_step is not None
+                else None
+            ),
+        }
+    )
+    return record.model_copy(
+        update={
+            "explanation": redacted_explanation,
+            "rejected_output": (
+                redact_rejected_output(record.rejected_output)
+                if record.rejected_output is not None
+                else None
+            ),
+        }
+    )
 
 
 def redact_contract(contract: ExpectedContract) -> ExpectedContract:
