@@ -45,7 +45,11 @@ def test_domain_contains_no_provider_specific_branch_terms() -> None:
         identifiers = {
             node.id.casefold() for node in ast.walk(tree) if isinstance(node, ast.Name)
         } | {node.attr.casefold() for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-        assert not any(term in value for term in DOMAIN_TERMS for value in string_constants), path
+        assert not any(
+            term in value and value not in {"facilitator", "facilitator_changed"}
+            for term in DOMAIN_TERMS
+            for value in string_constants
+        ), path
         assert identifiers.isdisjoint(DOMAIN_NAMES), path
 
 

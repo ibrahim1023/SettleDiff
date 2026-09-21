@@ -41,6 +41,14 @@ def test_mask_identifier_handles_email_hex_and_short_values() -> None:
     assert mask_identifier("short") == "[REDACTED]"
 
 
+def test_mask_identifier_masks_max_length_email_local_part() -> None:
+    assert mask_identifier("a" * 64 + "@example.com") == "a***@example.com"
+
+
+def test_mask_identifier_handles_large_input_promptly() -> None:
+    assert mask_identifier("x" * 1_000_000) == "xxxx…xxxx"
+
+
 def test_redact_artifact_recurses_without_mutating_source() -> None:
     artifact = artifact_with_sensitive_data()
 

@@ -41,7 +41,11 @@ from settlediff.application.bundle import (
     serialize_bundle,
     verify_bundle,
 )
-from settlediff.application.payment_rails import PaymentRailAdapter, SubmissionUncertainError
+from settlediff.application.payment_rails import (
+    AdapterEvidence,
+    PaymentRailAdapter,
+    SubmissionUncertainError,
+)
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
     InvestigationOutcome,
@@ -58,6 +62,11 @@ from settlediff.application.run import (
 from settlediff.application.timeline import build_evidence_timeline
 from settlediff.config import Settings
 from settlediff.contextdev.client import ContextDevClient
+from settlediff.domain.drift import (
+    ContractSnapshot,
+    build_contract_snapshot,
+    compare_contract_snapshots,
+)
 from settlediff.domain.models import (
     ArtifactType,
     EvidenceArtifact,
@@ -66,6 +75,7 @@ from settlediff.domain.models import (
     MachineReport,
 )
 from settlediff.domain.money import Money
+from settlediff.domain.normalize import normalize_contract
 from settlediff.domain.redaction import mask_identifier
 from settlediff.domain.retry import RetryRunStateSnapshot, analyze_retry
 from settlediff.perflo.adapter import PerfloAdapter
@@ -98,6 +108,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 DATABASE_OPTION = typer.Option(..., "--database", exists=True, readable=True)
+WRITABLE_DATABASE_OPTION = typer.Option(..., "--database", writable=True)
 JSON_OPTION = typer.Option(False, "--json")
 OPTIONAL_DATABASE_OPTION = typer.Option(None, "--database")
 BUNDLE_OUTPUT_OPTION = typer.Option(..., "--output")
@@ -792,6 +803,144 @@ def retry_analysis(
     typer.echo(f"Reasons: {', '.join(assessment.reason_codes)}")
     typer.echo(f"Evidence: {', '.join(assessment.evidence_ids)}")
     typer.echo("External calls: 0")
+    typer.echo("Paid calls: 0")
+
+
+async def _inspect_contract(url: str, rail: PaymentRail) -> AdapterEvidence:
+    """Run exactly one unsigned contract inspection for the selected rail."""
+    parsed_url = urlparse(url)
+    if rail is PaymentRail.X402:
+        if not is_safe_x402_target(url):
+            raise ValueError(
+                "url requires HTTPS, except loopback HTTP for x402, without credentials or fragment"
+            )
+        client = httpx.AsyncClient(follow_redirects=False)
+        try:
+            request = PaidExecutionRequest(
+                run_id=f"inspection_{uuid4().hex}",
+                target=url,
+                method="GET",
+                body=None,
+                budget=Money(amount=Decimal(1), unit="USDC"),
+            )
+            adapter = X402Adapter.for_inspection(X402ResourceClient(client))
+            return await adapter.inspect(request)
+        finally:
+            await client.aclose()
+    if not (
+        parsed_url.scheme == "https"
+        and bool(parsed_url.netloc)
+        and parsed_url.username is None
+        and parsed_url.password is None
+        and not parsed_url.fragment
+    ):
+        raise ValueError("url requires HTTPS without credentials or fragment")
+    request = PaidExecutionRequest(
+        run_id=f"inspection_{uuid4().hex}",
+        target=url,
+        method="POST",
+        body={},
+        budget=Money(amount=Decimal(1), unit="USDC"),
+    )
+    return await PerfloAdapter(PerfloClient()).inspect(request)
+
+
+def _snapshot_from_evidence(
+    url: str, rail: PaymentRail, evidence: AdapterEvidence
+) -> ContractSnapshot:
+    artifact = EvidenceArtifact(
+        artifact_id="inspection:contract",
+        artifact_type=ArtifactType.SERVICE_CONTRACT,
+        source=evidence.source,
+        collected_at=datetime.now(UTC),
+        redacted=False,
+        data=evidence.data,
+    )
+    contract = normalize_contract(artifact)
+    source_contract = (
+        evidence.source_contract if evidence.source_contract is not None else evidence.data
+    )
+    return build_contract_snapshot(url, rail.value, contract, source_contract)
+
+
+@app.command()
+def snapshot(
+    url: str,
+    database: Path = WRITABLE_DATABASE_OPTION,
+    rail: PaymentRail = RAIL_OPTION,
+    json_mode: bool = JSON_OPTION,
+) -> None:
+    """Inspect one contract and persist its content-addressed snapshot."""
+    try:
+        evidence = asyncio.run(_inspect_contract(url, rail))
+        built = _snapshot_from_evidence(url, rail, evidence)
+        repository = SQLiteReportRepository(database)
+        try:
+            repository.save_contract_snapshot(built, evidence.observed_at or datetime.now(UTC))
+        finally:
+            repository.close()
+    except (OSError, sqlite3.Error, PerfloClientError, ValueError) as error:
+        typer.echo(f"Snapshot failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    payload = {
+        "url": url,
+        "rail": rail.value,
+        "snapshot_digest": built.snapshot_digest,
+        "semantic_fingerprint": built.semantic_fingerprint,
+        "source_digest": built.source_digest,
+        "component_fingerprints": dict(built.component_fingerprints),
+        "external_calls": 1,
+        "paid_calls": 0,
+    }
+    if json_mode:
+        typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return
+    typer.echo(f"Snapshot: {built.snapshot_digest}")
+    typer.echo(f"Semantic fingerprint: {built.semantic_fingerprint}")
+    typer.echo(f"Source digest: {built.source_digest}")
+    typer.echo("External calls: 1")
+    typer.echo("Paid calls: 0")
+
+
+@app.command()
+def drift(
+    url: str,
+    database: Path = WRITABLE_DATABASE_OPTION,
+    rail: PaymentRail = RAIL_OPTION,
+    json_mode: bool = JSON_OPTION,
+) -> None:
+    """Inspect one contract and compare it with the latest persisted snapshot."""
+    try:
+        evidence = asyncio.run(_inspect_contract(url, rail))
+        built = _snapshot_from_evidence(url, rail, evidence)
+        repository = SQLiteReportRepository(database)
+        try:
+            previous = repository.latest_contract_snapshot(url, rail.value)
+            repository.save_contract_snapshot(built, evidence.observed_at or datetime.now(UTC))
+        finally:
+            repository.close()
+        result = compare_contract_snapshots(previous, built)
+    except (OSError, sqlite3.Error, PerfloClientError, ValueError) as error:
+        typer.echo(f"Drift check failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    payload = {
+        "url": url,
+        "rail": rail.value,
+        "status": result.status.value,
+        "change_codes": list(result.change_codes),
+        "previous_snapshot_digest": result.previous_snapshot_digest,
+        "current_snapshot_digest": result.current_snapshot_digest,
+        "external_calls": 1,
+        "paid_calls": 0,
+    }
+    if json_mode:
+        typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return
+    typer.echo(f"Drift: {result.status.value}")
+    typer.echo(f"Changes: {', '.join(result.change_codes) if result.change_codes else 'none'}")
+    typer.echo(f"Previous: {result.previous_snapshot_digest or 'none'}")
+    typer.echo(f"Current: {result.current_snapshot_digest}")
+    typer.echo("External calls: 1")
     typer.echo("Paid calls: 0")
 
 

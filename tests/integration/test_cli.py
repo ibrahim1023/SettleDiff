@@ -1195,3 +1195,145 @@ def test_serve_accepts_a_local_alternate_port(
     result = runner.invoke(app, ["serve", "--database", str(database), "--port", "8766"])
     assert result.exit_code == 0
     assert captured == {"host": "127.0.0.1", "port": 8766}
+
+
+def test_snapshot_persists_contract_without_signing_or_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contract: dict[str, JsonValue] = {
+        "vendor_slug": "synthetic-search",
+        "url": "https://example.invalid/search",
+        "price": {"amount": "0.01", "unit": "USDC"},
+        "asset": "USDC",
+        "protocol": "mpp",
+        "chain": "tempo",
+    }
+
+    class FakePerflo:
+        async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
+            assert target == "https://example.invalid/search"
+            return _envelope(contract)
+
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            raise AssertionError("snapshot must not execute")
+
+    def forbidden_settings(*_args: object, **_kwargs: object) -> Settings:
+        raise AssertionError("snapshot must not build live settings")
+
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    monkeypatch.setattr("settlediff.cli.Settings", forbidden_settings)
+    database = tmp_path / "reports.sqlite3"
+
+    result = runner.invoke(
+        app,
+        [
+            "snapshot",
+            "https://example.invalid/search",
+            "--database",
+            str(database),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["external_calls"] == 1
+    assert payload["paid_calls"] == 0
+    assert len(payload["snapshot_digest"]) == 64
+    repository = SQLiteReportRepository(database)
+    try:
+        stored = repository.contract_snapshots("https://example.invalid/search", "perflo")
+    finally:
+        repository.close()
+    assert [item.snapshot_digest for item in stored] == [payload["snapshot_digest"]]
+
+
+def test_drift_reports_unavailable_then_match_then_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current_contract: dict[str, JsonValue] = {
+        "vendor_slug": "synthetic-search",
+        "url": "https://example.invalid/search",
+        "price": {"amount": "0.01", "unit": "USDC"},
+        "asset": "USDC",
+        "protocol": "mpp",
+        "chain": "tempo",
+    }
+    calls: list[dict[str, JsonValue]] = [current_contract]
+
+    class FakePerflo:
+        async def inspect_service(self, _target: str) -> PerfloSuccessEnvelope:
+            return _envelope(calls[0])
+
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    database = tmp_path / "reports.sqlite3"
+    argv = [
+        "drift",
+        "https://example.invalid/search",
+        "--database",
+        str(database),
+        "--json",
+    ]
+
+    first = json.loads(runner.invoke(app, argv).stdout)
+    assert first["status"] == "UNAVAILABLE"
+    assert first["previous_snapshot_digest"] is None
+    assert first["external_calls"] == 1 and first["paid_calls"] == 0
+
+    second = json.loads(runner.invoke(app, argv).stdout)
+    assert second["status"] == "MATCH"
+    assert second["previous_snapshot_digest"] == first["current_snapshot_digest"]
+
+    calls[0] = dict(current_contract, price={"amount": "0.02", "unit": "USDC"})
+    third = json.loads(runner.invoke(app, argv).stdout)
+    assert third["status"] == "DIFF"
+    assert "PRICE_CHANGED" in third["change_codes"]
+    assert third["previous_snapshot_digest"] == second["current_snapshot_digest"]
+
+
+def test_x402_snapshot_uses_inspection_only_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import base64 as _base64
+    import json as _json
+
+    target = "https://example.invalid/paid"
+    payload = _json.loads(Path("tests/contract/x402/fixtures/payment-required-v2.json").read_text())
+    payload["resource"]["url"] = target
+    header = _base64.b64encode(_json.dumps(payload, separators=(",", ":")).encode()).decode()
+
+    class FakeResourceClient:
+        def __init__(self, _client: object) -> None:
+            self.closed = False
+
+        async def challenge(self, _request: object) -> object:
+            from settlediff.x402.http import X402ResourceResponse
+
+            return X402ResourceResponse(
+                status_code=402,
+                payment_required=header,
+                body=None,
+                observed_at=datetime(2026, 9, 10, tzinfo=UTC),
+            )
+
+    def forbidden_settings(*_args: object, **_kwargs: object) -> Settings:
+        raise AssertionError("x402 snapshot must not build live settings")
+
+    monkeypatch.setattr("settlediff.cli.X402ResourceClient", FakeResourceClient)
+    monkeypatch.setattr("settlediff.cli.Settings", forbidden_settings)
+    database = tmp_path / "reports.sqlite3"
+
+    result = runner.invoke(
+        app, ["snapshot", target, "--rail", "x402", "--database", str(database), "--json"]
+    )
+
+    assert result.exit_code == 0
+    out = json.loads(result.stdout)
+    assert out["paid_calls"] == 0 and out["external_calls"] == 1
+    repository = SQLiteReportRepository(database)
+    try:
+        stored = repository.contract_snapshots(target, "x402")
+    finally:
+        repository.close()
+    assert len(stored) == 1
+    assert stored[0].rail == "x402"

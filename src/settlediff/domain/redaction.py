@@ -8,11 +8,11 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from settlediff.domain.models import EvidenceArtifact, MachineReport
+from settlediff.domain.models import EvidenceArtifact, ExpectedContract, MachineReport
 
 REDACTED = "[REDACTED]"
 EMAIL_PATTERN = re.compile(
-    r"(?P<local>[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+)@"
+    r"(?P<local>[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64})@"
     r"(?P<domain>[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)"
 )
 PREFIXED_HEX_PATTERN = re.compile(r"0x[0-9a-fA-F]{16,}")
@@ -122,6 +122,12 @@ def redact_value(
 def redact_artifact(artifact: EvidenceArtifact) -> EvidenceArtifact:
     """Return a redacted copy of an evidence artifact."""
     return artifact.model_copy(update={"data": redact_value(artifact.data), "redacted": True})
+
+
+def redact_contract(contract: ExpectedContract) -> ExpectedContract:
+    """Redact a normalized contract for display while digests stay canonical."""
+    payload = cast(JsonValue, contract.model_dump(mode="json"))
+    return ExpectedContract.model_validate_json(json.dumps(redact_value(payload)), strict=True)
 
 
 def redact_report(report: MachineReport) -> MachineReport:

@@ -38,7 +38,8 @@ class PerfloAdapter:
 
     async def inspect(self, request: PaidExecutionRequest) -> AdapterEvidence:
         data = _result_data(await self._client.inspect_service(request.target), field="contract")
-        return _evidence("inspect", "perflo.check", ArtifactType.SERVICE_CONTRACT, data)
+        evidence = _evidence("inspect", "perflo.check", ArtifactType.SERVICE_CONTRACT, data)
+        return evidence.model_copy(update={"source_contract": data})
 
     async def collect_schema(self, slug: str) -> AdapterEvidence:
         data = _result_data(await self._client.get_schema(slug), field="schema")

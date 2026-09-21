@@ -40,6 +40,7 @@ class AdapterEvidence(BaseModel):
     transaction_reference: NonEmptyStr | None = None
     provider_receipt: JsonValue | None = None
     delivery_observation: DeliveryObservation | None = None
+    source_contract: JsonValue | None = None
 
 
 @runtime_checkable

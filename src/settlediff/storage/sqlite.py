@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
@@ -23,9 +23,11 @@ from settlediff.application.timeline import (
     build_evidence_timeline,
     redact_timeline_event,
 )
+from settlediff.domain.drift import ContractSnapshot
 from settlediff.domain.models import EvidenceArtifact, ExplanationRecord, MachineReport
 from settlediff.domain.redaction import (
     redact_artifact,
+    redact_contract,
     redact_embedded_identifiers,
     redact_report,
     redact_value,
@@ -414,6 +416,81 @@ class SQLiteReportRepository:
                 "SELECT explanation_json FROM run_record_explanations WHERE run_id = ?", (run_id,)
             ).fetchone()
         return ExplanationRecord.model_validate_json(row[0]) if row else None
+
+    def save_contract_snapshot(self, snapshot: ContractSnapshot, observed_at: datetime) -> None:
+        """Insert the content-addressed snapshot once and append one observation."""
+        if observed_at.tzinfo is None or observed_at.utcoffset() != UTC.utcoffset(observed_at):
+            raise ValueError("contract snapshot observations require an aware UTC time")
+        snapshot = ContractSnapshot.model_validate_json(snapshot.model_dump_json(), strict=True)
+        stored = ContractSnapshot.model_validate(
+            {
+                **snapshot.model_dump(mode="python"),
+                "contract": redact_contract(snapshot.contract),
+                "source_contract": redact_value(snapshot.source_contract),
+            },
+            strict=True,
+        )
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO contract_snapshots(snapshot_digest, target, rail, "
+                "semantic_fingerprint, source_digest, snapshot_json) "
+                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(snapshot_digest) DO NOTHING",
+                (
+                    snapshot.snapshot_digest,
+                    snapshot.target,
+                    snapshot.rail,
+                    snapshot.semantic_fingerprint,
+                    snapshot.source_digest,
+                    stored.model_dump_json(),
+                ),
+            )
+            self._connection.execute(
+                "INSERT INTO contract_snapshot_observations(snapshot_digest, observed_at) "
+                "VALUES (?, ?)",
+                (snapshot.snapshot_digest, observed_at.isoformat()),
+            )
+
+    def contract_snapshots(
+        self, target: str, rail: Literal["perflo", "x402"]
+    ) -> tuple[ContractSnapshot, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT s.snapshot_json FROM contract_snapshots s "
+                "JOIN (SELECT snapshot_digest, MIN(observation_id) AS first_seen "
+                "FROM contract_snapshot_observations GROUP BY snapshot_digest) o "
+                "ON o.snapshot_digest = s.snapshot_digest "
+                "WHERE s.target = ? AND s.rail = ? ORDER BY o.first_seen",
+                (target, rail),
+            ).fetchall()
+        return tuple(
+            ContractSnapshot.model_validate_json(cast(str, row[0]), strict=True) for row in rows
+        )
+
+    def latest_contract_snapshot(
+        self, target: str, rail: Literal["perflo", "x402"]
+    ) -> ContractSnapshot | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT s.snapshot_json FROM contract_snapshots s "
+                "JOIN contract_snapshot_observations o "
+                "ON o.snapshot_digest = s.snapshot_digest "
+                "WHERE s.target = ? AND s.rail = ? "
+                "ORDER BY o.observation_id DESC LIMIT 1",
+                (target, rail),
+            ).fetchone()
+        return (
+            ContractSnapshot.model_validate_json(cast(str, row[0]), strict=True)
+            if row is not None
+            else None
+        )
+
+    def contract_snapshot_observation_count(self, snapshot_digest: str) -> int:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT COUNT(*) FROM contract_snapshot_observations WHERE snapshot_digest = ?",
+                (snapshot_digest,),
+            ).fetchone()
+        return int(cast(tuple[int], row)[0])
 
     def close(self) -> None:
         with self._lock:

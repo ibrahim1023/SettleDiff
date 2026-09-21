@@ -54,14 +54,25 @@ class X402Adapter:
     def __init__(
         self,
         resource: X402ResourcePort,
-        signer: X402SignerPort,
-        rpc: ReadOnlyRpcPort,
+        signer: X402SignerPort | None = None,
+        rpc: ReadOnlyRpcPort | None = None,
     ) -> None:
         self._resource = resource
         self._signer = signer
         self._rpc = rpc
         self._preflight_contract: ExpectedContract | None = None
         self._recovery: X402SubmissionRecovery | None = None
+
+    @classmethod
+    def for_inspection(cls, resource: X402ResourcePort) -> X402Adapter:
+        """Build an unsigned-only adapter that cannot sign, pay, or query chain state."""
+        return cls(resource)
+
+    def _require_paid_ports(self) -> None:
+        if self._signer is None or self._rpc is None:
+            raise AdapterProtocolError(
+                "x402 inspection-only adapter cannot execute or recover payments"
+            )
 
     async def inspect(self, request: PaidExecutionRequest) -> AdapterEvidence:
         observed = await self._resource.challenge(request)
@@ -77,6 +88,7 @@ class X402Adapter:
             artifact_type=ArtifactType.SERVICE_CONTRACT,
             data=cast(JsonValue, contract.model_dump(mode="json")),
             observed_at=observed.observed_at,
+            source_contract=cast(JsonValue, required.model_dump(mode="json", by_alias=True)),
         )
 
     async def execute_once(
@@ -85,7 +97,10 @@ class X402Adapter:
         request: PaidExecutionRequest,
         quoted_price: Money,
     ) -> AdapterEvidence:
+        self._require_paid_ports()
         authorization.require_exact_request(request)
+        signer = cast(X402SignerPort, self._signer)
+        rpc = cast(ReadOnlyRpcPort, self._rpc)
         preflight_contract = self._preflight_contract
         if preflight_contract is None:
             raise AdapterProtocolError("x402 execution requires preflight evidence")
@@ -112,7 +127,7 @@ class X402Adapter:
             scheme="exact",
             payment_terms_digest=terms.digest,
         )
-        result = await self._signer.execute_once(signer_request)
+        result = await signer.execute_once(signer_request)
         observation = _delivery_observation(result, request)
         try:
             returned_requirement = self._require_returned_terms(result, request, terms)
@@ -122,7 +137,7 @@ class X402Adapter:
         except X402SubmissionUncertainError:
             self._recovery = await recover_x402_submission(
                 result,
-                self._rpc,
+                rpc,
                 requirement,
                 expected_payer=result.payer,
                 observed_at=observed.observed_at,
@@ -141,7 +156,7 @@ class X402Adapter:
             )
         self._recovery = await recover_x402_submission(
             result,
-            self._rpc,
+            rpc,
             returned_requirement,
             expected_payer=result.payer,
             observed_at=observed.observed_at,
@@ -164,6 +179,7 @@ class X402Adapter:
         )
 
     async def collect_activity(self) -> AdapterEvidence:
+        self._require_paid_ports()
         records: list[JsonValue] = []
         if self._recovery is not None and self._recovery.independent_settlement is not None:
             records.append(
@@ -180,6 +196,7 @@ class X402Adapter:
         )
 
     async def collect_transaction(self, transaction_reference: str) -> AdapterEvidence:
+        self._require_paid_ports()
         recovery = self._recovery
         if recovery is None or recovery.transaction_reference != transaction_reference:
             raise AdapterProtocolError("x402 recovery evidence is unavailable for this transaction")

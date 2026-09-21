@@ -17,6 +17,7 @@ from settlediff.application.auth import (
     PaidExecutionRequest,
     PaymentTerms,
 )
+from settlediff.application.payment_rails import AdapterProtocolError
 from settlediff.application.run import LiveEvidenceCollector
 from settlediff.contextdev.client import ContextEvidencePort
 from settlediff.domain.models import (
@@ -403,3 +404,56 @@ async def test_collector_keeps_provider_receipt_separate_from_independent_ledger
         ArtifactType.PAYMENT_RECEIPT,
         ArtifactType.ACTIVITY,
     }
+
+
+@pytest.mark.asyncio
+async def test_inspect_carries_raw_source_contract() -> None:
+    adapter = X402Adapter(
+        FakeResource(response(required_header())), FakeSigner(signer_result()), FakeRpc(None)
+    )
+
+    inspected = await adapter.inspect(request())
+
+    assert inspected.source_contract == required_payload()
+
+
+@pytest.mark.asyncio
+async def test_inspection_only_adapter_cannot_execute_or_recover() -> None:
+    adapter = X402Adapter.for_inspection(FakeResource(response(required_header())))
+    value = request()
+
+    inspected = await adapter.inspect(value)
+
+    assert inspected.source_contract == required_payload()
+    assert inspected.artifact_type is ArtifactType.SERVICE_CONTRACT
+
+    contract = ExpectedContract.model_validate_json(json.dumps(inspected.data))
+    consumed = await PaidExecutionCapability.issue(
+        value,
+        payment_terms=payment_terms(contract, value),
+        expires_at=NOW + timedelta(minutes=5),
+    ).consume(value, payment_terms=payment_terms(contract, value), now=NOW)
+    with pytest.raises(AdapterProtocolError, match="inspection-only"):
+        await adapter.execute_once(consumed, value, cast(Money, contract.price))
+    with pytest.raises(AdapterProtocolError, match="inspection-only"):
+        await adapter.collect_activity()
+    with pytest.raises(AdapterProtocolError, match="inspection-only"):
+        await adapter.collect_transaction(TX_HASH)
+
+
+@pytest.mark.asyncio
+async def test_inspection_only_execute_fails_before_authorization() -> None:
+    class UntouchableAuthorization:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError(f"authorization must not be touched: {name}")
+
+    adapter = X402Adapter.for_inspection(FakeResource(response(required_header())))
+    value = request()
+    await adapter.inspect(value)
+
+    with pytest.raises(AdapterProtocolError, match="inspection-only"):
+        await adapter.execute_once(
+            cast(ConsumedPaidAuthorization, UntouchableAuthorization()),
+            value,
+            Money(amount=Decimal(1), unit="USDC"),
+        )
