@@ -21,6 +21,7 @@ from settlediff.application.bundle import (
     X402_PROTOCOL_VERSION,
     X402_SIGNER_SCHEMA_VERSION,
 )
+from settlediff.application.investigate import investigate_purchase
 from settlediff.application.run import RunEvent, RunProvenance, RunState
 from settlediff.contextdev.client import CONTEXTDEV_API_PATH
 from settlediff.domain.models import (
@@ -215,6 +216,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
             artifact_links=artifact_links,
             recovery_artifact=_recovery_artifact(repository.artifacts(run_id)),
             context_artifact=_context_artifact(repository.artifacts(run_id)),
+            investigation=investigate_purchase(repository, run_id),
         )
 
     app.get("/runs/{run_id}", response_class=HTMLResponse)(run_detail)

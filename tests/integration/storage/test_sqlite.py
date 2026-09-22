@@ -682,3 +682,90 @@ def test_partial_run_exposes_events_and_artifacts_with_empty_timeline(
     assert repository.events(report.run_id)
     assert repository.artifacts(report.run_id)
     repository.close()
+
+
+def test_observed_contract_snapshots_preserve_observation_order(
+    tmp_path: Path,
+) -> None:
+    from pydantic import JsonValue
+
+    from settlediff.domain.drift import build_contract_snapshot
+
+    report = replay_fixture(Path("fixtures/x402-clean-success"))
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    repository.save(report)
+    assert report.contract is not None
+    snapshot_a = build_contract_snapshot(
+        report.contract.url, "x402", report.contract, cast(JsonValue, {"v": 1})
+    )
+    snapshot_b = build_contract_snapshot(
+        report.contract.url, "x402", report.contract, cast(JsonValue, {"v": 2})
+    )
+    repository.save_contract_snapshot(snapshot_a, datetime(2026, 9, 1, tzinfo=UTC))
+    repository.save_contract_snapshot(snapshot_b, datetime(2026, 9, 2, tzinfo=UTC))
+    repository.save_contract_snapshot(snapshot_a, datetime(2026, 9, 3, tzinfo=UTC))
+
+    observed = repository.observed_contract_snapshots(report.contract.url, "x402")
+
+    assert [s.snapshot_digest for s in observed] == [
+        snapshot_a.snapshot_digest,
+        snapshot_b.snapshot_digest,
+        snapshot_a.snapshot_digest,
+    ]
+    assert [
+        s.snapshot_digest for s in repository.contract_snapshots(report.contract.url, "x402")
+    ] == [
+        snapshot_a.snapshot_digest,
+        snapshot_b.snapshot_digest,
+    ]
+    repository.close()
+
+
+def test_observed_contract_snapshots_read_does_not_mutate(tmp_path: Path) -> None:
+    from pydantic import JsonValue
+
+    from settlediff.domain.drift import build_contract_snapshot
+
+    report = replay_fixture(Path("fixtures/x402-clean-success"))
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    repository.save(report)
+    assert report.contract is not None
+    snapshot = build_contract_snapshot(
+        report.contract.url, "x402", report.contract, cast(JsonValue, {"v": 1})
+    )
+    repository.save_contract_snapshot(snapshot, datetime(2026, 9, 1, tzinfo=UTC))
+    repository.save_contract_snapshot(snapshot, datetime(2026, 9, 2, tzinfo=UTC))
+
+    database = tmp_path / "reports.sqlite3"
+    with closing(sqlite3.connect(database)) as connection:
+        counts_before = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("contract_snapshots", "contract_snapshot_observations")
+        }
+        rows_before = connection.execute(
+            "SELECT snapshot_digest, observed_at FROM contract_snapshot_observations "
+            "ORDER BY observation_id"
+        ).fetchall()
+
+    repository.observed_contract_snapshots(report.contract.url, "x402")
+
+    with closing(sqlite3.connect(database)) as connection:
+        counts_after = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("contract_snapshots", "contract_snapshot_observations")
+        }
+        rows_after = connection.execute(
+            "SELECT snapshot_digest, observed_at FROM contract_snapshot_observations "
+            "ORDER BY observation_id"
+        ).fetchall()
+    assert counts_after == counts_before
+    assert rows_after == rows_before
+    repository.close()
+
+
+def test_observed_contract_snapshots_rejects_unsupported_rail(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+
+    with pytest.raises(ValueError, match="unsupported contract snapshot rail"):
+        repository.observed_contract_snapshots("https://example.invalid/x", "other")
+    repository.close()

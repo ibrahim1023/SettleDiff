@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from settlediff.api.app import create_app
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import RunEvent, RunFailure, RunProvenance, RunState, RunTimeline
+from settlediff.domain.drift import build_contract_snapshot
 from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
@@ -23,6 +24,8 @@ from settlediff.domain.models import (
     InvestigationExplanation,
     MachineReport,
     PaymentReceipt,
+    RetryAssessment,
+    RetrySafety,
     SettlementStatus,
     Severity,
 )
@@ -660,7 +663,11 @@ def test_run_detail_loads_persisted_explanation_without_recomputation(tmp_path: 
         detail = client.get(f"/runs/{report.run_id}")
 
     assert detail.status_code == 200
-    load.assert_called_once_with(report.run_id)
+    # The assurance panel's bundle export performs a second persisted read.
+    assert [call.args for call in load.call_args_list] == [
+        (report.run_id,),
+        (report.run_id,),
+    ]
     run_checks.assert_not_called()
     investigate.assert_not_called()
     repository.close()
@@ -739,3 +746,117 @@ def test_vendored_htmx_checksum_is_recorded() -> None:
     )
     assert sha384((static / "htmx.min.js").read_bytes()).hexdigest() == expected
     assert expected in (static / "HTMX-SOURCE.md").read_text()
+
+
+def _fixture_artifacts(scenario: str, run_id: str) -> tuple[EvidenceArtifact, ...]:
+    files = {
+        "contract.json": ArtifactType.SERVICE_CONTRACT,
+        "execution.json": ArtifactType.EXECUTION,
+        "receipt.json": ArtifactType.PAYMENT_RECEIPT,
+        "activity.json": ArtifactType.ACTIVITY,
+    }
+    import json as _json
+
+    return tuple(
+        EvidenceArtifact(
+            artifact_id=f"{run_id}:{artifact_type.value}",
+            artifact_type=artifact_type,
+            source="fixture",
+            collected_at=datetime(2026, 8, 12, tzinfo=UTC),
+            redacted=False,
+            data=_json.loads((Path("fixtures") / scenario / name).read_text()),
+        )
+        for name, artifact_type in files.items()
+        if (Path("fixtures") / scenario / name).is_file()
+    )
+
+
+def test_run_detail_renders_purchase_assurance(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository.save(report, artifacts=_fixture_artifacts("clean-success", report.run_id))
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert "Purchase assurance" in detail.text
+    for label in (
+        "What failed or remains unresolved",
+        "Could money have moved?",
+        "Amount agreement",
+        "Recipient agreement",
+        "Delivery",
+        "Activity agreement",
+        "Contract drift",
+        "Retry safety",
+        "Evidence bundle",
+        "Evidence timeline",
+    ):
+        assert label in detail.text
+    assert "settlement" in detail.text
+    assert "unavailable" in detail.text or "+00:00" in detail.text
+    repository.close()
+
+
+def test_run_detail_renders_paid_failure_retry_and_drift(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/x402-paid-failure"))
+    retry = RetryAssessment(
+        safety=RetrySafety.DO_NOT_RETRY,
+        reason_codes=("payment_settled",),
+        evidence_ids=(f"{report.run_id}:receipt",),
+    )
+    updated = report.model_copy(update={"schema_version": 3, "retry": retry, "adapter_id": "x402"})
+    repository.save(updated, artifacts=_fixture_artifacts("x402-paid-failure", report.run_id))
+    assert updated.contract is not None
+    snapshot = build_contract_snapshot(
+        updated.contract.url, "x402", updated.contract, {"synthetic": True}
+    )
+    repository.save_contract_snapshot(snapshot, datetime(2026, 9, 1, tzinfo=UTC))
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert "Purchase assurance" in detail.text
+    assert "DO_NOT_RETRY" in detail.text
+    assert "payment_settled" in detail.text
+    assert "service_execution" in detail.text
+    assert "UNAVAILABLE" in detail.text
+    repository.close()
+
+
+def test_run_detail_renders_when_bundle_unavailable(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository.save(report)
+    client = TestClient(create_app(repository))
+
+    detail = client.get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert "Purchase assurance" in detail.text
+    assert "UNAVAILABLE" in detail.text
+    repository.close()
+
+
+def test_pending_run_detail_has_no_assurance_panel(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    repository.begin_run(
+        "pending_run",
+        task="Queued investigation",
+        provenance=RunProvenance.FIXTURE,
+        created_at=datetime(2026, 9, 3, tzinfo=UTC),
+    )
+    repository.append_event(
+        "pending_run",
+        RunEvent(state=RunState.EXECUTING, occurred_at=datetime(2026, 9, 3, tzinfo=UTC)),
+    )
+    client = TestClient(create_app(repository))
+
+    detail = client.get("/runs/pending_run")
+
+    assert detail.status_code == 200
+    assert "Purchase assurance" not in detail.text
+    repository.close()

@@ -41,6 +41,12 @@ from settlediff.application.bundle import (
     serialize_bundle,
     verify_bundle,
 )
+from settlediff.application.investigate import (
+    InvestigationError,
+    InvestigationFinding,
+    InvestigationNotFoundError,
+    investigate_purchase,
+)
 from settlediff.application.payment_rails import (
     AdapterEvidence,
     PaymentRailAdapter,
@@ -1205,6 +1211,76 @@ def publish_run(
     typer.echo(f"Published public report to {output}.")
     for name in ("index.html", "report.json", "public-manifest.json"):
         typer.echo(f"  {name}")
+
+
+def _investigation_finding_line(finding: InvestigationFinding | None) -> str:
+    if finding is None:
+        return "UNAVAILABLE"
+    return f"{finding.check_id}: {finding.status.value} — {finding.message}"
+
+
+@app.command("investigate-purchase")
+def investigate_purchase_run(
+    run_id: str,
+    database: Path = DATABASE_OPTION,
+    json_mode: bool = JSON_OPTION,
+) -> None:
+    """Project persisted evidence into a rail-neutral purchase investigation."""
+    repository = SQLiteReportRepository(database)
+    try:
+        investigation = investigate_purchase(repository, run_id)
+    except InvestigationNotFoundError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1) from error
+    except (InvestigationError, ValidationError, sqlite3.Error) as error:
+        typer.echo(f"Could not investigate: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    finally:
+        repository.close()
+    if json_mode:
+        typer.echo(json.dumps(investigation.model_dump(mode="json"), separators=(",", ":")))
+        return
+    typer.echo(f"Purchase investigation: {investigation.run_id}")
+    typer.echo(f"Verdict: {investigation.verdict.value}")
+    typer.echo("What failed or remains unresolved:")
+    if investigation.issues:
+        for issue in investigation.issues:
+            typer.echo(f"  {issue.check_id}: {issue.status.value} — {issue.message}")
+    else:
+        typer.echo("  none")
+    typer.echo(
+        f"Could money have moved? {_investigation_finding_line(investigation.money_movement)}"
+    )
+    typer.echo(f"Amount agreement: {_investigation_finding_line(investigation.amount_agreement)}")
+    typer.echo(
+        f"Recipient agreement: {_investigation_finding_line(investigation.recipient_agreement)}"
+    )
+    if investigation.delivery is None:
+        typer.echo("Delivery: UNAVAILABLE")
+    else:
+        typer.echo(
+            f"Delivery: {investigation.delivery.status.value} — "
+            f"{investigation.delivery.reason_code}"
+        )
+    typer.echo("Activity agreement:")
+    if investigation.activity_agreement:
+        for finding in investigation.activity_agreement:
+            typer.echo(f"  {_investigation_finding_line(finding)}")
+    else:
+        typer.echo("  UNAVAILABLE")
+    if investigation.drift is None:
+        typer.echo("Contract drift: UNAVAILABLE")
+    else:
+        codes = ", ".join(investigation.drift.change_codes) or "none"
+        typer.echo(f"Contract drift: {investigation.drift.status.value} ({codes})")
+    if investigation.retry is None:
+        typer.echo("Retry safety: UNAVAILABLE")
+    else:
+        typer.echo(
+            f"Retry safety: {investigation.retry.safety.value} "
+            f"({', '.join(investigation.retry.reason_codes)})"
+        )
+    typer.echo(f"Evidence bundle: {investigation.bundle.bundle_sha256 or 'UNAVAILABLE'}")
 
 
 @app.command("verify-bundle")

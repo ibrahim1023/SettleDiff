@@ -1710,3 +1710,129 @@ def test_publish_force_help_describes_directory() -> None:
 
     assert result.exit_code == 0
     assert "output directory" in result.stdout
+
+
+def _persisted_paid_failure(tmp_path: Path) -> tuple[Path, str]:
+    database = tmp_path / "paid.sqlite3"
+    report = replay_fixture(Path("fixtures/paid-failure"))
+    repository = SQLiteReportRepository(database)
+    repository.save(report, artifacts=_cli_fixture_artifacts("paid-failure", report.run_id))
+    repository.close()
+    return database, report.run_id
+
+
+def test_investigate_purchase_missing_run_exits_1(tmp_path: Path) -> None:
+    database, _run_id = _persisted_fixture_report(tmp_path)
+
+    result = runner.invoke(
+        app, ["investigate-purchase", "syn_missing", "--database", str(database)]
+    )
+
+    assert result.exit_code == 1
+
+
+def test_investigate_purchase_json_is_exact_projection(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+
+    result = runner.invoke(
+        app, ["investigate-purchase", run_id, "--database", str(database), "--json"]
+    )
+
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert set(payload) == {
+        "schema_version",
+        "run_id",
+        "verdict",
+        "issues",
+        "money_movement",
+        "amount_agreement",
+        "recipient_agreement",
+        "delivery",
+        "activity_agreement",
+        "drift",
+        "retry",
+        "timeline",
+        "bundle",
+    }
+    assert payload["run_id"] == run_id
+    assert payload["verdict"] == "VERIFIED"
+    assert payload["bundle"]["status"] == "AVAILABLE"
+    assert "perflo" not in result.stdout and "x402" not in result.stdout
+
+
+def test_investigate_purchase_human_output_paid_failure(tmp_path: Path) -> None:
+    database, run_id = _persisted_paid_failure(tmp_path)
+
+    result = runner.invoke(app, ["investigate-purchase", run_id, "--database", str(database)])
+
+    assert result.exit_code == 0, result.stderr
+    for heading in (
+        f"Purchase investigation: {run_id}",
+        "Verdict: PAID_FAILURE",
+        "What failed or remains unresolved:",
+        "Could money have moved?",
+        "Amount agreement:",
+        "Recipient agreement:",
+        "Delivery:",
+        "Activity agreement:",
+        "Contract drift:",
+        "Retry safety:",
+        "Evidence bundle:",
+    ):
+        assert heading in result.stdout
+    assert "service_execution: FAIL" in result.stdout
+    assert "paid_failure: FAIL" in result.stdout
+
+
+def test_investigate_purchase_reports_unavailable_bundle(tmp_path: Path) -> None:
+    database = tmp_path / "incomplete.sqlite3"
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(database)
+    repository.save(report)
+    repository.close()
+
+    result = runner.invoke(
+        app, ["investigate-purchase", report.run_id, "--database", str(database)]
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert "Evidence bundle: UNAVAILABLE" in result.stdout
+
+
+def test_investigate_purchase_rejects_corrupted_verdict(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+    connection = sqlite3.connect(database)
+    for table in ("run_records", "reports"):
+        row = connection.execute(
+            f"SELECT report_json FROM {table} WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        payload = json.loads(row[0])
+        payload["verdict"] = "UNVERIFIABLE"
+        connection.execute(
+            f"UPDATE {table} SET report_json = ? WHERE run_id = ?",
+            (json.dumps(payload), run_id),
+        )
+    connection.commit()
+    connection.close()
+
+    result = runner.invoke(app, ["investigate-purchase", run_id, "--database", str(database)])
+
+    assert result.exit_code == 2
+
+
+def test_investigate_purchase_makes_no_external_calls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import socket
+
+    def block(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("investigate-purchase attempted a network call")
+
+    monkeypatch.setattr(socket, "create_connection", block)
+    monkeypatch.setattr(socket.socket, "connect", block)
+    database, run_id = _persisted_fixture_report(tmp_path)
+
+    result = runner.invoke(app, ["investigate-purchase", run_id, "--database", str(database)])
+
+    assert result.exit_code == 0, result.stderr

@@ -147,6 +147,18 @@ tr:last-child > * { border-bottom: 0; }
 .artifact-card[open] summary { border-bottom: 1px solid var(--border); }
 .artifact-actions { display: flex; gap: .5rem; padding: .7rem .9rem 0; }
 .artifact-actions button { min-height: 2rem; border: 1px solid var(--border-strong); border-radius: .45rem; padding: .3rem .55rem; color: #d6d3ff; background: transparent; cursor: pointer; font: .72rem ui-monospace, SFMono-Regular, monospace; }
+.assurance-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: .9rem 1.4rem; margin: 0; }
+.assurance-list > div { min-width: 0; }
+.assurance-list dt { color: var(--muted); font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; }
+.assurance-list dd { margin: .25rem 0 0; }
+.issue-list { margin: 0; padding-left: 1.1rem; }
+.issue-list li { margin: .3rem 0; }
+.bundle-digest { word-break: break-all; }
+.timeline-heading { margin-top: 1.2rem; }
+.timeline-table { overflow-x: auto; }
+@media (max-width: 38rem) {
+  .assurance-list { grid-template-columns: 1fr; }
+}
 .artifact-json { max-height: 30rem; margin: .7rem .9rem .9rem; padding: .9rem; overflow: auto; border: 1px solid var(--border); border-radius: .55rem; background: #101215; color: #dce1e6; font: .74rem/1.55 ui-monospace, SFMono-Regular, monospace; white-space: pre; }
 .artifact-json.wrap-json { white-space: pre-wrap; }
 @media (min-width: 38.01rem) {

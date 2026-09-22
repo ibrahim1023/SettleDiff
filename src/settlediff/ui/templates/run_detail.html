@@ -12,6 +12,91 @@
     </div>
     <span class="verdict verdict-{{ report.verdict.value|lower }}">{{ report.verdict.value }}</span>
   </section>
+  <section class="panel assurance-panel" aria-labelledby="assurance-heading">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Persisted evidence only</p>
+        <h2 id="assurance-heading">Purchase assurance</h2>
+      </div>
+      <span class="verdict verdict-{{ investigation.verdict.value|lower }}">{{ investigation.verdict.value }}</span>
+    </div>
+    <dl class="assurance-list">
+      <div>
+        <dt>What failed or remains unresolved</dt>
+        <dd>
+          {% if investigation.issues %}
+            <ul class="issue-list">
+              {% for issue in investigation.issues %}
+                <li><span class="finding-status finding-{{ issue.status.value|lower }}">{{ issue.status.value }}</span> <strong>{{ issue.check_id }}</strong> — {{ issue.message }}</li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            none
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Could money have moved?</dt>
+        <dd>{% if investigation.money_movement %}<span class="finding-status finding-{{ investigation.money_movement.status.value|lower }}">{{ investigation.money_movement.status.value }}</span> {{ investigation.money_movement.message }}{% else %}UNAVAILABLE{% endif %}</dd>
+      </div>
+      <div>
+        <dt>Amount agreement</dt>
+        <dd>{% if investigation.amount_agreement %}<span class="finding-status finding-{{ investigation.amount_agreement.status.value|lower }}">{{ investigation.amount_agreement.status.value }}</span> {{ investigation.amount_agreement.message }}{% else %}UNAVAILABLE{% endif %}</dd>
+      </div>
+      <div>
+        <dt>Recipient agreement</dt>
+        <dd>{% if investigation.recipient_agreement %}<span class="finding-status finding-{{ investigation.recipient_agreement.status.value|lower }}">{{ investigation.recipient_agreement.status.value }}</span> {{ investigation.recipient_agreement.message }}{% else %}UNAVAILABLE{% endif %}</dd>
+      </div>
+      <div>
+        <dt>Delivery</dt>
+        <dd>{% if investigation.delivery %}{{ investigation.delivery.status.value }} — {{ investigation.delivery.reason_code }}{% else %}UNAVAILABLE{% endif %}</dd>
+      </div>
+      <div>
+        <dt>Activity agreement</dt>
+        <dd>
+          {% if investigation.activity_agreement %}
+            <ul class="issue-list">
+              {% for finding in investigation.activity_agreement %}
+                <li><span class="finding-status finding-{{ finding.status.value|lower }}">{{ finding.status.value }}</span> <strong>{{ finding.check_id }}</strong> — {{ finding.message }}</li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            UNAVAILABLE
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Contract drift</dt>
+        <dd>{% if investigation.drift %}{{ investigation.drift.status.value }}{% if investigation.drift.change_codes %} ({{ investigation.drift.change_codes|join(", ") }}){% endif %}{% else %}UNAVAILABLE{% endif %}</dd>
+      </div>
+      <div>
+        <dt>Retry safety</dt>
+        <dd>{% if investigation.retry %}{{ investigation.retry.safety.value }} ({{ investigation.retry.reason_codes|join(", ") }}){% else %}UNAVAILABLE{% endif %}</dd>
+      </div>
+      <div>
+        <dt>Evidence bundle</dt>
+        <dd>{% if investigation.bundle.bundle_sha256 %}<code class="bundle-digest">{{ investigation.bundle.bundle_sha256 }}</code>{% else %}UNAVAILABLE{% endif %}</dd>
+      </div>
+    </dl>
+    {% if investigation.timeline %}
+      <h3 class="timeline-heading">Evidence timeline</h3>
+      <div class="evidence-table timeline-table">
+        <table>
+          <thead><tr><th>Sequence</th><th>Source time</th><th>Observed</th><th>Source</th></tr></thead>
+          <tbody>
+            {% for event in investigation.timeline %}
+              <tr>
+                <td data-label="Sequence">{{ event.sequence }}</td>
+                <td data-label="Source time">{{ event.source_time.isoformat() if event.source_time else "unavailable" }}</td>
+                <td data-label="Observed">{{ event.observed_at.isoformat() }}</td>
+                <td data-label="Source">{{ event.source }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </section>
   <section class="panel evidence-panel">
     <div class="section-heading">
       <div>

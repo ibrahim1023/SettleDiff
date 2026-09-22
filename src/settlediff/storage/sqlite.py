@@ -429,6 +429,22 @@ class SQLiteReportRepository:
             ContractSnapshot.model_validate_json(cast(str, row[0]), strict=True) for row in rows
         )
 
+    def observed_contract_snapshots(self, target: str, rail: str) -> tuple[ContractSnapshot, ...]:
+        if rail not in {"perflo", "x402"}:
+            raise ValueError("unsupported contract snapshot rail")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT s.snapshot_json FROM contract_snapshots s "
+                "JOIN contract_snapshot_observations o "
+                "ON o.snapshot_digest = s.snapshot_digest "
+                "WHERE s.target = ? AND s.rail = ? "
+                "ORDER BY o.observation_id",
+                (target, rail),
+            ).fetchall()
+        return tuple(
+            ContractSnapshot.model_validate_json(cast(str, row[0]), strict=True) for row in rows
+        )
+
     def latest_contract_snapshot(self, target: str, rail: str) -> ContractSnapshot | None:
         if rail not in {"perflo", "x402"}:
             raise ValueError("unsupported contract snapshot rail")

@@ -19,6 +19,7 @@ from settlediff.application.bundle import (
     serialize_bundle,
     verify_bundle,
 )
+from settlediff.application.investigate import investigate_purchase
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import RunEvent, RunState
 from settlediff.cli import app
@@ -85,6 +86,17 @@ def test_complete_fixture_path_remains_offline(
         assert detail.status_code == 200
         assert report.verdict.value in detail.text
         assert "Expected · Executed · Recorded" in detail.text
+        assert "Purchase assurance" in detail.text
+        assert "Evidence timeline" in detail.text
+        investigation = investigate_purchase(repository, report.run_id)
+        assert investigation.verdict is report.verdict
+        investigated = runner.invoke(
+            app, ["investigate-purchase", report.run_id, "--database", str(database), "--json"]
+        )
+        assert investigated.exit_code == 0, investigated.output
+        payload = json.loads(investigated.stdout)
+        assert payload["verdict"] == report.verdict.value
+        assert payload["bundle"]["status"] in {"AVAILABLE", "UNAVAILABLE"}
     repository.close()
 
 
