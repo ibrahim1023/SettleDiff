@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <title>SettleDiff public report</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --background: #111315;
+        --surface: #181b1f;
+        --surface-raised: #1e2227;
+        --border: #30353c;
+        --text: #f3f4f6;
+        --muted: #a6adb7;
+        --accent: #a9a5ff;
+        --pass: #8ce0ae;
+        --warning: #efd07c;
+        --failure: #ffaaaa;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--background);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        line-height: 1.55;
+      }
+      .page-shell { max-width: 60rem; margin: 0 auto; padding: 1.5rem 1.2rem 4rem; }
+      h1, h2 { margin-top: 0; }
+      .brand { color: var(--muted); font-size: .86rem; margin-bottom: 2rem; }
+      .panel {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: .6rem;
+        padding: 1rem 1.2rem;
+        margin-bottom: 1.2rem;
+      }
+      .verdict { font-size: 1.4rem; font-weight: 700; color: var(--accent); }
+      table { width: 100%; border-collapse: collapse; }
+      th, td {
+        text-align: left;
+        padding: .4rem .6rem;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      th { color: var(--muted); font-weight: 600; font-size: .82rem; }
+      code { color: var(--accent); }
+      .status-PASS { color: var(--pass); }
+      .status-WARN { color: var(--warning); }
+      .status-FAIL, .status-DIFF { color: var(--failure); }
+      .muted { color: var(--muted); }
+      .table-wrap { overflow-x: auto; }
+      @media (max-width: 40rem) {
+        .page-shell { padding: 1rem .6rem 3rem; }
+        th, td { padding: .3rem .4rem; font-size: .85rem; }
+        .verdict { font-size: 1.15rem; }
+      }
+      dl { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; }
+      dt { color: var(--muted); }
+      dd { margin: 0; }
+      @media print {
+        body { background: #fff; color: #000; }
+        .panel { border-color: #999; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page-shell">
+      <p class="brand">SettleDiff public report</p>
+      <section class="panel">
+        <h1 class="verdict">{{ report.verdict.value }}</h1>
+        <dl>
+          <dt>Run</dt><dd><code>{{ report.public_run_id }}</code></dd>
+          <dt>Evidence through</dt><dd>{{ report.evidence_through.isoformat() }}</dd>
+          <dt>Source report schema</dt><dd>{{ report.source_report_schema_version }}</dd>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <h2>Findings</h2>
+        <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Finding</th><th>Check</th><th>Severity</th><th>Status</th><th>Fields</th></tr>
+          </thead>
+          <tbody>
+            {% for finding in report.findings %}
+            <tr>
+              <td><code>{{ finding.finding_id }}</code></td>
+              <td>{{ finding.check_id }}</td>
+              <td>{{ finding.severity.value }}</td>
+              <td class="status-{{ finding.status.value }}">{{ finding.status.value }}</td>
+              <td class="muted">{{ finding.field_paths | join(", ") }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </section>
+
+      {% if report.delivery is not none %}
+      <section class="panel">
+        <h2>Delivery</h2>
+        <dl>
+          <dt>Status</dt><dd>{{ report.delivery.status.value }}</dd>
+          <dt>Reason</dt><dd><code>{{ report.delivery.reason_code }}</code></dd>
+          {% if report.delivery.status_code is not none %}
+          <dt>HTTP status</dt><dd>{{ report.delivery.status_code }}</dd>
+          {% endif %}
+          {% if report.delivery.media_type is not none %}
+          <dt>Media type</dt><dd>{{ report.delivery.media_type }}</dd>
+          {% endif %}
+          {% if report.delivery.received_bytes is not none %}
+          <dt>Received bytes</dt><dd>{{ report.delivery.received_bytes }}</dd>
+          {% endif %}
+          {% if report.delivery.truncated is not none %}
+          <dt>Truncated</dt><dd>{{ report.delivery.truncated }}</dd>
+          {% endif %}
+        </dl>
+      </section>
+      {% endif %}
+
+      {% if report.retry is not none %}
+      <section class="panel">
+        <h2>Retry assessment</h2>
+        <dl>
+          <dt>Safety</dt><dd>{{ report.retry.safety.value }}</dd>
+          <dt>Reason codes</dt><dd><code>{{ report.retry.reason_codes | join(", ") }}</code></dd>
+        </dl>
+      </section>
+      {% endif %}
+
+      <section class="panel">
+        <h2>Evidence timeline</h2>
+        <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Source time</th><th>Observed</th><th>Source</th><th>Attributes</th></tr>
+          </thead>
+          <tbody>
+            {% for event in report.timeline %}
+            <tr>
+              <td>{{ event.sequence }}</td>
+              <td>{{ event.source_time.isoformat() if event.source_time else "—" }}</td>
+              <td>{{ event.observed_at.isoformat() }}</td>
+              <td><code>{{ event.source }}</code></td>
+              <td class="muted">
+                {% for name, value in event.attributes.items() %}{{ name }}={{ value }}{% if not loop.last %}, {% endif %}{% endfor %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

@@ -1615,3 +1615,98 @@ def test_bazaar_check_compares_persisted_paid_report(
     assert "PAID_EVIDENCE" not in checks
     assert database.read_bytes() == before
     assert "PAID_EVIDENCE" not in checks
+
+
+def test_publish_missing_run_fails_cleanly(tmp_path: Path) -> None:
+    database, _run_id = _persisted_fixture_report(tmp_path)
+    output = tmp_path / "public"
+
+    result = runner.invoke(
+        app, ["publish", "syn_missing", "--database", str(database), "--output", str(output)]
+    )
+
+    assert result.exit_code == 1
+    assert not output.exists()
+
+
+def test_publish_writes_exactly_three_public_files(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+    output = tmp_path / "public"
+
+    result = runner.invoke(
+        app, ["publish", run_id, "--database", str(database), "--output", str(output)]
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert sorted(entry.name for entry in output.iterdir()) == [
+        "index.html",
+        "public-manifest.json",
+        "report.json",
+    ]
+    for name in ("index.html", "report.json", "public-manifest.json"):
+        assert name in result.stdout
+    payload = json.loads((output / "report.json").read_text())
+    assert "integrity" not in payload and "objects" not in payload
+    html = (output / "index.html").read_bytes().lower()
+    assert b"<script" not in html and b"href=" not in html and b"src=" not in html
+
+
+def test_publish_refuses_existing_output_without_force(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+    output = tmp_path / "public"
+    output.mkdir()
+    (output / "stale.txt").write_text("stale")
+
+    refused = runner.invoke(
+        app, ["publish", run_id, "--database", str(database), "--output", str(output)]
+    )
+    assert refused.exit_code == 2
+    assert (output / "stale.txt").exists()
+
+    forced = runner.invoke(
+        app,
+        ["publish", run_id, "--database", str(database), "--output", str(output), "--force"],
+    )
+    assert forced.exit_code == 0, forced.stderr
+    assert sorted(entry.name for entry in output.iterdir()) == [
+        "index.html",
+        "public-manifest.json",
+        "report.json",
+    ]
+
+
+def test_publish_rejects_unsafe_public_content_with_exit_2(tmp_path: Path) -> None:
+    database, run_id = _persisted_fixture_report(tmp_path)
+    output = tmp_path / "public"
+    import sqlite3 as _sqlite3
+
+    connection = _sqlite3.connect(database)
+    row = connection.execute(
+        "SELECT report_json FROM run_records WHERE run_id = ?", (run_id,)
+    ).fetchone()
+    payload = json.loads(row[0])
+    payload["findings"][0]["finding_id"] = "bad finding id!"
+    connection.execute(
+        "UPDATE run_records SET report_json = ? WHERE run_id = ?",
+        (json.dumps(payload), run_id),
+    )
+    connection.execute(
+        "UPDATE reports SET report_json = ? WHERE run_id = ?",
+        (json.dumps(payload), run_id),
+    )
+    connection.commit()
+    connection.close()
+
+    result = runner.invoke(
+        app, ["publish", run_id, "--database", str(database), "--output", str(output)]
+    )
+
+    assert result.exit_code == 2
+    assert not output.exists()
+
+
+def test_publish_force_help_describes_directory() -> None:
+    result = runner.invoke(app, ["publish", "--help"])
+
+    assert result.exit_code == 0
+    assert "output directory" in result.stdout

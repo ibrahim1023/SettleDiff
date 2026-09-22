@@ -126,3 +126,43 @@ def test_schema_3_bundle_round_trip_from_persisted_fixture(tmp_path: Path) -> No
     assert sum(path.startswith("artifacts/a-") for path in bundle.objects) == 3
     assert verify_bundle(bundle) == redact_report(report)
     repository.close()
+
+
+def test_publication_of_persisted_fixture_remains_offline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def block_network(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("publication attempted a network connection")
+
+    monkeypatch.setattr(socket, "create_connection", block_network)
+    monkeypatch.setattr(socket.socket, "connect", block_network)
+
+    report = replay_fixture(Path("fixtures/x402-clean-success"))
+    repository = SQLiteReportRepository(tmp_path / "publish.sqlite3")
+    repository.save(report)
+    output = tmp_path.resolve() / "public"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "publish",
+            report.run_id,
+            "--database",
+            str(tmp_path / "publish.sqlite3"),
+            "--output",
+            str(output),
+        ],
+    )
+    repository.close()
+
+    assert result.exit_code == 0, result.stderr
+    files = sorted(entry.name for entry in output.iterdir())
+    assert files == ["index.html", "public-manifest.json", "report.json"]
+    html = (output / "index.html").read_bytes().lower()
+    assert b"<script" not in html and b"href=" not in html
+    manifest = json.loads((output / "public-manifest.json").read_text())
+    assert [entry["path"] for entry in manifest["objects"]] == [
+        "index.html",
+        "report.json",
+    ]
+    assert b"syn_x402_clean" not in (output / "report.json").read_bytes()

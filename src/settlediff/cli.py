@@ -46,6 +46,12 @@ from settlediff.application.payment_rails import (
     PaymentRailAdapter,
     SubmissionUncertainError,
 )
+from settlediff.application.publication import (
+    PublicationError,
+    PublicationNotFoundError,
+    build_publication,
+    write_publication,
+)
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
     InvestigationOutcome,
@@ -123,6 +129,10 @@ JSON_OPTION = typer.Option(False, "--json")
 OPTIONAL_DATABASE_OPTION = typer.Option(None, "--database")
 BUNDLE_OUTPUT_OPTION = typer.Option(..., "--output")
 BUNDLE_FORCE_OPTION = typer.Option(False, "--force", help="Replace an existing output file.")
+PUBLICATION_OUTPUT_OPTION = typer.Option(..., "--output")
+PUBLICATION_FORCE_OPTION = typer.Option(
+    False, "--force", help="Replace an existing output directory."
+)
 RAIL_OPTION = typer.Option(PaymentRail.PERFLO, "--rail")
 METHOD_OPTION = typer.Option(HttpMethod.POST, "--method")
 ALLOW_TESTNET_OPTION = typer.Option(False, "--allow-testnet")
@@ -1165,6 +1175,36 @@ def export_run(
         typer.echo(f"Could not write bundle: {error}", err=True)
         raise typer.Exit(code=2) from error
     typer.echo(f"Exported run {run_id} to {output}.")
+
+
+@app.command("publish")
+def publish_run(
+    run_id: str,
+    database: Path = DATABASE_OPTION,
+    output: Path = PUBLICATION_OUTPUT_OPTION,
+    force: bool = PUBLICATION_FORCE_OPTION,
+) -> None:
+    """Publish a deterministic allowlist public report for one persisted run."""
+    repository = SQLiteReportRepository(database)
+    try:
+        try:
+            files = build_publication(repository, run_id)
+        except PublicationNotFoundError as error:
+            typer.echo(str(error), err=True)
+            raise typer.Exit(code=1) from error
+        except PublicationError as error:
+            typer.echo(f"Could not publish: {error}", err=True)
+            raise typer.Exit(code=2) from error
+    finally:
+        repository.close()
+    try:
+        write_publication(files, output, force=force)
+    except (PublicationError, OSError) as error:
+        typer.echo(f"Could not publish: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    typer.echo(f"Published public report to {output}.")
+    for name in ("index.html", "report.json", "public-manifest.json"):
+        typer.echo(f"  {name}")
 
 
 @app.command("verify-bundle")
