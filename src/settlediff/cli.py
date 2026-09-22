@@ -32,7 +32,11 @@ from settlediff.agent.investigator import (
 from settlediff.agent.model import build_hyperfusion_model
 from settlediff.agent.tools import build_investigation_dependencies
 from settlediff.api.app import create_app
-from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
+from settlediff.application.auth import (
+    HttpResourceReference,
+    PaidExecutionCapability,
+    PaidExecutionRequest,
+)
 from settlediff.application.budget import InvestigationBudget, InvestigationBudgetState
 from settlediff.application.bundle import (
     BundleError,
@@ -588,9 +592,7 @@ def run(
     )
     request = PaidExecutionRequest(
         run_id=f"live_{uuid4().hex}",
-        target=url,
-        method=method.value,
-        body=parsed_body,
+        resource=HttpResourceReference(url=url, method=method.value, body=parsed_body),
         budget=Money(amount=amount, unit="USDC"),
     )
     repository: SQLiteReportRepository | None = None
@@ -862,9 +864,7 @@ async def _inspect_contract(url: str, rail: PaymentRail) -> AdapterEvidence:
         try:
             request = PaidExecutionRequest(
                 run_id=f"inspection_{uuid4().hex}",
-                target=url,
-                method="GET",
-                body=None,
+                resource=HttpResourceReference(url=url, method="GET", body=None),
                 budget=Money(amount=Decimal(1), unit="USDC"),
             )
             adapter = X402Adapter.for_inspection(X402ResourceClient(client))
@@ -881,9 +881,7 @@ async def _inspect_contract(url: str, rail: PaymentRail) -> AdapterEvidence:
         raise ValueError("url requires HTTPS without credentials or fragment")
     request = PaidExecutionRequest(
         run_id=f"inspection_{uuid4().hex}",
-        target=url,
-        method="POST",
-        body={},
+        resource=HttpResourceReference(url=url, method="POST", body={}),
         budget=Money(amount=Decimal(1), unit="USDC"),
     )
     return await PerfloAdapter(PerfloClient()).inspect(request)
@@ -991,9 +989,7 @@ def drift(
 async def _bazaar_challenge(endpoint: str) -> X402ResourceResponse:
     request = PaidExecutionRequest(
         run_id=f"inspection_{uuid4().hex}",
-        target=endpoint,
-        method="GET",
-        body=None,
+        resource=HttpResourceReference(url=endpoint, method="GET", body=None),
         budget=Money(amount=Decimal(1), unit="USDC"),
     )
     client = httpx.AsyncClient(follow_redirects=False)

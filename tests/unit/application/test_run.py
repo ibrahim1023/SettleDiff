@@ -11,6 +11,7 @@ from pydantic import JsonValue
 
 from settlediff.application.auth import (
     ConsumedPaidAuthorization,
+    HttpResourceReference,
     PaidExecutionCapability,
     PaidExecutionRequest,
 )
@@ -94,8 +95,7 @@ async def test_authorization_failure_emits_refused_terminal_event() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -127,8 +127,7 @@ async def test_execution_failure_emits_failed_terminal_event() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -165,8 +164,7 @@ async def test_uncertain_execution_verifies_without_a_second_paid_attempt() -> N
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -209,8 +207,7 @@ async def test_uncertain_submission_without_handle_remains_unresolved() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -273,8 +270,7 @@ async def test_recovery_state_distinguishes_submission_evidence(
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -463,8 +459,9 @@ async def test_collector_empty_activity_history_does_not_prove_non_submission() 
 async def test_live_preflight_accepts_embedded_schema(request_schema: JsonValue) -> None:
     request = PaidExecutionRequest(
         run_id="syn_current_contract",
-        target="https://example.invalid/search",
-        body={"query": "synthetic"},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={"query": "synthetic"}
+        ),
         budget=Money(amount=Decimal("0.02"), unit="USDC"),
     )
     contract: dict[str, JsonValue] = {
@@ -519,8 +516,9 @@ async def test_preflight_rejects_quote_outside_authorized_budget(
 ) -> None:
     request = PaidExecutionRequest(
         run_id="syn_quote_guard",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.05"), unit="USDC"),
     )
     contract: dict[str, JsonValue] = {
@@ -554,8 +552,9 @@ async def test_preflight_rejects_quote_outside_authorized_budget(
 async def test_execute_sends_the_preflight_quote_not_the_budget() -> None:
     request = PaidExecutionRequest(
         run_id="syn_quote_execute",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.05"), unit="USDC"),
     )
     sent: list[Money] = []
@@ -602,8 +601,9 @@ async def test_execute_sends_the_preflight_quote_not_the_budget() -> None:
 async def test_preflight_requires_a_quote_before_authorization() -> None:
     request = PaidExecutionRequest(
         run_id="syn_quote_missing",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.05"), unit="USDC"),
     )
 
@@ -635,8 +635,11 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target=report.contract.url if report.contract else "https://example.invalid",
-        body={},
+        resource=HttpResourceReference(
+            url=report.contract.url if report.contract else "https://example.invalid",
+            method="POST",
+            body={},
+        ),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
 
@@ -711,8 +714,11 @@ async def test_live_evidence_collector_accepts_a_non_perflo_adapter() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target=report.contract.url if report.contract else "https://example.invalid",
-        body={},
+        resource=HttpResourceReference(
+            url=report.contract.url if report.contract else "https://example.invalid",
+            method="POST",
+            body={},
+        ),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     contract_value = _fixture_data("contract.json")
@@ -803,8 +809,7 @@ async def test_collector_rejects_mislabeled_adapter_evidence(
 ) -> None:
     request = PaidExecutionRequest(
         run_id="syn_run",
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
 
@@ -842,8 +847,9 @@ async def test_collector_rejects_mislabeled_adapter_evidence(
 async def test_collector_preserves_uncertain_execution_evidence_and_reference() -> None:
     request = PaidExecutionRequest(
         run_id="syn_uncertain_adapter",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
 
@@ -984,8 +990,9 @@ def failing_collector(
 async def run_failing_collector(collector: LiveEvidenceCollector) -> MachineReport:
     request = PaidExecutionRequest(
         run_id="syn_run_context",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     await collector.preflight(request)
@@ -1150,8 +1157,9 @@ async def test_collector_never_calls_contextdev_for_a_successful_service() -> No
     )
     request = PaidExecutionRequest(
         run_id="syn_run_clean",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     await collector.preflight(request)
@@ -1261,8 +1269,7 @@ async def test_run_explains_only_after_machine_report_is_complete() -> None:
     report_before = report.model_dump_json()
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1320,8 +1327,7 @@ async def test_explanation_failure_returns_grounded_fallback(failure: str) -> No
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1401,8 +1407,7 @@ async def test_exhausted_model_budget_returns_fallback_without_calling_the_model
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1448,8 +1453,7 @@ async def test_tool_calls_are_accounted_against_the_budget() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1507,8 +1511,7 @@ async def test_token_budget_exhaustion_skips_model_without_mutating_report() -> 
     report_before = report.model_dump_json()
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1610,8 +1613,7 @@ async def test_run_emits_safe_state_and_boundary_telemetry() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1666,8 +1668,7 @@ async def test_metric_failure_cannot_change_the_report() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(

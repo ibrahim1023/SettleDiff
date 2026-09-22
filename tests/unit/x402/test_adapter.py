@@ -13,6 +13,7 @@ from pydantic import JsonValue
 
 from settlediff.application.auth import (
     ConsumedPaidAuthorization,
+    HttpResourceReference,
     PaidExecutionCapability,
     PaidExecutionRequest,
     PaymentTerms,
@@ -66,9 +67,7 @@ def required_header(payload: dict[str, JsonValue] | None = None) -> str:
 def request() -> PaidExecutionRequest:
     return PaidExecutionRequest(
         run_id="syn_x402_adapter",
-        target=TARGET,
-        method="POST",
-        body={"query": "synthetic"},
+        resource=HttpResourceReference(url=TARGET, method="POST", body={"query": "synthetic"}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
 

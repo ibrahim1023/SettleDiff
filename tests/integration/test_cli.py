@@ -16,7 +16,11 @@ from typer.testing import CliRunner
 
 from settlediff import __version__
 from settlediff.agent.grounding import fallback_explanation
-from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
+from settlediff.application.auth import (
+    HttpResourceReference,
+    PaidExecutionCapability,
+    PaidExecutionRequest,
+)
 from settlediff.application.payment_rails import AdapterEvidence
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
@@ -537,8 +541,7 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
 async def test_perflo_adapter_preserves_transaction_reference_alias(field: str) -> None:
     request = PaidExecutionRequest(
         run_id="syn_run",
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     authorization = await PaidExecutionCapability.issue(
@@ -562,8 +565,7 @@ async def test_perflo_adapter_preserves_transaction_reference_alias(field: str) 
 async def test_perflo_adapter_rejects_conflicting_transaction_references() -> None:
     request = PaidExecutionRequest(
         run_id="syn_run",
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     authorization = await PaidExecutionCapability.issue(

@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 from pydantic import JsonValue
 
-from settlediff.application.auth import PaidExecutionRequest
+from settlediff.application.auth import HttpResourceReference, PaidExecutionRequest
 from settlediff.domain.money import Money
 from settlediff.perflo.adapter import PerfloAdapter, PerfloClientPort
 from settlediff.perflo.parser import PerfloSuccessEnvelope
@@ -44,9 +44,9 @@ async def test_perflo_inspect_carries_raw_source_contract() -> None:
     adapter = PerfloAdapter(cast(PerfloClientPort, FakePerflo()))
     request = PaidExecutionRequest(
         run_id="syn_inspect",
-        target="https://example.invalid/search",
-        method="POST",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal(1), unit="USDC"),
     )
 

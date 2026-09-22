@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
@@ -58,14 +58,67 @@ class PaymentTerms(BaseModel):
         return self
 
 
+class HttpResourceReference(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    kind: Literal["http"] = "http"
+    url: NonEmptyStr
+    method: Literal["GET", "POST"]
+    body: JsonValue | None
+
+    @model_validator(mode="after")
+    def require_method_body(self) -> Self:
+        if self.method == "GET" and self.body is not None:
+            raise ValueError("GET resources cannot contain a request body")
+        return self
+
+
+class CatalogResourceReference(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    kind: Literal["catalog"] = "catalog"
+    slug: NonEmptyStr
+    input: dict[str, JsonValue]
+    query: dict[str, JsonValue]
+    sub_account: NonEmptyStr | None = None
+
+
+ResourceReference = Annotated[
+    HttpResourceReference | CatalogResourceReference,
+    Field(discriminator="kind"),
+]
+
+
 class PaidExecutionRequest(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
-    run_id: str
-    target: str
-    body: JsonValue | None
+    run_id: NonEmptyStr
+    resource: ResourceReference
     budget: Money
-    method: Literal["GET", "POST"] = "POST"
+
+    @property
+    def target(self) -> str:
+        return (
+            self.resource.url
+            if isinstance(self.resource, HttpResourceReference)
+            else self.resource.slug
+        )
+
+    @property
+    def method(self) -> Literal["GET", "POST"]:
+        return self.resource.method if isinstance(self.resource, HttpResourceReference) else "POST"
+
+    @property
+    def body(self) -> JsonValue | None:
+        return (
+            self.resource.body
+            if isinstance(self.resource, HttpResourceReference)
+            else self.resource.input
+        )
+
+    @property
+    def resource_digest(self) -> Sha256Digest:
+        return sha256_digest(self.resource.model_dump(mode="json"))
 
 
 class ConsumedPaidAuthorization:
@@ -74,8 +127,7 @@ class ConsumedPaidAuthorization:
     __slots__ = (
         "run_id",
         "target",
-        "_method",
-        "_body_digest",
+        "_resource_digest",
         "_budget",
         "_payment_terms_digest",
         "_proof",
@@ -85,7 +137,6 @@ class ConsumedPaidAuthorization:
         self,
         request: PaidExecutionRequest,
         *,
-        body_digest: str,
         payment_terms_digest: str | None,
         proof: object,
     ) -> None:
@@ -93,8 +144,7 @@ class ConsumedPaidAuthorization:
             raise TypeError("consumed authorization tokens cannot be constructed directly")
         self.run_id = request.run_id
         self.target = request.target
-        self._method = request.method
-        self._body_digest = body_digest
+        self._resource_digest = request.resource_digest
         self._budget = request.budget
         self._payment_terms_digest = payment_terms_digest
         self._proof = proof
@@ -105,12 +155,8 @@ class ConsumedPaidAuthorization:
             raise AuthorizationError("authorization token is invalid")
         if request.run_id != self.run_id:
             raise AuthorizationError("authorization does not cover this run")
-        if request.target != self.target:
-            raise AuthorizationError("authorization does not cover this target")
-        if request.method != self._method:
-            raise AuthorizationError("authorization does not cover this request method")
-        if PaidExecutionCapability.body_digest_for(request.body) != self._body_digest:
-            raise AuthorizationError("authorization does not cover this request body")
+        if request.resource_digest != self._resource_digest:
+            raise AuthorizationError("authorization does not cover this exact resource")
         if request.budget != self._budget:
             raise AuthorizationError("authorization does not cover this exact budget")
 
@@ -138,8 +184,7 @@ class PaidExecutionCapability:
         if expiry_offset is None or expiry_offset.total_seconds() != 0:
             raise ValueError("capability expiry must be timezone-aware UTC")
         self._run_id = request.run_id
-        self._target = request.target
-        self._method = request.method
+        self._resource_digest = request.resource_digest
         self._body_digest = self.body_digest_for(request.body)
         self._budget = request.budget
         if payment_terms is not None and (
@@ -196,12 +241,8 @@ class PaidExecutionCapability:
                 raise AuthorizationError("authorization expired")
             if request.run_id != self._run_id:
                 raise AuthorizationError("authorization does not cover this run")
-            if request.target != self._target:
-                raise AuthorizationError("authorization does not cover this target")
-            if request.method != self._method:
-                raise AuthorizationError("authorization does not cover this request method")
-            if self.body_digest_for(request.body) != self._body_digest:
-                raise AuthorizationError("authorization does not cover this request body")
+            if request.resource_digest != self._resource_digest:
+                raise AuthorizationError("authorization does not cover this exact resource")
             if request.budget != self._budget:
                 raise AuthorizationError("authorization does not cover this exact budget")
             payment_terms_digest = payment_terms.digest if payment_terms is not None else None
@@ -211,7 +252,6 @@ class PaidExecutionCapability:
             self._consumed = True
             return ConsumedPaidAuthorization(
                 request,
-                body_digest=self._body_digest,
                 payment_terms_digest=self._payment_terms_digest,
                 proof=_TOKEN_PROOF,
             )

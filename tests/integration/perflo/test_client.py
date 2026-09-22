@@ -10,6 +10,7 @@ import pytest
 
 from settlediff.application.auth import (
     AuthorizationError,
+    HttpResourceReference,
     PaidExecutionCapability,
     PaidExecutionRequest,
 )
@@ -40,8 +41,11 @@ def client(mode: str, *prefix_args: str, timeout: float = 1, limit: int = 2048) 
 def paid_request() -> PaidExecutionRequest:
     return PaidExecutionRequest(
         run_id="syn_run",
-        target="https://example.invalid/search?value=a b;$(ignored)",
-        body={"query": "synthetic value; $(ignored)"},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search?value=a b;$(ignored)",
+            method="POST",
+            body={"query": "synthetic value; $(ignored)"},
+        ),
         budget=Money(amount=Decimal("0.05"), unit="USDC"),
     )
 
@@ -96,7 +100,15 @@ async def test_invalid_quote_fails_before_process_start(quoted_price: Money) -> 
 @pytest.mark.asyncio
 async def test_authorization_mismatch_fails_before_process_start() -> None:
     request = paid_request()
-    changed = request.model_copy(update={"target": "https://example.invalid/changed"})
+    changed = request.model_copy(
+        update={
+            "resource": HttpResourceReference(
+                url="https://example.invalid/changed",
+                method="POST",
+                body={"query": "synthetic value; $(ignored)"},
+            )
+        }
+    )
     authorization = await capability(request).consume(request, now=NOW)
 
     with pytest.raises(AuthorizationError):

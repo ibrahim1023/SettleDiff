@@ -9,7 +9,7 @@ import httpx
 import pytest
 from pydantic import JsonValue
 
-from settlediff.application.auth import PaidExecutionRequest
+from settlediff.application.auth import HttpResourceReference, PaidExecutionRequest
 from settlediff.domain.money import Money
 from settlediff.x402.http import X402ResourceClient, X402ResourceError
 
@@ -19,9 +19,11 @@ def request(
 ) -> PaidExecutionRequest:
     return PaidExecutionRequest(
         run_id="syn_x402_http",
-        target="https://example.invalid/paid",
-        method=method,
-        body={} if body is None and method == "POST" else body,
+        resource=HttpResourceReference(
+            url="https://example.invalid/paid",
+            method=method,
+            body={} if body is None and method == "POST" else body,
+        ),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
 
@@ -70,7 +72,13 @@ async def test_resource_client_accepts_loopback_http_for_controlled_resource() -
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         client = X402ResourceClient(http)
         response = await client.challenge(
-            request().model_copy(update={"target": "http://127.0.0.1:4021/weather"})
+            request().model_copy(
+                update={
+                    "resource": HttpResourceReference(
+                        url="http://127.0.0.1:4021/weather", method="POST", body={}
+                    )
+                }
+            )
         )
 
     assert response.status_code == 402
@@ -97,7 +105,11 @@ async def test_resource_client_rejects_unsafe_target_before_request(target: str)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         client = X402ResourceClient(http)
         with pytest.raises(X402ResourceError, match="target"):
-            await client.challenge(request().model_copy(update={"target": target}))
+            await client.challenge(
+                request().model_copy(
+                    update={"resource": HttpResourceReference(url=target, method="POST", body={})}
+                )
+            )
 
     assert calls == 0
 

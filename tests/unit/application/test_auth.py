@@ -8,6 +8,8 @@ import pytest
 
 from settlediff.application.auth import (
     AuthorizationError,
+    CatalogResourceReference,
+    HttpResourceReference,
     PaidExecutionCapability,
     PaidExecutionRequest,
     PaymentTerms,
@@ -21,8 +23,11 @@ NOW = datetime(2026, 8, 13, 10, tzinfo=UTC)
 def request(**overrides: object) -> PaidExecutionRequest:
     values: dict[str, object] = {
         "run_id": "syn_run_001",
-        "target": "https://example.invalid/search",
-        "body": {"query": "synthetic"},
+        "resource": HttpResourceReference(
+            url="https://example.invalid/search",
+            method="POST",
+            body={"query": "synthetic"},
+        ),
         "budget": Money(amount=Decimal("0.05"), unit="USDC"),
     }
     return PaidExecutionRequest(**(values | overrides))  # type: ignore[arg-type]
@@ -75,8 +80,26 @@ async def test_exact_authorization_consumes_once() -> None:
     ("override", "message"),
     [
         ({"run_id": "syn_run_other"}, "run"),
-        ({"target": "https://example.invalid/other"}, "target"),
-        ({"body": {"query": "changed"}}, "body"),
+        (
+            {
+                "resource": HttpResourceReference(
+                    url="https://example.invalid/other",
+                    method="POST",
+                    body={"query": "synthetic"},
+                )
+            },
+            "exact resource",
+        ),
+        (
+            {
+                "resource": HttpResourceReference(
+                    url="https://example.invalid/search",
+                    method="POST",
+                    body={"query": "changed"},
+                )
+            },
+            "exact resource",
+        ),
         ({"budget": Money(amount=Decimal("0.06"), unit="USDC")}, "budget"),
         ({"budget": Money(amount=Decimal("0.04"), unit="USDC")}, "budget"),
         ({"budget": Money(amount=Decimal("0.05"), unit="USD")}, "budget"),
@@ -101,11 +124,114 @@ async def test_expired_authorization_fails_closed(checked_at: datetime) -> None:
 
 
 def test_canonical_body_digest_ignores_object_key_order() -> None:
-    first = request(body={"query": "synthetic", "limit": 3})
-    reordered = request(body={"limit": 3, "query": "synthetic"})
+    first = request(
+        resource=HttpResourceReference(
+            url="https://example.invalid/search",
+            method="POST",
+            body={"query": "synthetic", "limit": 3},
+        )
+    )
+    reordered = request(
+        resource=HttpResourceReference(
+            url="https://example.invalid/search",
+            method="POST",
+            body={"limit": 3, "query": "synthetic"},
+        )
+    )
     authorized = PaidExecutionCapability.issue(first, expires_at=NOW + timedelta(minutes=5))
 
     assert authorized.body_digest == PaidExecutionCapability.body_digest_for(reordered.body)
+
+
+def catalog_request(**overrides: object) -> PaidExecutionRequest:
+    values: dict[str, object] = {
+        "run_id": "syn_run_001",
+        "resource": CatalogResourceReference(
+            slug="synthetic-search",
+            input={"query": "synthetic"},
+            query={"limit": 3},
+            sub_account="synthetic-sub",
+        ),
+        "budget": Money(amount=Decimal("0.05"), unit="USDC"),
+    }
+    return PaidExecutionRequest(**(values | overrides))  # type: ignore[arg-type]
+
+
+def catalog_resource(**overrides: object) -> CatalogResourceReference:
+    values: dict[str, object] = {
+        "slug": "synthetic-search",
+        "input": {"query": "synthetic"},
+        "query": {"limit": 3},
+        "sub_account": "synthetic-sub",
+    }
+    return CatalogResourceReference(**(values | overrides))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "resource",
+    [
+        catalog_resource(slug="synthetic-other"),
+        catalog_resource(input={"query": "changed"}),
+        catalog_resource(query={"limit": 4}),
+        catalog_resource(sub_account="other-sub"),
+        catalog_resource(sub_account=None),
+        catalog_resource(input={"query": "synthetic", "limit": 3}, query={}),
+    ],
+)
+async def test_catalog_resource_changes_invalidate_capability(
+    resource: CatalogResourceReference,
+) -> None:
+    authorized = PaidExecutionCapability.issue(
+        catalog_request(), expires_at=NOW + timedelta(minutes=5)
+    )
+
+    with pytest.raises(AuthorizationError, match="exact resource"):
+        await authorized.consume(catalog_request(resource=resource), now=NOW)
+
+    assert (await authorized.consume(catalog_request(), now=NOW)).run_id == "syn_run_001"
+
+
+@pytest.mark.asyncio
+async def test_catalog_budget_unit_remains_an_exact_check() -> None:
+    authorized = PaidExecutionCapability.issue(
+        catalog_request(), expires_at=NOW + timedelta(minutes=5)
+    )
+
+    with pytest.raises(AuthorizationError, match="exact budget"):
+        await authorized.consume(
+            catalog_request(budget=Money(amount=Decimal("0.05"), unit="USD")), now=NOW
+        )
+
+
+@pytest.mark.asyncio
+async def test_consumed_catalog_authorization_rejects_changed_resource() -> None:
+    token = await PaidExecutionCapability.issue(
+        catalog_request(), expires_at=NOW + timedelta(minutes=5)
+    ).consume(catalog_request(), now=NOW)
+
+    with pytest.raises(AuthorizationError, match="exact resource"):
+        token.require_exact_request(catalog_request(resource=catalog_resource(query={"limit": 4})))
+
+
+def test_catalog_resource_digest_covers_input_and_query_separately() -> None:
+    combined = catalog_resource(input={"query": "synthetic", "limit": 3}, query={})
+    assert catalog_request(resource=combined).resource_digest != catalog_request().resource_digest
+
+
+def test_resource_digest_ignores_canonical_key_ordering() -> None:
+    ordered = catalog_resource(input={"a": 1, "b": 2}, query={"x": True, "y": None})
+    reordered = catalog_resource(input={"b": 2, "a": 1}, query={"y": None, "x": True})
+
+    assert (
+        catalog_request(resource=ordered).resource_digest
+        == catalog_request(resource=reordered).resource_digest
+    )
+
+
+def test_http_get_resource_cannot_contain_a_body() -> None:
+    with pytest.raises(ValueError, match="GET"):
+        HttpResourceReference(url="https://example.invalid", method="GET", body={})
 
 
 @pytest.mark.asyncio
@@ -265,7 +391,11 @@ async def test_consumed_authorization_rejects_changed_payment_terms() -> None:
 
 
 def test_get_request_with_absent_body_has_stable_digest() -> None:
-    get_request = request(method="GET", body=None)
+    get_request = request(
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="GET", body=None
+        )
+    )
 
     assert PaidExecutionCapability.body_digest_for(
         get_request.body
