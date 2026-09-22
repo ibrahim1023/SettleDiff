@@ -78,9 +78,13 @@ transfer. This enables deterministic advertised/executed/recorded comparison.
 
 ## Canonical model result
 
-Report schema 2 resolved the capture-established gaps without changing schema-v1 meaning. It added lossless network and asset identity, recipient and timeout fields, HTTP method and optional-body authorization, adapter provenance, and separate provider receipt versus independent ledger evidence. The selected payment terms are hashed into the one-use capability and revalidated immediately before signer launch.
+Report schema 2 resolved the capture-established gaps without changing schema-v1 meaning. It added lossless network and asset identity, recipient and timeout fields, HTTP method and optional-body authorization, adapter provenance, and separate provider receipt versus independent ledger evidence.
 
-Unavailable fields remain `None`/unknown rather than being inferred. Compatibility readers continue to accept schema-v1 reports and bundles that predate x402 metadata.
+Report schema 3 adds response-bound delivery and conservative retry assessments without changing the meaning of older reports. `PaymentTerms` schema 2 includes the canonical response-contract digest when a response contract is explicitly advertised. The one-use capability and the independently owned signer both reconstruct and revalidate the same terms before signed submission.
+
+The signer boundary is request schema 2 with result and metadata schema 3; signer-owned response observation records bounded status, media type, byte count, truncation, and parsed JSON when available.
+
+Unavailable fields remain `None`/unknown rather than being inferred. Compatibility readers continue to accept schema-v1 and schema-v2 reports plus schema-2 evidence bundles; exports emit bundle schema 3.
 
 ## Signed and settlement evidence
 

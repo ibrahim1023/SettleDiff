@@ -6,6 +6,8 @@ This cycle exercised the committed x402 v2 adapter against a controlled loopback
 
 This was not validation against an unrelated public x402 endpoint. That remains a separate compatibility step.
 
+> Historical note: this 2026-09-01 run predates response-contract binding and schema-3 signer results. The current compatibility contract is signer request schema 2, result and metadata schema 3, and schema-2 `PaymentTerms` carrying the advertised response-contract digest, as validated in the [2026-09-22 assurance report](assurance-real-world-validation-2026-09-22.md).
+
 ## Authorized terms
 
 | Field | Authorized value |

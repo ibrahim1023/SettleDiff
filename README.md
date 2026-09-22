@@ -178,6 +178,8 @@ see [public endpoint validation](docs/testing/x402-public-endpoint-validation.md
 [assurance real-world validation](docs/testing/assurance-real-world-validation-2026-09-22.md)
 exercises response-bound signer compatibility, historical timeline migration, clean delivery,
 conservative unresolved HTTP-500 handling, bundles, publication, and UI restart behavior.
+The clean response-bound cycle passed 13 deterministic checks, while the signed
+HTTP-500 result remained `UNVERIFIABLE` because settlement evidence was absent.
 Submission recovery is read-only: confirmed and reverted receipts both prove transmission, while missing,
 pending, malformed, or unavailable evidence remains unresolved. Only explicit
 pre-transmission proof can establish non-submission. Direct MPP clients and other payment rails remain

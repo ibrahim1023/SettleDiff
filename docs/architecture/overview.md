@@ -77,8 +77,10 @@ and aliases no longer cross into application services. The verdict, check, and
 matching layers contain no adapter-specific branching. The x402 package now provides
 bounded offline v2 challenge/settlement-response parsing and explicit Base Sepolia test
 USDC normalization. It also defines the versioned request/result contract for an
-independently owned signer and a shell-free, one-shot, bounded subprocess client. The
-client launches with a controlled environment that does not inherit wallet keys; the
+independently owned signer (request schema 2, result and metadata schema 3) and a
+shell-free, one-shot, bounded subprocess client. Before signing, the signer
+reconstructs schema-2 `PaymentTerms`, including the advertised response-contract
+digest when `resource.mimeType` exists. The client launches with a controlled environment that does not inherit wallet keys; the
 external signer is responsible for acquiring signing authority without returning secret
 material. Offline independent settlement verification uses a bounded read-only JSON-RPC
 port and requires the Base Sepolia chain ID plus exactly one matching USDC transfer event
@@ -98,7 +100,10 @@ authorized Base Sepolia cycle and one independently operated GoPlausible test en
 cycle. The public challenge demonstrated that bounded unsupported alternatives may follow
 a strict supported primary requirement; selection remains pinned to index zero, and an
 unsupported primary still fails closed. The signer implementation remains independently
-owned and outside the tracked application.
+owned and outside the tracked application. The 2026-09-22 controlled cycle
+validated response-bound clean delivery, while an HTTP-500 signed submission
+without a provider transaction reference remained `UNVERIFIABLE` and was not
+retried.
 
 ## Components
 
@@ -110,7 +115,7 @@ Owns strict canonical models, normalization, activity matching, independent chec
 
 The domain accepts canonical protocol identifiers without a provider registry and imports neither payment adapter. Provider-specific envelopes, versions, facilitator behavior, and transport branches remain inside adapter packages; the application core depends only on rail-neutral ports and canonical evidence.
 
-Coordinate live investigations and fixture replay. They create run IDs, authorization capabilities, evidence timelines, and invoke ports in a fixed safety order. After preflight they create a versioned canonical payment-terms descriptor covering adapter/version, scheme, network/legacy chain, asset identity, recipient, quote, timeout, resource, method, and body digest. Its SHA-256 digest is bound into the one-use capability and revalidated immediately before adapter execution. They do not duplicate verification rules.
+Coordinate live investigations and fixture replay. They create run IDs, authorization capabilities, evidence timelines, and invoke ports in a fixed safety order. After preflight they create a versioned canonical payment-terms descriptor covering adapter/version, scheme, network/legacy chain, asset identity, recipient, quote, timeout, resource, method, body digest, and the advertised response-contract digest when present. Its SHA-256 digest is bound into the one-use capability and revalidated immediately before adapter execution and signer launch. They do not duplicate verification rules.
 
 ### Perflo adapter
 
@@ -118,7 +123,7 @@ Runs a narrow allowlist of Perflo CLI commands through argument-based subprocess
 
 ### x402 adapter
 
-Issues bounded unsigned GET/POST challenge requests without redirects. Remote resources require HTTPS; HTTP is accepted only when URL parsing proves the host is loopback. It strictly parses x402 v2 exact/Base-Sepolia/test-USDC terms, revalidates them against the consumed capability, launches one independently owned signer process, normalizes provider settlement separately, and exposes bounded independent receipt/transfer evidence through the same application port.
+Issues bounded unsigned GET/POST challenge requests without redirects. Remote resources require HTTPS; HTTP is accepted only when URL parsing proves the host is loopback. It strictly parses x402 v2 exact/Base-Sepolia/test-USDC terms, revalidates them against the consumed capability, launches one independently owned signer process, preserves signer-owned bounded paid-response facts (status, media type, byte count, truncation, bounded parsed JSON) for deterministic delivery validation, normalizes provider settlement separately, and exposes bounded independent receipt/transfer evidence through the same application port.
 
 ### Investigation Agent
 
@@ -150,7 +155,7 @@ high-confidence, the canonical status is `CONFIRMED`, and a normalized amount is
 
 ### Storage
 
-SQLite schema 5 creates a durable run record before live preflight, appends redacted events and artifacts during execution, and attaches the final report, explanation, and immutable evidence timeline when available. Timeline rows are insert-only: they are written once in the same transaction as the final report and are never updated or deleted individually. Timeline source timestamps are used only when canonical evidence supplies them; otherwise observation time and generation order provide a deterministic supported partial order, not a claim of exact chronology. Failed and refused runs remain inspectable without a final report. Every run records `fixture`, `controlled_live`, or `external_live` provenance. Fixtures remain versioned JSON so CI and demos do not depend on a database.
+SQLite schema 4 creates and backfills durable run records, events, artifacts, and explanations; schema 5 adds insert-only evidence timelines; schema 6 adds immutable content-addressed contract snapshots plus append-only observations. A run record is created before live preflight, redacted events and artifacts are appended during execution, and finalization writes the report, explanation, and immutable timeline atomically in one transaction. Timeline rows are written once and never updated or deleted individually. Repository open deterministically backfills only missing timelines for finalized pre-schema-5 records from persisted report, events, and artifacts; unavailable source times remain null, existing timelines are never rewritten, and historical evidence is preserved. Timeline source timestamps are used only when canonical evidence supplies them; otherwise observation time and generation order provide a deterministic supported partial order, not a claim of exact chronology. Failed and refused runs remain inspectable without a final report. Every run records `fixture`, `controlled_live`, or `external_live` provenance. Fixtures remain versioned JSON so CI and demos do not depend on a database.
 
 ### Interfaces
 

@@ -6,6 +6,8 @@ This cycle validated the schema-4 durable run ledger, active UI visibility, sche
 
 The purchased resource was the controlled loopback x402 reference weather route. Its response is synthetic; the payment and Base Sepolia settlement are real testnet activity.
 
+> Historical note: this 2026-09-03 run records then-current schema-2 signer behavior. The current response-bound signer contract is request schema 2, result and metadata schema 3, and is validated in the [2026-09-22 assurance report](assurance-real-world-validation-2026-09-22.md).
+
 ## Readiness and authorization
 
 `settlediff doctor --rail x402` established before authorization that:
