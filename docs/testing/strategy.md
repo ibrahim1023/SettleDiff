@@ -231,7 +231,7 @@ The cross-cutting evidence surfaces each have focused tests plus one cohesive en
 | Bazaar comparison | Embedded declaration fields compare objectively; paid evidence stays unavailable without a paid report |
 | Purchase investigation | Persisted findings, delivery, retry, timeline, and bundle availability project unchanged into the recap |
 | Public publication | Exactly three static files, masked run ID, allowlisted fields only |
-| Storage migration | A schema-4 database upgrades through migrations 5 and 6 without losing reports or events |
+| Storage migration | A schema-4 database upgrades through migrations 5 and 6 preserving reports, events, artifacts, and explanation, with deterministic timeline backfill for historical runs |
 
 `test_cross_feature_assurance_demo_remains_offline` in
 `tests/integration/test_offline_release.py` and

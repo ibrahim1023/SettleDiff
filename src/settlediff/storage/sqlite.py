@@ -56,6 +56,34 @@ class SQLiteReportRepository:
                     self._connection.execute(
                         "INSERT INTO schema_migrations(version) VALUES (?)", (version,)
                     )
+            self._backfill_missing_timelines()
+
+    def _backfill_missing_timelines(self) -> None:
+        rows = self._connection.execute(
+            "SELECT run_id, report_json FROM run_records WHERE report_json IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM evidence_timeline_events e "
+            "WHERE e.run_id = run_records.run_id) ORDER BY run_id"
+        ).fetchall()
+        for run_id_raw, report_json in rows:
+            run_id = cast(str, run_id_raw)
+            report = MachineReport.model_validate_json(cast(str, report_json))
+            events = tuple(
+                RunEvent.model_validate_json(cast(str, row[0]))
+                for row in self._connection.execute(
+                    "SELECT event_json FROM run_record_events WHERE run_id = ? ORDER BY position",
+                    (run_id,),
+                ).fetchall()
+            )
+            artifacts = tuple(
+                EvidenceArtifact.model_validate_json(cast(str, row[0]))
+                for row in self._connection.execute(
+                    "SELECT artifact_json FROM run_record_artifacts WHERE run_id = ? "
+                    "ORDER BY artifact_id",
+                    (run_id,),
+                ).fetchall()
+            )
+            timeline = build_evidence_timeline(report, events, artifacts)
+            self._insert_timeline(run_id, timeline)
 
     def check_writable(self) -> None:
         with self._lock:

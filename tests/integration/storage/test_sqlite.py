@@ -785,6 +785,34 @@ def test_database_schema_four_copy_migrates_through_every_new_migration(
             "INSERT INTO run_events(run_id, position, event_json) VALUES (?, 0, ?)",
             (report.run_id, event.model_dump_json()),
         )
+        artifact = EvidenceArtifact(
+            artifact_id=f"{report.run_id}:migration_contract",
+            artifact_type=ArtifactType.SERVICE_CONTRACT,
+            source="synthetic.migration",
+            collected_at=report.intent.created_at,
+            redacted=True,
+            data={"synthetic": True},
+        )
+        connection.execute(
+            "INSERT INTO artifacts(run_id, artifact_id, artifact_json) VALUES (?, ?, ?)",
+            (report.run_id, artifact.artifact_id, artifact.model_dump_json()),
+        )
+        explanation = ExplanationRecord(
+            explanation=InvestigationExplanation(
+                run_id=report.run_id,
+                summary="Synthetic migration explanation.",
+                evidence_used=(artifact.artifact_id,),
+                finding_ids=tuple(f.finding_id for f in report.findings),
+                deterministic_verdict=report.verdict,
+                recommended_next_step=None,
+            ),
+            source=ExplanationSource.FALLBACK,
+            tool_calls=0,
+        )
+        connection.execute(
+            "INSERT INTO explanations(run_id, explanation_json) VALUES (?, ?)",
+            (report.run_id, explanation.model_dump_json()),
+        )
         migration_four = next(migrations.glob("004_*.sql"))
         connection.executescript(migration_four.read_text())
         connection.execute("INSERT INTO schema_migrations(version) VALUES (4)")
@@ -802,6 +830,24 @@ def test_database_schema_four_copy_migrates_through_every_new_migration(
         record_events = connection.execute(
             "SELECT event_json FROM run_record_events WHERE run_id = ?", (report.run_id,)
         ).fetchall()
+        legacy_artifacts = connection.execute(
+            "SELECT artifact_json FROM artifacts WHERE run_id = ?", (report.run_id,)
+        ).fetchall()
+        record_artifacts = connection.execute(
+            "SELECT artifact_json FROM run_record_artifacts WHERE run_id = ?",
+            (report.run_id,),
+        ).fetchall()
+        legacy_explanations = connection.execute(
+            "SELECT explanation_json FROM explanations WHERE run_id = ?", (report.run_id,)
+        ).fetchall()
+        record_explanations = connection.execute(
+            "SELECT explanation_json FROM run_record_explanations WHERE run_id = ?",
+            (report.run_id,),
+        ).fetchall()
+        timeline_rows = connection.execute(
+            "SELECT COUNT(*) FROM evidence_timeline_events WHERE run_id = ?",
+            (report.run_id,),
+        ).fetchone()[0]
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master").fetchall()}
         triggers = {
             row[0]
@@ -810,8 +856,12 @@ def test_database_schema_four_copy_migrates_through_every_new_migration(
             ).fetchall()
         }
     assert len(legacy_events) == 1 and len(record_events) == 1
+    assert len(legacy_artifacts) == 1 and len(record_artifacts) == 1
+    assert len(legacy_explanations) == 1 and len(record_explanations) == 1
     assert repository.get(report.run_id) == redact_report(report)
     assert repository.events(report.run_id) == (event,)
+    assert repository.artifacts(report.run_id) == (artifact,)
+    assert repository.explanation(report.run_id) == explanation
     assert "evidence_timeline_events" in tables
     assert {"contract_snapshots", "contract_snapshot_observations"} <= tables
     assert triggers == {
@@ -821,9 +871,12 @@ def test_database_schema_four_copy_migrates_through_every_new_migration(
         "contract_snapshot_observations_no_delete",
     }
 
-    repository.save(report)
-    assert repository.timeline(report.run_id)
-    assert repository.get(report.run_id) == redact_report(report)
+    timeline = repository.timeline(report.run_id)
+    assert timeline
+    assert timeline_rows == len(timeline)
+    migrated = next(e for e in timeline if e.source == "synthetic.migration")
+    assert artifact.artifact_id in migrated.artifact_ids
+    assert migrated.source_time is None
 
     assert report.contract is not None
     snapshot = build_contract_snapshot(
@@ -838,5 +891,11 @@ def test_database_schema_four_copy_migrates_through_every_new_migration(
         versions = {
             row[0] for row in connection.execute("SELECT version FROM schema_migrations").fetchall()
         }
+        reopened_rows = connection.execute(
+            "SELECT COUNT(*) FROM evidence_timeline_events WHERE run_id = ?",
+            (report.run_id,),
+        ).fetchone()[0]
     assert versions == {1, 2, 3, 4, 5, 6}
+    assert reopened_rows == len(timeline)
+    assert reopened.timeline(report.run_id) == timeline
     reopened.close()

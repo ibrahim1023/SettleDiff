@@ -19,7 +19,7 @@ SettleDiff is MIT-licensed and versioned (`0.1.0`). No public distribution chann
 - [ ] Every x402 fixture replays with its expected findings and verdict.
 - [ ] Cross-rail semantic-equivalence and adapter anti-coupling tests pass.
 - [ ] Schema-v1 reports remain readable; schema-2 bundles verify unchanged while exports emit schema 3.
-- [ ] A schema-4 database migrates forward through migrations 5 (evidence timeline) and 6 (immutable contract snapshots and observations).
+- [ ] A schema-4 database migrates forward through migrations 5 (evidence timeline) and 6 (immutable contract snapshots and observations), preserving report, events, artifacts, and explanation with idempotent timeline backfill on open.
 - [ ] The cohesive offline release tests cover delivery, timeline, retry, persisted drift, embedded Bazaar comparison, purchase investigation, and public publication without external calls.
 - [ ] Bundle checksum changes and internal inconsistencies are rejected; authenticated provenance is not claimed.
 - [ ] Public reports contain only the masked allowlist and publish exactly three static files.
