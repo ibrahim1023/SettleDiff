@@ -220,6 +220,30 @@ SETTLEDIFF_LIVE_CONTEXTDEV=1 uv run pytest -m live_contextdev
 
 Paid compatibility uses the interactive `settlediff run` command with exact owner-approved terms. There is no automated paid pytest target.
 
+## Assurance and release hardening
+
+The cross-cutting evidence surfaces each have focused tests plus one cohesive end-to-end check:
+
+| Surface | Guarantee exercised |
+|---|---|
+| Evidence bundle | Schema-3 export is byte-reproducible, and a mutated `bundle_sha256` is rejected by `verify_bundle` |
+| Contract drift | Chronological snapshot observations (including repeats) drive then/now comparison |
+| Bazaar comparison | Embedded declaration fields compare objectively; paid evidence stays unavailable without a paid report |
+| Purchase investigation | Persisted findings, delivery, retry, timeline, and bundle availability project unchanged into the recap |
+| Public publication | Exactly three static files, masked run ID, allowlisted fields only |
+| Storage migration | A schema-4 database upgrades through migrations 5 and 6 without losing reports or events |
+
+`test_cross_feature_assurance_demo_remains_offline` in
+`tests/integration/test_offline_release.py` and
+`test_database_schema_four_copy_migrates_through_every_new_migration` in
+`tests/integration/storage/test_sqlite.py` together cover this matrix: the first exercises the
+bundle, drift, Bazaar, investigation, and publication rows in one fixture-first pass with every
+socket blocked — proving the composite assurance story makes no network, model, signer, RPC,
+facilitator, or paid calls — while the second proves the storage-migration row. All fixtures are
+synthetic or explicitly authorized sanitized captures, and provenance (fixture, controlled-live,
+external-live) is labeled honestly in the ledger — synthetic evidence is never presented as a
+live result.
+
 ## Coverage policy
 
 Coverage is diagnostic rather than a substitute for behavioral evidence. No percentage threshold is currently enforced. Verdict precedence, paid authorization, submission uncertainty, and redaction require explicit positive, negative, and boundary tests; meaningless assertions added only to raise a percentage are rejected.

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from pydantic import JsonValue
 
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import RunEvent, RunFailure, RunProvenance, RunState, RunTimeline
@@ -15,6 +16,7 @@ from settlediff.application.timeline import (
     EvidenceTimelineEvent,
     build_evidence_timeline,
 )
+from settlediff.domain.drift import build_contract_snapshot
 from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
@@ -687,10 +689,6 @@ def test_partial_run_exposes_events_and_artifacts_with_empty_timeline(
 def test_observed_contract_snapshots_preserve_observation_order(
     tmp_path: Path,
 ) -> None:
-    from pydantic import JsonValue
-
-    from settlediff.domain.drift import build_contract_snapshot
-
     report = replay_fixture(Path("fixtures/x402-clean-success"))
     repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
     repository.save(report)
@@ -722,10 +720,6 @@ def test_observed_contract_snapshots_preserve_observation_order(
 
 
 def test_observed_contract_snapshots_read_does_not_mutate(tmp_path: Path) -> None:
-    from pydantic import JsonValue
-
-    from settlediff.domain.drift import build_contract_snapshot
-
     report = replay_fixture(Path("fixtures/x402-clean-success"))
     repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
     repository.save(report)
@@ -769,3 +763,80 @@ def test_observed_contract_snapshots_rejects_unsupported_rail(tmp_path: Path) ->
     with pytest.raises(ValueError, match="unsupported contract snapshot rail"):
         repository.observed_contract_snapshots("https://example.invalid/x", "other")
     repository.close()
+
+
+def test_database_schema_four_copy_migrates_through_every_new_migration(
+    tmp_path: Path,
+) -> None:
+    migrations = Path("src/settlediff/storage/migrations")
+    database = tmp_path / "legacy.sqlite3"
+    report = replay_fixture(Path("fixtures/clean-success"))
+    event = RunEvent(state=RunState.COMPLETE, occurred_at=report.intent.created_at)
+    with closing(sqlite3.connect(database)) as connection:
+        for version in range(1, 4):
+            sql = next(migrations.glob(f"{version:03d}_*.sql")).read_text()
+            connection.executescript(sql)
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+        connection.execute(
+            "INSERT INTO reports(run_id, report_json) VALUES (?, ?)",
+            (report.run_id, redact_report(report).model_dump_json()),
+        )
+        connection.execute(
+            "INSERT INTO run_events(run_id, position, event_json) VALUES (?, 0, ?)",
+            (report.run_id, event.model_dump_json()),
+        )
+        migration_four = next(migrations.glob("004_*.sql"))
+        connection.executescript(migration_four.read_text())
+        connection.execute("INSERT INTO schema_migrations(version) VALUES (4)")
+        connection.commit()
+
+    repository = SQLiteReportRepository(database)
+    with closing(sqlite3.connect(database)) as connection:
+        versions = {
+            row[0] for row in connection.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+        assert versions == {1, 2, 3, 4, 5, 6}
+        legacy_events = connection.execute(
+            "SELECT event_json FROM run_events WHERE run_id = ?", (report.run_id,)
+        ).fetchall()
+        record_events = connection.execute(
+            "SELECT event_json FROM run_record_events WHERE run_id = ?", (report.run_id,)
+        ).fetchall()
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master").fetchall()}
+        triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            ).fetchall()
+        }
+    assert len(legacy_events) == 1 and len(record_events) == 1
+    assert repository.get(report.run_id) == redact_report(report)
+    assert repository.events(report.run_id) == (event,)
+    assert "evidence_timeline_events" in tables
+    assert {"contract_snapshots", "contract_snapshot_observations"} <= tables
+    assert triggers == {
+        "contract_snapshots_no_update",
+        "contract_snapshots_no_delete",
+        "contract_snapshot_observations_no_update",
+        "contract_snapshot_observations_no_delete",
+    }
+
+    repository.save(report)
+    assert repository.timeline(report.run_id)
+    assert repository.get(report.run_id) == redact_report(report)
+
+    assert report.contract is not None
+    snapshot = build_contract_snapshot(
+        report.contract.url, "perflo", report.contract, cast(JsonValue, {"v": 1})
+    )
+    repository.save_contract_snapshot(snapshot, datetime(2026, 9, 1, tzinfo=UTC))
+    assert repository.latest_contract_snapshot(report.contract.url, "perflo") == snapshot
+    repository.close()
+
+    reopened = SQLiteReportRepository(database)
+    with closing(sqlite3.connect(database)) as connection:
+        versions = {
+            row[0] for row in connection.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+    assert versions == {1, 2, 3, 4, 5, 6}
+    reopened.close()

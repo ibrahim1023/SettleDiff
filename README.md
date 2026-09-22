@@ -221,20 +221,35 @@ These commands are offline fixture replay. They do not configure or invoke Perfl
 
 ```bash
 uv sync --locked --all-groups
-uv run settlediff verify-fixture fixtures/paid-failure --database /tmp/settlediff-demo.sqlite3
-uv run settlediff verify-fixture fixtures/failed-broadcast --database /tmp/settlediff-demo.sqlite3
-uv run settlediff show syn_run_failed_broadcast --database /tmp/settlediff-demo.sqlite3
+uv run settlediff verify-fixture fixtures/x402-clean-success --database /tmp/settlediff-demo.sqlite3
+uv run settlediff verify-fixture fixtures/x402-paid-failure --database /tmp/settlediff-demo.sqlite3
+uv run settlediff retry-analysis syn_x402_paid_failure --database /tmp/settlediff-demo.sqlite3
+uv run settlediff investigate-purchase syn_x402_clean --database /tmp/settlediff-demo.sqlite3
+uv run settlediff publish syn_x402_clean --database /tmp/settlediff-demo.sqlite3 --output /tmp/settlediff-public
 uv run settlediff serve --database /tmp/settlediff-demo.sqlite3
 ```
 
-The first command prints `PAID_FAILURE`: settlement proven, service failed. The second
-prints `UNVERIFIABLE` and is the more interesting case: it was distilled from the real paid
-run above, where the advertised chain differed from execution and the vendor replayed a 402
-challenge after credential submission. The failed Activity record is matched to its
-transaction but is not treated as proof of settlement.
+The fixture commands print `VERIFIED` and `PAID_FAILURE` respectively — the latter records a
+settled payment whose purchased service failed. `retry-analysis` conservatively classifies
+already-persisted evidence and never sends or retries a request. `investigate-purchase`
+reconstructs the purchase recap from persisted evidence only and explicitly reports
+unavailable sections or bundle when the database lacks full persisted evidence — the bare
+`verify-fixture` seed stores the report without every cited artifact. `publish` emits exactly
+three masked allowlisted files (`index.html`, `report.json`, `public-manifest.json`).
 
 Then open `http://127.0.0.1:8765/runs` to inspect the persisted Expected, Executed, and
-Recorded evidence. The list refreshes from the shared SQLite ledger, distinguishes fixture, controlled-live, and external-live provenance, and retains active or failed runs before a final report exists. This demo never contacts a model, Perflo, or a paid service.
+Recorded evidence plus the Purchase assurance and Evidence timeline panels on each run. The
+list refreshes from the shared SQLite ledger, distinguishes fixture, controlled-live, and
+external-live provenance, and retains active or failed runs before a final report exists.
+This demo never contacts a model, Perflo, or a paid service.
+
+The cohesive `test_cross_feature_assurance_demo_remains_offline` in
+`tests/integration/test_offline_release.py` — not these seed commands — persists a complete
+synthetic evidence set and proves, with all sockets blocked, byte-stable schema-3 bundle
+export and verification, deliberate tamper rejection, delivery, timeline, retry, then/now
+contract drift, embedded Bazaar comparison, publication masking, and exact function/CLI JSON
+agreement. Facilitator comparison is intentionally absent: ADR 0009 defers it because
+per-run provenance is not recorded.
 
 For a live call, `settlediff run --url URL --body JSON --budget AMOUNT` retains Perflo as
 the temporary default. Select x402 explicitly with `--rail x402 --allow-testnet`; configure

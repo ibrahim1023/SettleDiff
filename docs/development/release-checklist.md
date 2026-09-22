@@ -5,6 +5,7 @@ SettleDiff is MIT-licensed and versioned (`0.1.0`). No public distribution chann
 ## Offline quality gate
 
 - [ ] `uv lock --check`
+- [ ] `uv sync --locked --all-groups`
 - [ ] `uv run ruff format --check .`
 - [ ] `uv run ruff check .`
 - [ ] `uv run pyright`
@@ -17,8 +18,18 @@ SettleDiff is MIT-licensed and versioned (`0.1.0`). No public distribution chann
 - [ ] Every original Perflo fixture retains its accepted verdict.
 - [ ] Every x402 fixture replays with its expected findings and verdict.
 - [ ] Cross-rail semantic-equivalence and adapter anti-coupling tests pass.
-- [ ] Schema-v1 reports, pre-x402 bundle metadata, and existing SQLite migrations remain readable.
+- [ ] Schema-v1 reports remain readable; schema-2 bundles verify unchanged while exports emit schema 3.
+- [ ] A schema-4 database migrates forward through migrations 5 (evidence timeline) and 6 (immutable contract snapshots and observations).
+- [ ] The cohesive offline release tests cover delivery, timeline, retry, persisted drift, embedded Bazaar comparison, purchase investigation, and public publication without external calls.
 - [ ] Bundle checksum changes and internal inconsistencies are rejected; authenticated provenance is not claimed.
+- [ ] Public reports contain only the masked allowlist and publish exactly three static files.
+- [ ] Facilitator comparison remains deferred under ADR 0009 (per-run provenance is absent); it is not claimed.
+
+Run the cohesive release-hardening test directly:
+
+```bash
+uv run pytest tests/integration/test_offline_release.py tests/integration/storage/test_sqlite.py -q
+```
 
 Run the demonstrated cross-rail pairs directly:
 
@@ -29,14 +40,7 @@ uv run settlediff verify-fixture fixtures/paid-failure --json
 uv run settlediff verify-fixture fixtures/x402-paid-failure --json
 ```
 
-Exercise export and integrity verification in a temporary directory:
-
-```bash
-release_tmp="$(mktemp -d)"
-uv run settlediff verify-fixture fixtures/x402-clean-success --database "$release_tmp/reports.sqlite3"
-uv run settlediff export syn_x402_clean --database "$release_tmp/reports.sqlite3" --output "$release_tmp/x402-clean.sdbundle"
-uv run settlediff verify-bundle "$release_tmp/x402-clean.sdbundle"
-```
+The focused release-hardening test persists complete cited artifacts before exercising byte-stable bundle export, verification, and deliberate tamper rejection.
 
 ## Build and isolated install
 
