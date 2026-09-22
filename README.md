@@ -174,8 +174,11 @@ Base Sepolia cycle completed with 12 passing checks and verdict `VERIFIED`; see 
 [x402 live-cycle report](docs/testing/x402-live-cycle.md). A separately authorized
 GoPlausible public endpoint cycle also produced `VERIFIED` and established compatibility
 with a supported EVM primary requirement followed by bounded unsupported alternatives;
-see [public endpoint validation](docs/testing/x402-public-endpoint-validation.md). Submission recovery is
-read-only: confirmed and reverted receipts both prove transmission, while missing,
+see [public endpoint validation](docs/testing/x402-public-endpoint-validation.md). The later
+[assurance real-world validation](docs/testing/assurance-real-world-validation-2026-09-22.md)
+exercises response-bound signer compatibility, historical timeline migration, clean delivery,
+conservative unresolved HTTP-500 handling, bundles, publication, and UI restart behavior.
+Submission recovery is read-only: confirmed and reverted receipts both prove transmission, while missing,
 pending, malformed, or unavailable evidence remains unresolved. Only explicit
 pre-transmission proof can establish non-submission. Direct MPP clients and other payment rails remain
 architectural extension points.
