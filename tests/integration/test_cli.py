@@ -41,6 +41,7 @@ from settlediff.domain.models import (
 )
 from settlediff.domain.money import Money
 from settlediff.perflo.adapter import PerfloAdapter, PerfloClientPort
+from settlediff.perflo.client import PerfloCliVersion, PerfloVersionError
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 from settlediff.storage.sqlite import SQLiteReportRepository
 from settlediff.x402.adapter import X402Adapter
@@ -126,11 +127,20 @@ def test_version_option_reports_package_version_without_running_a_command() -> N
     assert result.stdout == f"settlediff {__version__}\n"
 
 
+class FakePerfloProbe:
+    def __init__(self, **_kwargs: object) -> None:
+        pass
+
+    async def probe_version(self) -> PerfloCliVersion:
+        return PerfloCliVersion(major=8, minor=1, patch=0)
+
+
 def test_doctor_checks_perflo_and_database_without_paid_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("settlediff.cli.Settings", live_settings)
     monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerfloProbe)
 
     result = runner.invoke(
         app,
@@ -140,7 +150,44 @@ def test_doctor_checks_perflo_and_database_without_paid_execution(
     assert result.exit_code == 0
     assert "Database: writable" in result.stdout
     assert "Context.dev: configured" in result.stdout
-    assert "Perflo: executable available" in result.stdout
+    assert "Perflo executable: /usr/bin/synthetic-executable" in result.stdout
+    assert "Perflo CLI: 8.1.0" in result.stdout
+    assert "Perflo contract: v8 vendor/pay" in result.stdout
+
+
+def test_doctor_rejects_unsupported_perflo_contract_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UnsupportedPerflo(FakePerfloProbe):
+        async def probe_version(self) -> PerfloCliVersion:
+            return PerfloCliVersion(major=7, minor=9, patch=0)
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", UnsupportedPerflo)
+
+    result = runner.invoke(app, ["doctor", "--rail", "perflo"])
+
+    assert result.exit_code == 2
+    assert "v7" in result.stderr
+    assert "v8" in result.stderr
+
+
+def test_doctor_rejects_malformed_perflo_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MalformedPerflo(FakePerfloProbe):
+        async def probe_version(self) -> PerfloCliVersion:
+            raise PerfloVersionError("Perflo version output is not a stable semantic version")
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", MalformedPerflo)
+
+    result = runner.invoke(app, ["doctor", "--rail", "perflo"])
+
+    assert result.exit_code == 2
+    assert "stable semantic version" in result.stderr
 
 
 def test_live_run_rejects_missing_perflo_executable_before_preflight(
@@ -164,6 +211,32 @@ def test_live_run_rejects_missing_perflo_executable_before_preflight(
 
     assert result.exit_code == 2
     assert "Perflo executable is unavailable" in result.stderr
+
+
+def test_live_run_rejects_unsupported_perflo_version_before_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UnsupportedPerflo(FakePerfloProbe):
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError(f"Perflo must not run {name} with an unsupported contract")
+
+        async def probe_version(self) -> PerfloCliVersion:
+            return PerfloCliVersion(major=7, minor=9, patch=0)
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", UnsupportedPerflo)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+
+    result = runner.invoke(
+        app,
+        ["run", "--url", "https://example.invalid", "--body", "{}", "--budget", "1"],
+        input="y\n",
+    )
+
+    assert result.exit_code == 2
+    assert "v7" in result.stderr
+    assert "v8" in result.stderr
+    assert "Authorize" not in result.stdout
 
 
 def test_doctor_reports_x402_schema_payer_and_chain(
@@ -399,6 +472,12 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr("settlediff.cli._build_model_if_configured", forbidden_model_factory)
 
     class FakePerflo:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def probe_version(self) -> PerfloCliVersion:
+            return PerfloCliVersion(major=8, minor=1, patch=0)
+
         async def inspect_service(self, _target: str) -> PerfloSuccessEnvelope:
             calls.append("check")
             return _envelope(
@@ -509,6 +588,12 @@ def test_run_reports_unresolved_activity_recovery(
     calls: list[str] = []
 
     class FakePerflo:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def probe_version(self) -> PerfloCliVersion:
+            return PerfloCliVersion(major=8, minor=1, patch=0)
+
         async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
             del target
             calls.append("check")
@@ -682,6 +767,7 @@ def test_live_run_renders_in_memory_report_when_persistence_fails(
 
     monkeypatch.setattr("settlediff.cli.Settings", live_settings)
     monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerfloProbe)
     monkeypatch.setattr("settlediff.cli._execute_live_run", completed_run)
     monkeypatch.setattr("settlediff.cli.SQLiteReportRepository", FailingRepository)
     if failure_kind == "timeline":

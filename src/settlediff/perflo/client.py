@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from settlediff.application.auth import ConsumedPaidAuthorization, PaidExecutionRequest
 from settlediff.application.payment_rails import SubmissionUncertainError
@@ -38,7 +41,31 @@ class PerfloOutputLimitError(PerfloClientError):
     pass
 
 
+class PerfloVersionError(PerfloClientError):
+    pass
+
+
+class PerfloCliVersion(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    major: int = Field(ge=0)
+    minor: int = Field(ge=0)
+    patch: int = Field(ge=0)
+
+    def __str__(self) -> str:
+        return f"{self.major}.{self.minor}.{self.patch}"
+
+    @property
+    def contract_family(self) -> str:
+        return f"v{self.major}"
+
+    @property
+    def is_supported(self) -> bool:
+        return self.major == 8
+
+
 _MINOR_UNIT_EXPONENT = {"USDC": 6, "USDT": 6}
+_STABLE_VERSION = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
 
 class PerfloClient:
@@ -58,6 +85,48 @@ class PerfloClient:
         self._timeout_seconds = timeout_seconds
         self._max_output_bytes = max_output_bytes
         self._environment = environment or self._controlled_environment()
+
+    async def probe_version(self) -> PerfloCliVersion:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *self._command,
+                "--version",
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self._environment,
+            )
+        except OSError as error:
+            raise PerfloVersionError("Perflo executable is unavailable") from error
+        try:
+            stdout, _stderr = await asyncio.wait_for(
+                communicate_bounded(process, self._max_output_bytes),
+                timeout=self._timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            await self._terminate(process)
+            raise
+        except TimeoutError as error:
+            await self._terminate(process)
+            raise PerfloVersionError("Perflo version probe timed out") from error
+        except OutputLimitExceeded as error:
+            await self._terminate(process)
+            raise PerfloVersionError("Perflo version output exceeded its limit") from error
+        if process.returncode != 0:
+            raise PerfloVersionError("Perflo version probe failed")
+        try:
+            text = stdout.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise PerfloVersionError("Perflo version output is not UTF-8") from error
+        lines = text.splitlines()
+        match = _STABLE_VERSION.fullmatch(lines[0]) if len(lines) == 1 else None
+        if match is None:
+            raise PerfloVersionError("Perflo version output is not a stable semantic version")
+        return PerfloCliVersion(
+            major=int(match[1]),
+            minor=int(match[2]),
+            patch=int(match[3]),
+        )
 
     async def inspect_service(self, target: str) -> PerfloEnvelope:
         return await self._run(("check", target, "--json"), mutation=False)

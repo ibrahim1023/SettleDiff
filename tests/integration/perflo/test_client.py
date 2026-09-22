@@ -16,9 +16,11 @@ from settlediff.application.auth import (
 from settlediff.domain.money import Money
 from settlediff.perflo.client import (
     PerfloClient,
+    PerfloCliVersion,
     PerfloCommandError,
     PerfloMutationUncertainError,
     PerfloOutputLimitError,
+    PerfloVersionError,
 )
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 
@@ -170,6 +172,80 @@ async def test_output_is_bounded() -> None:
         await client("large", limit=128).get_activity()
     with pytest.raises(PerfloOutputLimitError):
         await client("large-sleep", timeout=1, limit=128).get_activity()
+
+
+@pytest.mark.asyncio
+async def test_probe_version_parses_stable_semver() -> None:
+    version = await client("version", "8.1.2").probe_version()
+
+    assert version == PerfloCliVersion(major=8, minor=1, patch=2)
+    assert str(version) == "8.1.2"
+    assert version.contract_family == "v8"
+    assert version.is_supported is True
+
+
+@pytest.mark.asyncio
+async def test_probe_version_parses_but_marks_other_families_unsupported() -> None:
+    version = await client("version", "7.9.0").probe_version()
+
+    assert version.contract_family == "v7"
+    assert version.is_supported is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "output",
+    ["v8.1.2", "8.1.2-beta.1", "8.1", "8.01.2", "8.1.2\nextra", ""],
+)
+async def test_probe_version_rejects_malformed_output(output: str) -> None:
+    with pytest.raises(PerfloVersionError, match="version"):
+        await client("version", output).probe_version()
+
+
+@pytest.mark.asyncio
+async def test_probe_version_rejects_nonzero_exit() -> None:
+    with pytest.raises(PerfloVersionError, match="version"):
+        await client("version-fail").probe_version()
+
+
+@pytest.mark.asyncio
+async def test_probe_version_rejects_timeout() -> None:
+    with pytest.raises(PerfloVersionError, match="timed out"):
+        await client("sleep", timeout=0.05).probe_version()
+
+
+@pytest.mark.asyncio
+async def test_probe_version_rejects_oversized_output() -> None:
+    with pytest.raises(PerfloVersionError, match="limit"):
+        await client("large", limit=128).probe_version()
+
+
+@pytest.mark.asyncio
+async def test_probe_version_rejects_unavailable_executable() -> None:
+    unavailable = PerfloClient(command=("/nonexistent/syn-perflo",), timeout_seconds=1)
+
+    with pytest.raises(PerfloVersionError, match="unavailable"):
+        await unavailable.probe_version()
+
+
+@pytest.mark.asyncio
+async def test_probe_version_cancellation_terminates_without_uncertainty() -> None:
+    task = asyncio.create_task(client("sleep").probe_version())
+    await asyncio.sleep(0.05)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_probe_version_never_runs_a_paid_invocation(tmp_path: Path) -> None:
+    counter = tmp_path / "count.txt"
+
+    version = await client("count-version", str(counter)).probe_version()
+
+    assert str(version) == "8.0.0"
+    assert not counter.exists()
 
 
 @pytest.mark.asyncio

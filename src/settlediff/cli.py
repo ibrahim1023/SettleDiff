@@ -92,7 +92,11 @@ from settlediff.domain.normalize import normalize_contract
 from settlediff.domain.redaction import mask_identifier
 from settlediff.domain.retry import RetryRunStateSnapshot, analyze_retry
 from settlediff.perflo.adapter import PerfloAdapter
-from settlediff.perflo.client import PerfloClient, PerfloClientError
+from settlediff.perflo.client import (
+    PerfloClient,
+    PerfloClientError,
+    PerfloCliVersion,
+)
 from settlediff.storage.sqlite import SQLiteReportRepository
 from settlediff.telemetry.setup import TelemetryRuntime, configure_telemetry
 from settlediff.x402.adapter import X402Adapter
@@ -434,6 +438,19 @@ def _build_payment_adapter(
     return adapter, close
 
 
+async def _doctor_perflo() -> tuple[str, PerfloCliVersion]:
+    resolved = shutil.which("perflo")
+    if resolved is None:
+        raise ValueError("Perflo executable is unavailable")
+    try:
+        version = await PerfloClient(command=(resolved,)).probe_version()
+    except PerfloClientError as error:
+        raise ValueError(str(error)) from error
+    if not version.is_supported:
+        raise ValueError(f"Perflo contract {version.contract_family} is unsupported; expected v8")
+    return resolved, version
+
+
 async def _doctor_x402(settings: Settings) -> tuple[str, str]:
     config = settings.require_x402()
     if not config.testnet_enabled:
@@ -484,9 +501,10 @@ def doctor(
         typer.echo("Database: writable" if database is not None else "Database: not selected")
         typer.echo("Context.dev: configured")
         if rail is PaymentRail.PERFLO:
-            if shutil.which("perflo") is None:
-                raise ValueError("Perflo executable is unavailable")
-            typer.echo("Perflo: executable available")
+            resolved, version = asyncio.run(_doctor_perflo())
+            typer.echo(f"Perflo executable: {resolved}")
+            typer.echo(f"Perflo CLI: {version}")
+            typer.echo(f"Perflo contract: {version.contract_family} vendor/pay")
         else:
             chain_id, payer = asyncio.run(_doctor_x402(settings))
             typer.echo("Signer schema: 3")
@@ -557,8 +575,8 @@ def run(
                 )
             if shutil.which(x402_config.signer_command[0]) is None:
                 raise ValueError("x402 signer launcher is unavailable; run settlediff doctor")
-        elif shutil.which("perflo") is None:
-            raise ValueError("Perflo executable is unavailable; run settlediff doctor")
+        else:
+            asyncio.run(_doctor_perflo())
     except ValueError as error:
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error
