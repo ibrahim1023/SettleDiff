@@ -23,6 +23,22 @@ def main() -> None:
             time.sleep(2)
     elif mode == "malformed":
         sys.stdout.write("not-json")
+    elif mode == "version":
+        if args[-1] != "--version":
+            sys.stderr.write("unexpected version arguments")
+            raise SystemExit(1)
+        sys.stdout.write(f"{args[0]}\n")
+    elif mode == "version-fail":
+        sys.stderr.write("synthetic version failure")
+        raise SystemExit(1)
+    elif mode == "count-version":
+        counter = Path(args.pop(0))
+        if args == ["--version"]:
+            sys.stdout.write("8.0.0\n")
+            return
+        count = int(counter.read_text()) if counter.exists() else 0
+        counter.write_text(str(count + 1))
+        time.sleep(2)
     elif mode in {"refusal", "uncertain", "unknown-certainty"}:
         error: dict[str, object] = {
             "code": "GUARDRAIL_DENIED" if mode == "refusal" else "UPSTREAM_UNAVAILABLE",

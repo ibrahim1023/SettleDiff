@@ -204,7 +204,10 @@ def test_single_snapshot_reports_unavailable_drift(tmp_path: Path) -> None:
     repository, report = _persist(tmp_path, "x402-clean-success", adapter_id="x402")
     assert report.contract is not None
     snapshot = build_contract_snapshot(
-        report.contract.url, "x402", report.contract, cast(JsonValue, {"synthetic": True})
+        cast(str, report.contract.url),
+        "x402",
+        report.contract,
+        cast(JsonValue, {"synthetic": True}),
     )
     repository.save_contract_snapshot(snapshot, datetime(2026, 9, 1, tzinfo=UTC))
 
@@ -220,10 +223,10 @@ def test_two_snapshots_report_diff(tmp_path: Path) -> None:
     repository, report = _persist(tmp_path, "x402-clean-success", adapter_id="x402")
     assert report.contract is not None
     first = build_contract_snapshot(
-        report.contract.url, "x402", report.contract, cast(JsonValue, {"v": 1})
+        cast(str, report.contract.url), "x402", report.contract, cast(JsonValue, {"v": 1})
     )
     second = build_contract_snapshot(
-        report.contract.url, "x402", report.contract, cast(JsonValue, {"v": 2})
+        cast(str, report.contract.url), "x402", report.contract, cast(JsonValue, {"v": 2})
     )
     repository.save_contract_snapshot(first, datetime(2026, 9, 1, tzinfo=UTC))
     repository.save_contract_snapshot(second, datetime(2026, 9, 2, tzinfo=UTC))
@@ -401,10 +404,10 @@ def test_observed_snapshots_aba_compares_latest_pair(tmp_path: Path) -> None:
     repository, report = _persist(tmp_path, "x402-clean-success", adapter_id="x402")
     assert report.contract is not None
     snapshot_a = build_contract_snapshot(
-        report.contract.url, "x402", report.contract, cast(JsonValue, {"v": 1})
+        cast(str, report.contract.url), "x402", report.contract, cast(JsonValue, {"v": 1})
     )
     snapshot_b = build_contract_snapshot(
-        report.contract.url, "x402", report.contract, cast(JsonValue, {"v": 2})
+        cast(str, report.contract.url), "x402", report.contract, cast(JsonValue, {"v": 2})
     )
     repository.save_contract_snapshot(snapshot_a, datetime(2026, 9, 1, tzinfo=UTC))
     repository.save_contract_snapshot(snapshot_b, datetime(2026, 9, 2, tzinfo=UTC))
@@ -423,7 +426,7 @@ def test_observed_snapshots_aa_reports_match(tmp_path: Path) -> None:
     repository, report = _persist(tmp_path, "x402-clean-success", adapter_id="x402")
     assert report.contract is not None
     snapshot = build_contract_snapshot(
-        report.contract.url, "x402", report.contract, cast(JsonValue, {"v": 1})
+        cast(str, report.contract.url), "x402", report.contract, cast(JsonValue, {"v": 1})
     )
     repository.save_contract_snapshot(snapshot, datetime(2026, 9, 1, tzinfo=UTC))
     repository.save_contract_snapshot(snapshot, datetime(2026, 9, 2, tzinfo=UTC))
@@ -467,4 +470,30 @@ def test_projection_strict_round_trip(tmp_path: Path) -> None:
         PurchaseInvestigation.model_validate_json(investigation.model_dump_json(), strict=True)
         == investigation
     )
+    repository.close()
+
+
+def test_perflo_investigation_uses_vendor_slug_snapshot_target(tmp_path: Path) -> None:
+    repository, report = _persist(tmp_path, "clean-success", adapter_id="perflo")
+    assert report.contract is not None
+    contract = report.contract.model_copy(update={"schema_version": 4, "url": None})
+    report = report.model_copy(update={"contract": contract})
+    repository.save(
+        report,
+        events=(EVENT,),
+        artifacts=_fixture_artifacts("clean-success", report.run_id),
+    )
+    snapshot = build_contract_snapshot(
+        cast(str, contract.vendor_slug),
+        "perflo",
+        contract,
+        cast(JsonValue, {"synthetic": True}),
+    )
+    repository.save_contract_snapshot(snapshot, datetime(2026, 9, 1, tzinfo=UTC))
+
+    investigation = investigate_purchase(repository, report.run_id)
+
+    assert investigation.drift is not None
+    assert investigation.drift.status is DriftStatus.UNAVAILABLE
+    assert investigation.drift.current_snapshot_digest == snapshot.snapshot_digest
     repository.close()

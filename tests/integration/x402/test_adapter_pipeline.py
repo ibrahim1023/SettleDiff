@@ -12,7 +12,11 @@ import httpx
 import pytest
 from pydantic import JsonValue
 
-from settlediff.application.auth import PaidExecutionCapability, PaidExecutionRequest
+from settlediff.application.auth import (
+    HttpResourceReference,
+    PaidExecutionCapability,
+    PaidExecutionRequest,
+)
 from settlediff.application.run import LiveEvidenceCollector
 from settlediff.contextdev.client import ContextEvidencePort
 from settlediff.domain.models import LedgerStatus, RetrySafety, SettlementStatus, Verdict
@@ -117,9 +121,7 @@ async def test_offline_pipeline_composes_http_signer_rpc_and_canonical_verifier(
         collector = LiveEvidenceCollector(adapter, cast(ContextEvidencePort, object()))
         request = PaidExecutionRequest(
             run_id="syn_x402_pipeline",
-            target=TARGET,
-            method="POST",
-            body={"query": "synthetic"},
+            resource=HttpResourceReference(url=TARGET, method="POST", body={"query": "synthetic"}),
             budget=Money(amount=Decimal("0.01"), unit="USDC"),
         )
         await collector.preflight(request)

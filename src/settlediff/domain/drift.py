@@ -165,8 +165,9 @@ def build_contract_snapshot(
     source_contract: JsonValue,
 ) -> ContractSnapshot:
     """Fingerprint a normalized contract plus its redacted provider source."""
-    if contract.url != target:
-        raise ValueError("snapshot target does not match the normalized contract URL")
+    expected_target = contract.url if contract.url is not None else contract.vendor_slug
+    if target != expected_target:
+        raise ValueError("snapshot target does not match the normalized contract identity")
     if len(canonical_json_bytes(source_contract)) > _MAX_SOURCE_BYTES:
         raise ValueError("source contract exceeds the 1 MiB canonical bound")
     redacted_source = redact_value(source_contract)

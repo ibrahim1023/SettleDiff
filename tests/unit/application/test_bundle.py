@@ -401,7 +401,7 @@ def test_export_includes_matching_contract_snapshots(tmp_path: Path) -> None:
     repository, report = _persist(tmp_path, "x402-clean-success", adapter_id="x402")
     assert report.contract is not None
     snapshot = build_contract_snapshot(
-        report.contract.url,
+        cast(str, report.contract.url),
         "x402",
         report.contract,
         cast(JsonValue, {"synthetic": True}),
@@ -420,7 +420,7 @@ def test_verify_rejects_snapshot_target_mismatch(tmp_path: Path) -> None:
     repository, report = _persist(tmp_path, "x402-clean-success", adapter_id="x402")
     assert report.contract is not None
     snapshot = build_contract_snapshot(
-        report.contract.url,
+        cast(str, report.contract.url),
         "x402",
         report.contract,
         cast(JsonValue, {"synthetic": True}),
@@ -753,7 +753,7 @@ def _x402_bundle_with_snapshot(
     repository, report = _persist(tmp_path, "x402-clean-success", adapter_id="x402")
     assert report.contract is not None
     snapshot = build_contract_snapshot(
-        report.contract.url,
+        cast(str, report.contract.url),
         "x402",
         report.contract,
         cast(JsonValue, {"note": "synthetic"}),
@@ -843,4 +843,36 @@ def test_aliases_resolve_only_when_artifact_type_included(tmp_path: Path) -> Non
 
     with pytest.raises(BundleError, match="cites unavailable evidence"):
         export_bundle(repository, report.run_id)
+    repository.close()
+
+
+def test_perflo_bundle_includes_snapshot_by_vendor_slug(tmp_path: Path) -> None:
+    repository, report = _persist(tmp_path, "clean-success", adapter_id="perflo")
+    assert report.contract is not None
+    contract = report.contract.model_copy(update={"schema_version": 4, "url": None})
+    report = report.model_copy(update={"contract": contract})
+    artifacts = _fixture_artifacts("clean-success", report.run_id)
+    repository.save(
+        report,
+        events=(EVENT,),
+        artifacts=artifacts,
+        explanation=ExplanationRecord(
+            explanation=fallback_explanation(
+                report, {artifact.artifact_id for artifact in artifacts}
+            ),
+            source=ExplanationSource.FALLBACK,
+            tool_calls=0,
+        ),
+    )
+    snapshot = build_contract_snapshot(
+        cast(str, contract.vendor_slug),
+        "perflo",
+        contract,
+        cast(JsonValue, {"note": "synthetic"}),
+    )
+    repository.save_contract_snapshot(snapshot, datetime(2026, 9, 1, tzinfo=UTC))
+
+    bundle = export_bundle(repository, report.run_id)
+
+    assert f"snapshots/{snapshot.snapshot_digest}.json" in bundle.objects
     repository.close()

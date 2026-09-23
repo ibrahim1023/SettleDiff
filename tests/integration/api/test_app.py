@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from hashlib import sha384
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -811,7 +812,7 @@ def test_run_detail_renders_paid_failure_retry_and_drift(tmp_path: Path) -> None
     repository.save(updated, artifacts=_fixture_artifacts("x402-paid-failure", report.run_id))
     assert updated.contract is not None
     snapshot = build_contract_snapshot(
-        updated.contract.url, "x402", updated.contract, {"synthetic": True}
+        cast(str, updated.contract.url), "x402", updated.contract, {"synthetic": True}
     )
     repository.save_contract_snapshot(snapshot, datetime(2026, 9, 1, tzinfo=UTC))
     client = TestClient(create_app(repository))

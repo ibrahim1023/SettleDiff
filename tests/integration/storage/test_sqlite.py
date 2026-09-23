@@ -694,16 +694,16 @@ def test_observed_contract_snapshots_preserve_observation_order(
     repository.save(report)
     assert report.contract is not None
     snapshot_a = build_contract_snapshot(
-        report.contract.url, "x402", report.contract, cast(JsonValue, {"v": 1})
+        cast(str, report.contract.url), "x402", report.contract, cast(JsonValue, {"v": 1})
     )
     snapshot_b = build_contract_snapshot(
-        report.contract.url, "x402", report.contract, cast(JsonValue, {"v": 2})
+        cast(str, report.contract.url), "x402", report.contract, cast(JsonValue, {"v": 2})
     )
     repository.save_contract_snapshot(snapshot_a, datetime(2026, 9, 1, tzinfo=UTC))
     repository.save_contract_snapshot(snapshot_b, datetime(2026, 9, 2, tzinfo=UTC))
     repository.save_contract_snapshot(snapshot_a, datetime(2026, 9, 3, tzinfo=UTC))
 
-    observed = repository.observed_contract_snapshots(report.contract.url, "x402")
+    observed = repository.observed_contract_snapshots(cast(str, report.contract.url), "x402")
 
     assert [s.snapshot_digest for s in observed] == [
         snapshot_a.snapshot_digest,
@@ -711,7 +711,8 @@ def test_observed_contract_snapshots_preserve_observation_order(
         snapshot_a.snapshot_digest,
     ]
     assert [
-        s.snapshot_digest for s in repository.contract_snapshots(report.contract.url, "x402")
+        s.snapshot_digest
+        for s in repository.contract_snapshots(cast(str, report.contract.url), "x402")
     ] == [
         snapshot_a.snapshot_digest,
         snapshot_b.snapshot_digest,
@@ -725,7 +726,7 @@ def test_observed_contract_snapshots_read_does_not_mutate(tmp_path: Path) -> Non
     repository.save(report)
     assert report.contract is not None
     snapshot = build_contract_snapshot(
-        report.contract.url, "x402", report.contract, cast(JsonValue, {"v": 1})
+        cast(str, report.contract.url), "x402", report.contract, cast(JsonValue, {"v": 1})
     )
     repository.save_contract_snapshot(snapshot, datetime(2026, 9, 1, tzinfo=UTC))
     repository.save_contract_snapshot(snapshot, datetime(2026, 9, 2, tzinfo=UTC))
@@ -741,7 +742,7 @@ def test_observed_contract_snapshots_read_does_not_mutate(tmp_path: Path) -> Non
             "ORDER BY observation_id"
         ).fetchall()
 
-    repository.observed_contract_snapshots(report.contract.url, "x402")
+    repository.observed_contract_snapshots(cast(str, report.contract.url), "x402")
 
     with closing(sqlite3.connect(database)) as connection:
         counts_after = {
@@ -880,10 +881,10 @@ def test_database_schema_four_copy_migrates_through_every_new_migration(
 
     assert report.contract is not None
     snapshot = build_contract_snapshot(
-        report.contract.url, "perflo", report.contract, cast(JsonValue, {"v": 1})
+        cast(str, report.contract.url), "perflo", report.contract, cast(JsonValue, {"v": 1})
     )
     repository.save_contract_snapshot(snapshot, datetime(2026, 9, 1, tzinfo=UTC))
-    assert repository.latest_contract_snapshot(report.contract.url, "perflo") == snapshot
+    assert repository.latest_contract_snapshot(cast(str, report.contract.url), "perflo") == snapshot
     repository.close()
 
     reopened = SQLiteReportRepository(database)

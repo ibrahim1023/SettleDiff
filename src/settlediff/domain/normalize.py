@@ -46,10 +46,17 @@ def normalize_contract(raw: EvidenceArtifact) -> ExpectedContract:
     notes = _stored_notes(data, raw)
     price = _money(data, raw, amount_field="price_minor", unit_field="asset", required=False)
     response_contract = _optional_response_contract(data, raw)
+    required_max_charge = _money(
+        data,
+        raw,
+        amount_field="required_max_charge",
+        unit_field="required_max_charge_unit",
+        required=False,
+    )
     values: dict[str, object] = {
         "schema_version": _contract_schema_version(data, raw),
         "vendor_slug": _optional_string(data, raw, "vendor_slug"),
-        "url": _required_string(data, raw, "url"),
+        "url": _optional_string(data, raw, "url"),
         "price": price,
         "asset": _normalized_name(data, raw, "asset", _RECOGNIZED_ASSETS, str.upper, notes),
         "protocol": _normalized_protocol(data, raw),
@@ -64,6 +71,11 @@ def normalize_contract(raw: EvidenceArtifact) -> ExpectedContract:
     }
     if response_contract is not None:
         values["response_contract"] = response_contract
+    if required_max_charge is not None:
+        values["required_max_charge"] = required_max_charge
+    payable = _optional_bool(data, raw, "payable")
+    if payable is not None:
+        values["payable"] = payable
     return ExpectedContract.model_validate(values)
 
 
@@ -71,6 +83,12 @@ def normalize_execution(raw: EvidenceArtifact) -> ExecutionRecord:
     """Map an execution artifact without treating settlement as service success."""
     raw_data = _artifact_object(raw, ArtifactType.EXECUTION)
     data = _merge_upstream_response(raw_data, raw)
+    data = _merge_nested(data, raw, "upstream", {"httpStatus": "upstream_http_status"})
+    settlement_fields = {"status": "settlement_status"}
+    if data.get("chargedTo") != "credit":
+        settlement_fields["txHash"] = "transaction_hash"
+        settlement_fields["chain"] = "chain"
+    data = _merge_nested(data, raw, "settlement", settlement_fields)
     notes = _stored_notes(data, raw)
     return ExecutionRecord(
         vendor_slug=_optional_string(data, raw, "vendor_slug"),
@@ -119,14 +137,27 @@ def normalize_activity(raw: EvidenceArtifact) -> tuple[LedgerRecord, ...]:
     """Map each Activity candidate; matching remains a later deterministic step."""
     if raw.artifact_type is not ArtifactType.ACTIVITY:
         raise ArtifactParseError(raw.artifact_id, "artifact_type", "expected activity")
-    if not isinstance(raw.data, list):
+    rows: JsonValue = raw.data
+    if isinstance(rows, dict):
+        container = cast(dict[str, JsonValue], rows)
+        meta = container.get("meta")
+        if not isinstance(meta, dict):
+            raise ArtifactParseError(raw.artifact_id, "data.meta", "expected a JSON object")
+        rows = container.get("rows")
+    if not isinstance(rows, list):
         raise ArtifactParseError(raw.artifact_id, "data", "expected a JSON array")
 
     records: list[LedgerRecord] = []
-    for index, entry in enumerate(raw.data):
+    for index, entry in enumerate(rows):
         if not isinstance(entry, dict):
             raise ArtifactParseError(raw.artifact_id, f"data[{index}]", "expected a JSON object")
-        data = cast(dict[str, JsonValue], entry)
+        data = _merge_nested(
+            cast(dict[str, JsonValue], entry),
+            raw,
+            "settlement",
+            {"txHash": "transaction_hash"},
+            prefix=f"data[{index}].",
+        )
         notes = _stored_notes(data, raw, prefix=f"data[{index}].")
         records.append(
             LedgerRecord(
@@ -180,8 +211,10 @@ def normalize_activity(raw: EvidenceArtifact) -> tuple[LedgerRecord, ...]:
 
 
 _ALIASES: Final[dict[str, tuple[str, ...]]] = {
-    "vendor_slug": ("vendor_slug", "vendorSlug"),
-    "request_schema": ("request_schema", "requestSchema"),
+    "vendor_slug": ("vendor_slug", "vendorSlug", "slug"),
+    "charge": ("charge", "charged"),
+    "required_max_charge": ("required_max_charge", "maxChargePerCall"),
+    "request_schema": ("request_schema", "requestSchema", "input"),
     "price_minor": ("price_minor", "priceMinor"),
     "price_minor_units": ("price_minor_units", "priceMinorUnits"),
     "amount_minor": ("amount_minor", "amountMinor"),
@@ -191,8 +224,9 @@ _ALIASES: Final[dict[str, tuple[str, ...]]] = {
     "transaction_id": ("transaction_id", "transactionId"),
     "session_id": ("session_id", "sessionId"),
     "transaction_hash": ("transaction_hash", "transactionHash", "txHash"),
-    "response_body": ("response_body", "responseBody"),
-    "executed_at": ("executed_at", "executedAt"),
+    "response_body": ("response_body", "responseBody", "output"),
+    "executed_at": ("executed_at", "executedAt", "endedAt"),
+    "status": ("status", "ledgerState"),
     "issued_at": ("issued_at", "issuedAt"),
     "ledger_id": ("ledger_id", "ledgerId", "id"),
     "error_reason": ("error_reason", "errorReason"),
@@ -238,6 +272,34 @@ def _merge_upstream_response(
     return merged
 
 
+def _merge_nested(
+    data: dict[str, JsonValue],
+    raw: EvidenceArtifact,
+    nested_key: str,
+    mapping: dict[str, str],
+    *,
+    prefix: str = "data.",
+) -> dict[str, JsonValue]:
+    value = data.get(nested_key)
+    if value is None:
+        return data
+    if not isinstance(value, dict):
+        raise ArtifactParseError(raw.artifact_id, f"{prefix}{nested_key}", "JSON object or null")
+    nested = cast(dict[str, JsonValue], value)
+    merged = dict(data)
+    for nested_field, field in mapping.items():
+        if nested_field not in nested:
+            continue
+        existing = _field(data, raw, field, prefix=prefix)
+        nested_value = nested[nested_field]
+        if existing is not None and existing != nested_value:
+            raise ArtifactParseError(
+                raw.artifact_id, f"{prefix}{field}", "conflicting documented fields"
+            )
+        merged[field] = nested_value
+    return merged
+
+
 def _field(
     data: dict[str, JsonValue], raw: EvidenceArtifact, field: str, *, prefix: str = "data."
 ) -> JsonValue | None:
@@ -273,6 +335,17 @@ def _optional_string(
     return value.strip()
 
 
+def _optional_bool(
+    data: dict[str, JsonValue], raw: EvidenceArtifact, field: str, *, prefix: str = "data."
+) -> bool | None:
+    value = _field(data, raw, field, prefix=prefix)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ArtifactParseError(raw.artifact_id, f"{prefix}{field}", "boolean or null")
+    return value
+
+
 def _optional_network(
     data: dict[str, JsonValue], raw: EvidenceArtifact, *, prefix: str = "data."
 ) -> str | None:
@@ -299,8 +372,10 @@ def _optional_asset_identity(
 
 
 def _contract_schema_version(data: dict[str, JsonValue], raw: EvidenceArtifact) -> int:
-    value = data.get("schema_version", 2)
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 3:
+    value = data.get("schema_version")
+    if value is None:
+        return 4 if "slug" in data or "maxChargePerCall" in data else 2
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 4:
         raise ArtifactParseError(
             raw.artifact_id, "data.schema_version", "supported integer version"
         )
@@ -429,17 +504,23 @@ def _settlement_status(
 def _ledger_status(
     data: dict[str, JsonValue], raw: EvidenceArtifact, notes: list[str], *, prefix: str
 ) -> LedgerStatus:
-    value = _field(data, raw, "status", prefix=prefix)
+    if "ledgerState" in data:
+        value = data["ledgerState"]
+    else:
+        value = _field(data, raw, "status", prefix=prefix)
     if value is None:
         return LedgerStatus.UNKNOWN
     if not isinstance(value, str):
-        raise ArtifactParseError(raw.artifact_id, f"{prefix}status", "string or null")
+        raise ArtifactParseError(raw.artifact_id, f"{prefix}ledgerState", "string or null")
     normalized = value.lower()
     aliases = {
         "broadcast": LedgerStatus.PENDING,
         "broadcast_failed": LedgerStatus.FAILED,
         "confirmed": LedgerStatus.CONFIRMED,
         "settled": LedgerStatus.CONFIRMED,
+        "posted": LedgerStatus.CONFIRMED,
+        "pending": LedgerStatus.PENDING,
+        "voided": LedgerStatus.FAILED,
     }
     if normalized in aliases:
         return aliases[normalized]
@@ -498,14 +579,16 @@ def _money(
 ) -> Money | None:
     amount = _field(data, raw, amount_field, prefix=prefix)
     canonical_field = {"price_minor": "price", "amount_minor": "charge"}.get(amount_field)
-    if canonical_field is not None and canonical_field in data:
-        if amount is not None:
-            raise ArtifactParseError(
-                raw.artifact_id,
-                f"{prefix}{amount_field}",
-                "cannot mix minor and canonical money fields",
-            )
-        amount = data[canonical_field]
+    if canonical_field is not None:
+        canonical = _field(data, raw, canonical_field, prefix=prefix)
+        if canonical is not None:
+            if amount is not None:
+                raise ArtifactParseError(
+                    raw.artifact_id,
+                    f"{prefix}{amount_field}",
+                    "cannot mix minor and canonical money fields",
+                )
+            amount = canonical
     if amount is None:
         if required:
             raise ArtifactParseError(
@@ -513,12 +596,12 @@ def _money(
             )
         return None
     unit = _field(data, raw, unit_field, prefix=prefix)
+    if isinstance(amount, dict):
+        return _money_object(cast(dict[str, JsonValue], amount), raw, f"{prefix}{amount_field}")
     if not isinstance(unit, str) or not unit.strip():
         raise ArtifactParseError(raw.artifact_id, f"{prefix}{unit_field}", "required money unit")
 
     try:
-        if isinstance(amount, dict):
-            return Money.model_validate(amount)
         minor_units = _field(data, raw, f"{amount_field}_units", prefix=prefix)
         if amount_field.endswith("_minor") and canonical_field is None:
             raise AssertionError("minor money field must have a canonical counterpart")
@@ -545,6 +628,21 @@ def _money(
         raise
     except ValueError as error:
         raise ArtifactParseError(raw.artifact_id, f"{prefix}{amount_field}", str(error)) from error
+
+
+def _money_object(value: dict[str, JsonValue], raw: EvidenceArtifact, field_path: str) -> Money:
+    if set(value) == {"amount", "currency"}:
+        currency = value["currency"]
+        if not isinstance(currency, str) or not currency.strip():
+            raise ArtifactParseError(raw.artifact_id, field_path, "non-empty currency")
+        return Money(
+            amount=_decimal_cost(value["amount"], raw, field_path),
+            unit=currency.strip(),
+        )
+    try:
+        return Money.model_validate(value)
+    except (ValidationError, ValueError) as error:
+        raise ArtifactParseError(raw.artifact_id, field_path, "valid money value") from error
 
 
 def _decimal(value: JsonValue, raw: EvidenceArtifact, field_path: str) -> Decimal:

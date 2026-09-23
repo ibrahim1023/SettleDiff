@@ -20,7 +20,7 @@ SettleDiff keeps four evidence classes distinct:
 3. A **derived deterministic assessment** is reproducible output from accepted code over cited persisted evidence. Findings, verdicts, delivery states, retry classifications, drift states, and facilitator comparisons belong here.
 4. A **publication projection** is an explicit allowlisted representation of existing persisted evidence and assessments. It cannot add truth, recover omitted evidence, or weaken uncertainty.
 
-Provider and independent evidence remain separate even when they agree. Missing, malformed, unsupported, unavailable, or contradictory evidence remains explicit.
+Provider and independent evidence remain separate even when they agree. Missing, malformed, unsupported, unavailable, or contradictory evidence remains explicit. Rail scope applies: Perflo agent Activity and `tx status` are provider assertions inside the same trust domain as `pay`, never independent observations; the independent-observation role is currently held only by validated external evidence such as the x402 read-only RPC transfer check.
 
 ### Response promises
 

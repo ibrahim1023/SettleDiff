@@ -326,3 +326,17 @@ def test_snapshot_digest_binds_target_and_rail() -> None:
         {"raw": "contract"},
     )
     assert other.snapshot_digest != snapshot().snapshot_digest
+
+
+def test_url_backed_contract_rejects_vendor_slug_target() -> None:
+    with pytest.raises(ValueError, match="target"):
+        snapshot(target="synthetic-search")
+    assert snapshot(target=TARGET).target == TARGET
+
+
+def test_catalog_contract_without_url_accepts_slug_target() -> None:
+    contract_value = contract(url=None, schema_version=4)
+
+    snap = snapshot(target="synthetic-search", contract_value=contract_value)
+
+    assert snap.target == "synthetic-search"

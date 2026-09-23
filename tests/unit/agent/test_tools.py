@@ -37,9 +37,9 @@ async def test_live_dependencies_use_canonical_summaries_and_artifact_handles() 
             data={},
         )
         for source, artifact_type in (
-            ("perflo.check", ArtifactType.SERVICE_CONTRACT),
+            ("perflo.vendor", ArtifactType.SERVICE_CONTRACT),
             ("perflo.schema", ArtifactType.CONTEXT_EVIDENCE),
-            ("perflo.activity", ArtifactType.ACTIVITY),
+            ("perflo.activity.agent", ArtifactType.ACTIVITY),
         )
     )
 
@@ -48,11 +48,11 @@ async def test_live_dependencies_use_canonical_summaries_and_artifact_handles() 
     schema = await deps.get_schema()
     activity = await deps.get_activity()
 
-    assert contract.artifact_id == "artifact:perflo.check"
+    assert contract.artifact_id == "artifact:perflo.vendor"
     assert "synthetic-search" in contract.summary
     assert "example.invalid" not in contract.summary
     assert schema.artifact_id == "artifact:perflo.schema"
     assert "request schema fields" in schema.summary
-    assert activity.artifact_id == "artifact:perflo.activity"
+    assert activity.artifact_id == "artifact:perflo.activity.agent"
     assert "confirmed" in activity.summary
     assert "syn_recipient" not in activity.summary

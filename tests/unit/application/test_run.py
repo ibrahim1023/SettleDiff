@@ -10,7 +10,9 @@ import pytest
 from pydantic import JsonValue
 
 from settlediff.application.auth import (
+    CatalogResourceReference,
     ConsumedPaidAuthorization,
+    HttpResourceReference,
     PaidExecutionCapability,
     PaidExecutionRequest,
 )
@@ -94,8 +96,7 @@ async def test_authorization_failure_emits_refused_terminal_event() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -127,8 +128,7 @@ async def test_execution_failure_emits_failed_terminal_event() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -165,8 +165,7 @@ async def test_uncertain_execution_verifies_without_a_second_paid_attempt() -> N
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -209,8 +208,7 @@ async def test_uncertain_submission_without_handle_remains_unresolved() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -273,8 +271,7 @@ async def test_recovery_state_distinguishes_submission_evidence(
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -327,26 +324,20 @@ async def test_recovery_state_distinguishes_submission_evidence(
 @pytest.mark.parametrize(
     ("status_payload", "expected"),
     [
-        ({"status": "confirmed", "transaction_hash": "syn_hash"}, RecoveryState.SUBMITTED),
-        ({"status": "failed", "transaction_hash": "syn_hash"}, RecoveryState.SUBMITTED),
-        (
-            {"status": "not_submitted", "proof_of_non_submission": True},
-            RecoveryState.NOT_SUBMITTED,
-        ),
-        (
-            {"status": "not_submitted", "proof_of_non_submission": False},
-            RecoveryState.UNRESOLVED,
-        ),
-        ({"status": "pending", "transaction_hash": "syn_hash"}, RecoveryState.UNRESOLVED),
+        ({"status": "failed"}, RecoveryState.SUBMITTED),
+        ({"status": "success"}, RecoveryState.SUBMITTED),
+        ({"status": "submitted"}, RecoveryState.UNRESOLVED),
+        ({"status": "processing"}, RecoveryState.UNRESOLVED),
+        ({"status": "executing"}, RecoveryState.UNRESOLVED),
     ],
 )
 async def test_collector_recovery_uses_transaction_status_without_a_second_mutation(
-    status_payload: JsonValue, expected: RecoveryState
+    status_payload: dict[str, JsonValue], expected: RecoveryState
 ) -> None:
     class FakePerflo:
         async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
             assert transaction_hash == "syn_hash_uncertain"
-            return _envelope(status_payload)
+            return _tx_envelope(status_payload)
 
         async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
             raise AssertionError("recovery must not invoke paid execution")
@@ -363,10 +354,38 @@ async def test_collector_recovery_uses_transaction_status_without_a_second_mutat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status_payload",
+    [
+        {"status": "confirmed"},
+        {"status": "not_submitted", "proof_of_non_submission": True},
+        {"status": "pending"},
+        {"status": 5},
+        {},
+    ],
+)
+async def test_collector_recovery_rejects_undeclared_transaction_status(
+    status_payload: dict[str, JsonValue],
+) -> None:
+    class FakePerflo:
+        async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
+            return _tx_envelope(status_payload)
+
+    collector = LiveEvidenceCollector(
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
+    )
+
+    from settlediff.application.payment_rails import AdapterProtocolError
+
+    with pytest.raises(AdapterProtocolError):
+        await collector.recover_submission("syn_run_uncertain", "syn_hash_uncertain")
+
+
+@pytest.mark.asyncio
 async def test_confirmed_recovery_receipt_forces_do_not_retry() -> None:
     class FakePerflo:
         async def transaction_status(self, transaction_hash: str) -> PerfloSuccessEnvelope:
-            return _envelope({"status": "confirmed", "transaction_hash": transaction_hash})
+            return _tx_envelope({"status": "success"})
 
         async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
             raise AssertionError("recovery must not invoke paid execution")
@@ -397,7 +416,7 @@ async def test_collector_uncorrelated_activity_history_cannot_prove_submission()
             raise AssertionError("no transaction handle is available")
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
-            return _envelope({"records": [{"transaction_hash": "syn_hash_uncertain"}]})
+            return _agent_envelope([{"transaction_hash": "syn_hash_uncertain"}])
 
         async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
             raise AssertionError("recovery must not invoke paid execution")
@@ -409,7 +428,7 @@ async def test_collector_uncorrelated_activity_history_cannot_prove_submission()
 
     assert state is RecoveryState.UNRESOLVED
     assert len(artifacts) == 1
-    assert artifacts[0].source == "perflo.activity"
+    assert artifacts[0].source == "perflo.activity.agent"
 
 
 @pytest.mark.asyncio
@@ -422,7 +441,7 @@ async def test_collector_current_activity_history_cannot_prove_submission_withou
                 ok=True,
                 payload={
                     "ok": True,
-                    "agent": {"transactions": [{"id": "syn_transaction_uncertain"}]},
+                    "agent": {"rows": [{"id": "syn_transaction_uncertain"}], "meta": {}},
                 },
                 stdout_bytes=0,
                 stderr_bytes=0,
@@ -436,14 +455,14 @@ async def test_collector_current_activity_history_cannot_prove_submission_withou
     state, artifacts = await collector.recover_submission("syn_run_uncertain", None)
 
     assert state is RecoveryState.UNRESOLVED
-    assert artifacts[0].data == [{"id": "syn_transaction_uncertain"}]
+    assert artifacts[0].data == {"rows": [{"id": "syn_transaction_uncertain"}], "meta": {}}
 
 
 @pytest.mark.asyncio
 async def test_collector_empty_activity_history_does_not_prove_non_submission() -> None:
     class FakePerflo:
         async def get_activity(self) -> PerfloSuccessEnvelope:
-            return _envelope({"records": []})
+            return _agent_envelope([])
 
     collector = LiveEvidenceCollector(
         PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
@@ -463,8 +482,9 @@ async def test_collector_empty_activity_history_does_not_prove_non_submission() 
 async def test_live_preflight_accepts_embedded_schema(request_schema: JsonValue) -> None:
     request = PaidExecutionRequest(
         run_id="syn_current_contract",
-        target="https://example.invalid/search",
-        body={"query": "synthetic"},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={"query": "synthetic"}
+        ),
         budget=Money(amount=Decimal("0.02"), unit="USDC"),
     )
     contract: dict[str, JsonValue] = {
@@ -483,7 +503,7 @@ async def test_live_preflight_accepts_embedded_schema(request_schema: JsonValue)
             assert target == request.target
             return PerfloSuccessEnvelope(
                 ok=True,
-                payload={"ok": True, "contract": contract},
+                payload={"ok": True, "vendor": contract},
                 stdout_bytes=0,
                 stderr_bytes=0,
                 returncode=0,
@@ -493,15 +513,15 @@ async def test_live_preflight_accepts_embedded_schema(request_schema: JsonValue)
             raise AssertionError(f"embedded schema must avoid a second preflight call: {slug}")
 
     collector = LiveEvidenceCollector(
-        PerfloAdapter(cast(PerfloClientPort, FakePerflo())),
+        FakeRail(FakePerflo()),
         StubContextDev(evidence=CONTEXT_EVIDENCE),
     )
 
     await collector.preflight(request)
 
     assert [artifact.source for artifact in collector.artifacts] == [
-        "perflo.check",
-        "perflo.check.request_schema",
+        "perflo.vendor",
+        "perflo.vendor.request_schema",
     ]
 
 
@@ -519,8 +539,9 @@ async def test_preflight_rejects_quote_outside_authorized_budget(
 ) -> None:
     request = PaidExecutionRequest(
         run_id="syn_quote_guard",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.05"), unit="USDC"),
     )
     contract: dict[str, JsonValue] = {
@@ -533,7 +554,7 @@ async def test_preflight_rejects_quote_outside_authorized_budget(
         async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
             return PerfloSuccessEnvelope(
                 ok=True,
-                payload={"ok": True, "contract": contract},
+                payload={"ok": True, "vendor": contract},
                 stdout_bytes=0,
                 stderr_bytes=0,
                 returncode=0,
@@ -542,9 +563,7 @@ async def test_preflight_rejects_quote_outside_authorized_budget(
         async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
             raise AssertionError("execution must not run with a rejected quote")
 
-    collector = LiveEvidenceCollector(
-        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
-    )
+    collector = LiveEvidenceCollector(FakeRail(FakePerflo()), cast(ContextEvidencePort, object()))
 
     with pytest.raises(RunTransitionError, match="quote"):
         await collector.preflight(request)
@@ -554,8 +573,9 @@ async def test_preflight_rejects_quote_outside_authorized_budget(
 async def test_execute_sends_the_preflight_quote_not_the_budget() -> None:
     request = PaidExecutionRequest(
         run_id="syn_quote_execute",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.05"), unit="USDC"),
     )
     sent: list[Money] = []
@@ -566,7 +586,7 @@ async def test_execute_sends_the_preflight_quote_not_the_budget() -> None:
                 ok=True,
                 payload={
                     "ok": True,
-                    "contract": {
+                    "vendor": {
                         "url": request.target,
                         "requestSchema": {"type": "object"},
                         "priceMinor": "10000",
@@ -588,9 +608,7 @@ async def test_execute_sends_the_preflight_quote_not_the_budget() -> None:
             sent.append(quoted_price)
             return _envelope({"upstreamResponse": {"status": 200, "body": None}})
 
-    collector = LiveEvidenceCollector(
-        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
-    )
+    collector = LiveEvidenceCollector(FakeRail(FakePerflo()), cast(ContextEvidencePort, object()))
     await collector.preflight(request)
     authorization = await authorize_collector(collector, request)
     await collector.execute(authorization, request)
@@ -602,8 +620,9 @@ async def test_execute_sends_the_preflight_quote_not_the_budget() -> None:
 async def test_preflight_requires_a_quote_before_authorization() -> None:
     request = PaidExecutionRequest(
         run_id="syn_quote_missing",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.05"), unit="USDC"),
     )
 
@@ -613,7 +632,7 @@ async def test_preflight_requires_a_quote_before_authorization() -> None:
                 ok=True,
                 payload={
                     "ok": True,
-                    "contract": {"url": request.target, "requestSchema": {"type": "object"}},
+                    "vendor": {"url": request.target, "requestSchema": {"type": "object"}},
                 },
                 stdout_bytes=0,
                 stderr_bytes=0,
@@ -623,9 +642,7 @@ async def test_preflight_requires_a_quote_before_authorization() -> None:
         async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
             raise AssertionError("execution must not run without a quoted price")
 
-    collector = LiveEvidenceCollector(
-        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), cast(ContextEvidencePort, object())
-    )
+    collector = LiveEvidenceCollector(FakeRail(FakePerflo()), cast(ContextEvidencePort, object()))
     with pytest.raises(RunTransitionError, match="quoted price"):
         await collector.preflight(request)
 
@@ -635,19 +652,22 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target=report.contract.url if report.contract else "https://example.invalid",
-        body={},
+        resource=HttpResourceReference(
+            url=(report.contract.url if report.contract else None) or "https://example.invalid",
+            method="POST",
+            body={},
+        ),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
 
     class FakePerflo:
         async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
             del target
-            return _envelope(_fixture_data("contract.json"))
+            return _vendor_envelope(_fixture_data("contract.json"))
 
         async def get_schema(self, slug: str) -> PerfloSuccessEnvelope:
             del slug
-            return _envelope({"request_schema": {}})
+            return _vendor_envelope({"request_schema": {}})
 
         async def execute(
             self,
@@ -664,10 +684,8 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
                 payload={
                     "ok": True,
                     "agent": {
-                        "limit": 20,
-                        "offset": 0,
-                        "total": 1,
-                        "transactions": _fixture_data("activity.json"),
+                        "rows": _fixture_data("activity.json"),
+                        "meta": {"limit": 20, "offset": 0, "total": 1},
                     },
                     "money": [],
                 },
@@ -685,7 +703,7 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
             )
 
     collector = LiveEvidenceCollector(
-        PerfloAdapter(cast(PerfloClientPort, FakePerflo())),
+        FakeRail(FakePerflo()),
         StubContextDev(evidence=CONTEXT_EVIDENCE),
     )
     await collector.preflight(request)
@@ -711,8 +729,11 @@ async def test_live_evidence_collector_accepts_a_non_perflo_adapter() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target=report.contract.url if report.contract else "https://example.invalid",
-        body={},
+        resource=HttpResourceReference(
+            url=(report.contract.url if report.contract else None) or "https://example.invalid",
+            method="POST",
+            body={},
+        ),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     contract_value = _fixture_data("contract.json")
@@ -803,8 +824,7 @@ async def test_collector_rejects_mislabeled_adapter_evidence(
 ) -> None:
     request = PaidExecutionRequest(
         run_id="syn_run",
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
 
@@ -842,8 +862,9 @@ async def test_collector_rejects_mislabeled_adapter_evidence(
 async def test_collector_preserves_uncertain_execution_evidence_and_reference() -> None:
     request = PaidExecutionRequest(
         run_id="syn_uncertain_adapter",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
 
@@ -950,11 +971,11 @@ def failing_collector(
     class FakePerflo:
         async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
             del target
-            return _envelope(_fixture_data("contract.json"))
+            return _vendor_envelope(_fixture_data("contract.json"))
 
         async def get_schema(self, slug: str) -> PerfloSuccessEnvelope:
             del slug
-            return _envelope({"request_schema": {}})
+            return _vendor_envelope({"request_schema": {}})
 
         async def execute(
             self,
@@ -966,7 +987,7 @@ def failing_collector(
             return _envelope(execution)
 
         async def get_activity(self) -> PerfloSuccessEnvelope:
-            return _envelope(_fixture_data("activity.json"))
+            return _agent_envelope(_fixture_data("activity.json"))
 
         async def get_execution(self) -> PerfloSuccessEnvelope:
             raise AssertionError("execution status is not used for a certain submission")
@@ -976,16 +997,15 @@ def failing_collector(
                 f"transaction status is not used for a certain submission: {transaction_hash}"
             )
 
-    return LiveEvidenceCollector(
-        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), contextdev=contextdev, budget=budget
-    )
+    return LiveEvidenceCollector(FakeRail(FakePerflo()), contextdev=contextdev, budget=budget)
 
 
 async def run_failing_collector(collector: LiveEvidenceCollector) -> MachineReport:
     request = PaidExecutionRequest(
         run_id="syn_run_context",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     await collector.preflight(request)
@@ -1104,11 +1124,11 @@ async def test_collector_never_calls_contextdev_for_a_successful_service() -> No
     class FakePerflo:
         async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
             del target
-            return _envelope(_fixture_data("contract.json"))
+            return _vendor_envelope(_fixture_data("contract.json"))
 
         async def get_schema(self, slug: str) -> PerfloSuccessEnvelope:
             del slug
-            return _envelope({"request_schema": {}})
+            return _vendor_envelope({"request_schema": {}})
 
         async def execute(
             self,
@@ -1125,10 +1145,8 @@ async def test_collector_never_calls_contextdev_for_a_successful_service() -> No
                 payload={
                     "ok": True,
                     "agent": {
-                        "limit": 20,
-                        "offset": 0,
-                        "total": 1,
-                        "transactions": _fixture_data("activity.json"),
+                        "rows": _fixture_data("activity.json"),
+                        "meta": {"limit": 20, "offset": 0, "total": 1},
                     },
                     "money": [],
                 },
@@ -1145,13 +1163,12 @@ async def test_collector_never_calls_contextdev_for_a_successful_service() -> No
                 f"transaction status is not used for a certain submission: {transaction_hash}"
             )
 
-    collector = LiveEvidenceCollector(
-        PerfloAdapter(cast(PerfloClientPort, FakePerflo())), contextdev=contextdev
-    )
+    collector = LiveEvidenceCollector(FakeRail(FakePerflo()), contextdev=contextdev)
     request = PaidExecutionRequest(
         run_id="syn_run_clean",
-        target="https://example.invalid/search",
-        body={},
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     await collector.preflight(request)
@@ -1261,8 +1278,7 @@ async def test_run_explains_only_after_machine_report_is_complete() -> None:
     report_before = report.model_dump_json()
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1320,8 +1336,7 @@ async def test_explanation_failure_returns_grounded_fallback(failure: str) -> No
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1401,8 +1416,7 @@ async def test_exhausted_model_budget_returns_fallback_without_calling_the_model
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1448,8 +1462,7 @@ async def test_tool_calls_are_accounted_against_the_budget() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1507,8 +1520,7 @@ async def test_token_budget_exhaustion_skips_model_without_mutating_report() -> 
     report_before = report.model_dump_json()
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1610,8 +1622,7 @@ async def test_run_emits_safe_state_and_boundary_telemetry() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1666,8 +1677,7 @@ async def test_metric_failure_cannot_change_the_report() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
     capability = PaidExecutionCapability.issue(
@@ -1709,3 +1719,253 @@ def _envelope(result: JsonValue) -> PerfloSuccessEnvelope:
         stderr_bytes=0,
         returncode=0,
     )
+
+
+def _vendor_envelope(vendor: JsonValue) -> PerfloSuccessEnvelope:
+    return PerfloSuccessEnvelope(
+        ok=True,
+        payload={"ok": True, "vendor": vendor},
+        stdout_bytes=0,
+        stderr_bytes=0,
+        returncode=0,
+    )
+
+
+def _agent_envelope(rows: JsonValue, meta: JsonValue | None = None) -> PerfloSuccessEnvelope:
+    return PerfloSuccessEnvelope(
+        ok=True,
+        payload={"ok": True, "agent": {"rows": rows, "meta": meta if meta is not None else {}}},
+        stdout_bytes=0,
+        stderr_bytes=0,
+        returncode=0,
+    )
+
+
+def _tx_envelope(payload: dict[str, JsonValue]) -> PerfloSuccessEnvelope:
+    return PerfloSuccessEnvelope(
+        ok=True,
+        payload={"ok": True, "txHash": "syn_hash_uncertain", **payload},
+        stdout_bytes=0,
+        stderr_bytes=0,
+        returncode=0,
+    )
+
+
+_CATALOG_VENDOR: dict[str, JsonValue] = {
+    "slug": "synthetic-weather",
+    "payable": True,
+    "price": {"amount": "0.01", "currency": "USD"},
+    "maxChargePerCall": {"amount": "0.05", "currency": "USD"},
+    "input": {"fields": [{"name": "city", "in": "body", "type": "string", "required": True}]},
+}
+
+
+def _catalog_request() -> PaidExecutionRequest:
+    return PaidExecutionRequest(
+        run_id="syn_catalog_run",
+        resource=CatalogResourceReference(
+            slug="synthetic-weather",
+            input={"city": "synthetic-city"},
+            query={},
+        ),
+        budget=Money(amount=Decimal("0.05"), unit="USD"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_catalog_preflight_issues_schema3_terms_and_revalidation_matches() -> None:
+    request = _catalog_request()
+    calls: list[str] = []
+
+    class FakePerflo:
+        async def inspect_service(self, slug: str) -> PerfloSuccessEnvelope:
+            calls.append(slug)
+            return _vendor_envelope(_CATALOG_VENDOR)
+
+    collector = LiveEvidenceCollector(
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())),
+        cast(ContextEvidencePort, object()),
+    )
+
+    await collector.preflight(request)
+
+    terms = collector.payment_terms
+    assert terms.schema_version == 3
+    assert terms.resource_digest == request.resource_digest
+    assert terms.maximum_charge == request.budget
+    assert terms.resource_url is None
+    assert terms.method is None
+    assert terms.body_digest is None
+
+    await collector.revalidate_payment_terms(request)
+
+    assert calls == ["synthetic-weather", "synthetic-weather"]
+    artifact_ids = {artifact.artifact_id for artifact in collector.artifacts}
+    assert "syn_catalog_run:service_contract" in artifact_ids
+    assert "syn_catalog_run:service_contract_reinspection" in artifact_ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        ({"slug": "other-vendor"}, "slug|drifted"),
+        ({"payable": False}, "not payable"),
+        ({"price": {"amount": "0.01", "currency": "EUR"}}, "USD|drifted"),
+        ({"maxChargePerCall": {"amount": "0.09", "currency": "USD"}}, "maximum|budget|drifted"),
+        (
+            {
+                "input": {
+                    "fields": [{"name": "city", "in": "query", "type": "string", "required": True}]
+                }
+            },
+            "drifted",
+        ),
+    ],
+    ids=["slug", "payable", "currency", "max-charge", "input-placement"],
+)
+async def test_catalog_revalidation_rejects_contract_drift(
+    mutation: dict[str, JsonValue], match: str
+) -> None:
+    request = _catalog_request()
+    drifted = {**_CATALOG_VENDOR, **mutation}
+    calls = iter([_CATALOG_VENDOR, drifted])
+
+    class FakePerflo:
+        async def inspect_service(self, slug: str) -> PerfloSuccessEnvelope:
+            del slug
+            return _vendor_envelope(next(calls))
+
+    collector = LiveEvidenceCollector(
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())),
+        cast(ContextEvidencePort, object()),
+    )
+    await collector.preflight(request)
+
+    with pytest.raises(RunTransitionError, match=match):
+        await collector.revalidate_payment_terms(request)
+
+
+@pytest.mark.asyncio
+async def test_catalog_revalidation_rejects_malformed_second_observation() -> None:
+    request = _catalog_request()
+    calls = iter([_CATALOG_VENDOR, ["not-an-object"]])
+
+    class FakePerflo:
+        async def inspect_service(self, slug: str) -> PerfloSuccessEnvelope:
+            del slug
+            return _vendor_envelope(cast(JsonValue, next(calls)))
+
+    collector = LiveEvidenceCollector(
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())),
+        cast(ContextEvidencePort, object()),
+    )
+    await collector.preflight(request)
+
+    with pytest.raises(ValueError):
+        await collector.revalidate_payment_terms(request)
+
+
+@pytest.mark.asyncio
+async def test_http_request_skips_reinspection_even_when_adapter_supports_it() -> None:
+    request = PaidExecutionRequest(
+        run_id="syn_http_run",
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="POST", body={}
+        ),
+        budget=Money(amount=Decimal("0.02"), unit="USDC"),
+    )
+    calls: list[str] = []
+
+    class FakePerflo:
+        async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
+            calls.append(target)
+            return _vendor_envelope(
+                {
+                    "url": request.target,
+                    "price": {"amount": "0.01", "unit": "USDC"},
+                    "asset": "USDC",
+                    "requestSchema": {"type": "object"},
+                }
+            )
+
+    collector = LiveEvidenceCollector(
+        PerfloAdapter(cast(PerfloClientPort, FakePerflo())),
+        cast(ContextEvidencePort, object()),
+    )
+
+    await collector.revalidate_payment_terms(request)
+
+    assert calls == []
+
+
+def test_x402_adapter_does_not_implement_reinspection() -> None:
+    from settlediff.application.payment_rails import ContractReinspectionPort
+    from settlediff.x402.adapter import X402Adapter
+
+    assert not isinstance(X402Adapter, ContractReinspectionPort)
+
+
+class FakeRail:
+    """Collector-test rail that unwraps fake Perflo envelopes without v8 guards."""
+
+    adapter_id = "perflo"
+
+    def __init__(self, client: object) -> None:
+        self._client = cast(PerfloClientPort, client)
+
+    async def inspect(self, request: PaidExecutionRequest) -> AdapterEvidence:
+        envelope = await self._client.inspect_service(request.target)
+        return AdapterEvidence(
+            adapter_id="perflo",
+            operation="inspect",
+            source="perflo.vendor",
+            artifact_type=ArtifactType.SERVICE_CONTRACT,
+            data=envelope.payload["vendor"],
+        )
+
+    async def collect_schema(self, slug: str) -> AdapterEvidence:
+        envelope = await self._client.get_schema(slug)
+        return AdapterEvidence(
+            adapter_id="perflo",
+            operation="schema",
+            source="perflo.schema",
+            artifact_type=ArtifactType.CONTEXT_EVIDENCE,
+            data=envelope.payload["vendor"],
+        )
+
+    async def execute_once(
+        self,
+        authorization: ConsumedPaidAuthorization,
+        request: PaidExecutionRequest,
+        quoted_price: Money,
+    ) -> AdapterEvidence:
+        envelope = await self._client.execute(authorization, request, quoted_price)
+        return AdapterEvidence(
+            adapter_id="perflo",
+            operation="execute",
+            source="perflo.pay",
+            artifact_type=ArtifactType.EXECUTION,
+            data=envelope.payload["result"],
+        )
+
+    async def collect_activity(self) -> AdapterEvidence:
+        envelope = await self._client.get_activity()
+        return AdapterEvidence(
+            adapter_id="perflo",
+            operation="activity",
+            source="perflo.activity.agent",
+            artifact_type=ArtifactType.ACTIVITY,
+            data=envelope.payload["agent"],
+        )
+
+    async def collect_transaction(self, transaction_reference: str) -> AdapterEvidence:
+        envelope = await self._client.transaction_status(transaction_reference)
+        return AdapterEvidence(
+            adapter_id="perflo",
+            operation="transaction_status",
+            source="perflo.tx_status",
+            artifact_type=ArtifactType.PAYMENT_RECEIPT,
+            data={key: value for key, value in envelope.payload.items() if key != "ok"},
+            transaction_reference=transaction_reference,
+        )
