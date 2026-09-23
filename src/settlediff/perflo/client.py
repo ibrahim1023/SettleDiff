@@ -9,7 +9,11 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from settlediff.application.auth import ConsumedPaidAuthorization, PaidExecutionRequest
+from settlediff.application.auth import (
+    CatalogResourceReference,
+    ConsumedPaidAuthorization,
+    PaidExecutionRequest,
+)
 from settlediff.application.payment_rails import SubmissionUncertainError
 from settlediff.domain.money import Money
 from settlediff.perflo.parser import (
@@ -64,8 +68,11 @@ class PerfloCliVersion(BaseModel):
         return self.major == 8
 
 
-_MINOR_UNIT_EXPONENT = {"USDC": 6, "USDT": 6}
 _STABLE_VERSION = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 class PerfloClient:
@@ -128,11 +135,11 @@ class PerfloClient:
             patch=int(match[3]),
         )
 
-    async def inspect_service(self, target: str) -> PerfloEnvelope:
-        return await self._run(("check", target, "--json"), mutation=False)
+    async def inspect_service(self, slug: str) -> PerfloEnvelope:
+        return await self._run(("vendor", slug, "--json"), mutation=False)
 
     async def get_schema(self, slug: str) -> PerfloEnvelope:
-        return await self._run(("schema", slug, "--json"), mutation=False)
+        return await self._run(("vendor", slug, "--json"), mutation=False)
 
     async def get_activity(self) -> PerfloEnvelope:
         return await self._run(("activity", "--json"), mutation=False)
@@ -147,39 +154,29 @@ class PerfloClient:
         quoted_price: Money,
     ) -> PerfloEnvelope:
         authorization.require_exact_request(request)
+        if not isinstance(request.resource, CatalogResourceReference):
+            raise ValueError("Perflo v8 pay requires a catalog resource reference")
+        if request.budget.unit != "USD" or request.budget.amount <= 0:
+            raise ValueError("Perflo v8 authorized budget must be positive USD")
         if quoted_price.amount <= 0:
             raise ValueError("quote must be positive")
-        if quoted_price.unit != request.budget.unit:
-            raise ValueError(
-                f"quote unit {quoted_price.unit} does not match authorized budget unit "
-                f"{request.budget.unit}"
-            )
+        if quoted_price.unit != "USD":
+            raise ValueError("quote unit must be USD")
         if not quoted_price.is_within(request.budget):
             raise ValueError(
                 f"quote {quoted_price.amount} {quoted_price.unit} exceeds the authorized budget "
                 f"{request.budget.amount} {request.budget.unit}"
             )
-        exponent = _MINOR_UNIT_EXPONENT.get(quoted_price.unit)
-        if exponent is None:
-            raise ValueError(f"Perflo does not support quote unit {quoted_price.unit}")
-        price_minor = quoted_price.amount.scaleb(exponent)
-        if price_minor != price_minor.to_integral_value():
-            raise ValueError("quote has more precision than its settlement asset")
-        body = json.dumps(request.body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        return await self._run(
-            (
-                "fetch",
-                request.target,
-                "-b",
-                body,
-                "--price",
-                format(price_minor, "f"),
-                "--asset",
-                request.budget.unit,
-                "--json",
-            ),
-            mutation=True,
-        )
+        args: list[str] = ["pay", request.resource.slug]
+        if request.resource.input:
+            args += ["--input", _canonical_json(request.resource.input)]
+        if request.resource.query:
+            args += ["--query", _canonical_json(request.resource.query)]
+        args += ["--max-charge", format(request.budget.amount, "f")]
+        if request.resource.sub_account is not None:
+            args += ["--sub-account", request.resource.sub_account]
+        args.append("--json")
+        return await self._run(tuple(args), mutation=True)
 
     async def _run(self, args: tuple[str, ...], *, mutation: bool) -> PerfloEnvelope:
         process = await asyncio.create_subprocess_exec(

@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 from settlediff import __version__
 from settlediff.agent.grounding import fallback_explanation
 from settlediff.application.auth import (
+    CatalogResourceReference,
     HttpResourceReference,
     PaidExecutionCapability,
     PaidExecutionRequest,
@@ -210,7 +211,7 @@ def test_live_run_rejects_missing_perflo_executable_before_preflight(
 
     result = runner.invoke(
         app,
-        ["run", "--url", "https://example.invalid", "--body", "{}", "--budget", "1"],
+        ["run", "--slug", "synthetic-weather", "--budget", "1"],
     )
 
     assert result.exit_code == 2
@@ -233,7 +234,7 @@ def test_live_run_rejects_unsupported_perflo_version_before_authorization(
 
     result = runner.invoke(
         app,
-        ["run", "--url", "https://example.invalid", "--body", "{}", "--budget", "1"],
+        ["run", "--slug", "synthetic-weather", "--budget", "1"],
         input="y\n",
     )
 
@@ -317,7 +318,7 @@ def test_perflo_default_still_rejects_loopback_http() -> None:
     )
 
     assert result.exit_code == 2
-    assert "except loopback HTTP for x402" in result.stderr
+    assert "apply only to --rail x402" in result.stderr
 
 
 def test_live_run_rejects_invalid_json_before_any_adapter_call() -> None:
@@ -459,9 +460,7 @@ def test_live_run_requires_contextdev_configuration(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr("settlediff.cli.Settings", isolated_settings)
     monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
-    result = runner.invoke(
-        app, ["run", "--url", "https://example.invalid", "--body", "{}", "--budget", "1"]
-    )
+    result = runner.invoke(app, ["run", "--slug", "synthetic-weather", "--budget", "1"])
     assert result.exit_code == 2
     assert "Context.dev configuration is required for live investigations" in result.stderr
 
@@ -484,21 +483,19 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
 
         async def inspect_service(self, _target: str) -> PerfloSuccessEnvelope:
             calls.append("check")
-            return _envelope(
+            return _vendor_envelope(
                 {
-                    "vendor_slug": "synthetic-search",
-                    "url": "https://example.invalid/search",
-                    "price": {"amount": "0.01", "unit": "USDC"},
-                    "asset": "USDC",
-                    "protocol": "mpp",
-                    "chain": "tempo",
-                    "request_schema": {},
+                    "slug": "synthetic-search",
+                    "price": {"amount": "0.01", "currency": "USD"},
+                    "maxChargePerCall": {"amount": "0.05", "currency": "USD"},
+                    "payable": True,
+                    "input": {"fields": []},
                 }
             )
 
         async def get_schema(self, _slug: str) -> PerfloSuccessEnvelope:
             calls.append("schema")
-            return _envelope({"request_schema": {}})
+            return _vendor_envelope({"request_schema": {}})
 
         async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
             calls.append("fetch")
@@ -518,27 +515,30 @@ def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
     result = runner.invoke(
         app,
-        ["run", "--url", "https://example.invalid/search", "--body", "{}", "--budget", "0.01"],
+        ["run", "--slug", "synthetic-search", "--budget", "0.05"],
         input="n\n",
     )
     assert result.exit_code == 1
     assert calls == ["check"]
     assert "Rail: perflo" in result.stdout
-    assert "Version: unknown" in result.stdout
-    assert "Scheme: unknown" in result.stdout
-    assert "Network: tempo" in result.stdout
-    assert "Method: POST" in result.stdout
-    assert "Body digest:" in result.stdout
+    assert "Catalog slug: synthetic-search" in result.stdout
+    assert "Resource digest:" in result.stdout
+    assert "Vendor contract digest:" in result.stdout
+    assert "Advertised price: 0.01 USD" in result.stdout
+    assert "Advertised minimum maxChargePerCall: 0.05 USD" in result.stdout
+    assert "Authorized maximum charge: 0.05 USD" in result.stdout
     assert "Payment terms digest:" in result.stdout
-    assert "Quoted price: 0.01 USDC" in result.stdout
+    assert "Budget: 0.05 USD" in result.stdout
+    assert "Resource:" not in result.stdout
+    assert "Method:" not in result.stdout
+    assert "Body digest:" not in result.stdout
     assert "Investigation budget:" in result.stdout
     assert "Context.dev calls: 1" in result.stdout
     assert "model requests: 4" in result.stdout
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["transaction_hash", "transactionHash", "txHash"])
-async def test_perflo_adapter_preserves_transaction_reference_alias(field: str) -> None:
+async def test_perflo_adapter_reads_references_only_from_published_fields() -> None:
     request = PaidExecutionRequest(
         run_id="syn_run",
         resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
@@ -550,7 +550,14 @@ async def test_perflo_adapter_preserves_transaction_reference_alias(field: str) 
 
     class FakePerflo:
         async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
-            return _envelope({field: "syn_hash_recovered"})
+            return _envelope(
+                {
+                    "status": "succeeded",
+                    "transactionId": "syn_tx_recovered",
+                    "txHash": "syn_top_level_hash_ignored",
+                    "settlement": {"status": "settled", "txHash": "syn_hash_recovered"},
+                }
+            )
 
     adapter = PerfloAdapter(cast(PerfloClientPort, FakePerflo()))
 
@@ -558,11 +565,12 @@ async def test_perflo_adapter_preserves_transaction_reference_alias(field: str) 
         authorization, request, Money(amount=Decimal("0.01"), unit="USDC")
     )
 
+    assert evidence.payment_reference == "syn_tx_recovered"
     assert evidence.transaction_reference == "syn_hash_recovered"
 
 
 @pytest.mark.asyncio
-async def test_perflo_adapter_rejects_conflicting_transaction_references() -> None:
+async def test_perflo_adapter_never_uses_top_level_hashes_as_transaction_reference() -> None:
     request = PaidExecutionRequest(
         run_id="syn_run",
         resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
@@ -574,14 +582,22 @@ async def test_perflo_adapter_rejects_conflicting_transaction_references() -> No
 
     class FakePerflo:
         async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
-            return _envelope({"transaction_hash": "syn_hash_one", "txHash": "syn_hash_two"})
+            return _envelope(
+                {
+                    "status": "succeeded",
+                    "transaction_hash": "syn_hash_one",
+                    "txHash": "syn_hash_two",
+                }
+            )
 
     adapter = PerfloAdapter(cast(PerfloClientPort, FakePerflo()))
 
-    with pytest.raises(ValueError, match="conflicting"):
-        await adapter.execute_once(
-            authorization, request, Money(amount=Decimal("0.01"), unit="USDC")
-        )
+    evidence = await adapter.execute_once(
+        authorization, request, Money(amount=Decimal("0.01"), unit="USDC")
+    )
+
+    assert evidence.transaction_reference is None
+    assert evidence.payment_reference is None
 
 
 def test_run_reports_unresolved_activity_recovery(
@@ -599,22 +615,20 @@ def test_run_reports_unresolved_activity_recovery(
         async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
             del target
             calls.append("check")
-            return _envelope(
+            return _vendor_envelope(
                 {
-                    "vendor_slug": "synthetic-search",
-                    "url": "https://example.invalid/search",
-                    "price": {"amount": "0.01", "unit": "USDC"},
-                    "asset": "USDC",
-                    "protocol": "mpp",
-                    "chain": "tempo",
-                    "request_schema": {},
+                    "slug": "synthetic-search",
+                    "price": {"amount": "0.01", "currency": "USD"},
+                    "maxChargePerCall": {"amount": "0.05", "currency": "USD"},
+                    "payable": True,
+                    "input": {"fields": []},
                 }
             )
 
         async def get_schema(self, slug: str) -> PerfloSuccessEnvelope:
             del slug
             calls.append("schema")
-            return _envelope({"request_schema": {}})
+            return _vendor_envelope({"request_schema": {}})
 
         async def execute(
             self, authorization: object, request: object, quoted_price: object
@@ -632,7 +646,7 @@ def test_run_reports_unresolved_activity_recovery(
             calls.append("activity")
             from pathlib import Path as FixturePath
 
-            return _envelope(
+            return _agent_envelope(
                 json.loads((FixturePath("fixtures/clean-success") / "activity.json").read_text())
             )
 
@@ -647,12 +661,10 @@ def test_run_reports_unresolved_activity_recovery(
         app,
         [
             "run",
-            "--url",
-            "https://example.invalid/search",
-            "--body",
-            "{}",
+            "--slug",
+            "synthetic-search",
             "--budget",
-            "0.01",
+            "0.05",
             "--database",
             str(tmp_path / "reports.sqlite3"),
         ],
@@ -660,7 +672,7 @@ def test_run_reports_unresolved_activity_recovery(
     )
 
     assert result.exit_code == 0
-    assert calls == ["check", "fetch", "activity"]
+    assert calls == ["check", "check", "fetch", "activity"]
     assert "UNVERIFIABLE" in result.stdout
     assert "Submission: unresolved" in result.stdout
     assert "proof of non-submission: no" in result.stdout
@@ -783,10 +795,8 @@ def test_live_run_renders_in_memory_report_when_persistence_fails(
         app,
         [
             "run",
-            "--url",
-            "https://example.invalid/search",
-            "--body",
-            "{}",
+            "--slug",
+            "synthetic-weather",
             "--budget",
             "0.01",
             "--database",
@@ -851,6 +861,26 @@ def _envelope(result: JsonValue) -> PerfloSuccessEnvelope:
     return PerfloSuccessEnvelope(
         ok=True,
         payload={"ok": True, "result": result},
+        stdout_bytes=0,
+        stderr_bytes=0,
+        returncode=0,
+    )
+
+
+def _vendor_envelope(vendor: JsonValue) -> PerfloSuccessEnvelope:
+    return PerfloSuccessEnvelope(
+        ok=True,
+        payload={"ok": True, "vendor": vendor},
+        stdout_bytes=0,
+        stderr_bytes=0,
+        returncode=0,
+    )
+
+
+def _agent_envelope(rows: JsonValue) -> PerfloSuccessEnvelope:
+    return PerfloSuccessEnvelope(
+        ok=True,
+        payload={"ok": True, "agent": {"rows": rows, "meta": {}}},
         stdout_bytes=0,
         stderr_bytes=0,
         returncode=0,
@@ -1314,19 +1344,12 @@ def test_serve_accepts_a_local_alternate_port(
 def test_snapshot_persists_contract_without_signing_or_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    contract: dict[str, JsonValue] = {
-        "vendor_slug": "synthetic-search",
-        "url": "https://example.invalid/search",
-        "price": {"amount": "0.01", "unit": "USDC"},
-        "asset": "USDC",
-        "protocol": "mpp",
-        "chain": "tempo",
-    }
+    contract: dict[str, JsonValue] = dict(_PERFLO_VENDOR)
 
     class FakePerflo:
         async def inspect_service(self, target: str) -> PerfloSuccessEnvelope:
-            assert target == "https://example.invalid/search"
-            return _envelope(contract)
+            assert target == "synthetic-search"
+            return _vendor_envelope(contract)
 
         async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
             raise AssertionError("snapshot must not execute")
@@ -1342,7 +1365,7 @@ def test_snapshot_persists_contract_without_signing_or_execution(
         app,
         [
             "snapshot",
-            "https://example.invalid/search",
+            "synthetic-search",
             "--database",
             str(database),
             "--json",
@@ -1356,7 +1379,7 @@ def test_snapshot_persists_contract_without_signing_or_execution(
     assert len(payload["snapshot_digest"]) == 64
     repository = SQLiteReportRepository(database)
     try:
-        stored = repository.contract_snapshots("https://example.invalid/search", "perflo")
+        stored = repository.contract_snapshots("synthetic-search", "perflo")
     finally:
         repository.close()
     assert [item.snapshot_digest for item in stored] == [payload["snapshot_digest"]]
@@ -1365,25 +1388,18 @@ def test_snapshot_persists_contract_without_signing_or_execution(
 def test_drift_reports_unavailable_then_match_then_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    current_contract: dict[str, JsonValue] = {
-        "vendor_slug": "synthetic-search",
-        "url": "https://example.invalid/search",
-        "price": {"amount": "0.01", "unit": "USDC"},
-        "asset": "USDC",
-        "protocol": "mpp",
-        "chain": "tempo",
-    }
+    current_contract: dict[str, JsonValue] = dict(_PERFLO_VENDOR)
     calls: list[dict[str, JsonValue]] = [current_contract]
 
     class FakePerflo:
         async def inspect_service(self, _target: str) -> PerfloSuccessEnvelope:
-            return _envelope(calls[0])
+            return _vendor_envelope(calls[0])
 
     monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
     database = tmp_path / "reports.sqlite3"
     argv = [
         "drift",
-        "https://example.invalid/search",
+        "synthetic-search",
         "--database",
         str(database),
         "--json",
@@ -1398,7 +1414,7 @@ def test_drift_reports_unavailable_then_match_then_change(
     assert second["status"] == "MATCH"
     assert second["previous_snapshot_digest"] == first["current_snapshot_digest"]
 
-    calls[0] = dict(current_contract, price={"amount": "0.02", "unit": "USDC"})
+    calls[0] = dict(current_contract, price={"amount": "0.02", "currency": "USD"})
     third = json.loads(runner.invoke(app, argv).stdout)
     assert third["status"] == "DIFF"
     assert "PRICE_CHANGED" in third["change_codes"]
@@ -1924,3 +1940,330 @@ def test_investigate_purchase_makes_no_external_calls(
     result = runner.invoke(app, ["investigate-purchase", run_id, "--database", str(database)])
 
     assert result.exit_code == 0, result.stderr
+
+
+_PERFLO_VENDOR: dict[str, JsonValue] = {
+    "slug": "synthetic-search",
+    "price": {"amount": "0.01", "currency": "USD"},
+    "maxChargePerCall": {"amount": "0.05", "currency": "USD"},
+    "payable": True,
+    "input": {"fields": []},
+}
+
+
+def test_perflo_run_constructs_exact_catalog_request(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: list[PaidExecutionRequest] = []
+    report = replay_fixture(Path("fixtures/clean-success"))
+    explanation = ExplanationRecord(
+        explanation=fallback_explanation(report, set()),
+        source=ExplanationSource.FALLBACK,
+        tool_calls=0,
+    )
+
+    async def completed_run(*args: object, **_kwargs: object) -> InvestigationOutcome:
+        captured.append(cast(PaidExecutionRequest, args[0]))
+        await cast(ContextDevClient, args[2]).aclose()
+        return InvestigationOutcome(
+            report=report,
+            explanation=explanation,
+            recovery=None,
+            events=(),
+            submission_uncertain=False,
+        )
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerfloProbe)
+    monkeypatch.setattr("settlediff.cli._execute_live_run", completed_run)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--slug",
+            "synthetic-weather",
+            "--input",
+            '{"city":"Exampleville"}',
+            "--query",
+            '{"units":"metric"}',
+            "--sub-account",
+            "syn_account",
+            "--budget",
+            "0.05",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert captured[0].resource == CatalogResourceReference(
+        slug="synthetic-weather",
+        input={"city": "Exampleville"},
+        query={"units": "metric"},
+        sub_account="syn_account",
+    )
+    assert captured[0].budget == Money(amount=Decimal("0.05"), unit="USD")
+
+
+def test_perflo_run_defaults_input_query_and_sub_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[PaidExecutionRequest] = []
+    report = replay_fixture(Path("fixtures/clean-success"))
+    explanation = ExplanationRecord(
+        explanation=fallback_explanation(report, set()),
+        source=ExplanationSource.FALLBACK,
+        tool_calls=0,
+    )
+
+    async def completed_run(*args: object, **_kwargs: object) -> InvestigationOutcome:
+        captured.append(cast(PaidExecutionRequest, args[0]))
+        await cast(ContextDevClient, args[2]).aclose()
+        return InvestigationOutcome(
+            report=report,
+            explanation=explanation,
+            recovery=None,
+            events=(),
+            submission_uncertain=False,
+        )
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerfloProbe)
+    monkeypatch.setattr("settlediff.cli._execute_live_run", completed_run)
+
+    result = runner.invoke(
+        app, ["run", "--slug", "synthetic-weather", "--budget", "0.05", "--json"]
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert captured[0].resource == CatalogResourceReference(
+        slug="synthetic-weather", input={}, query={}, sub_account=None
+    )
+    assert captured[0].budget == Money(amount=Decimal("0.05"), unit="USD")
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--url", "https://example.invalid"],
+        ["--body", "{}"],
+        ["--method", "GET"],
+        ["--allow-testnet"],
+    ],
+    ids=["url", "body", "method", "allow-testnet"],
+)
+def test_perflo_run_rejects_x402_only_options_before_any_call(
+    monkeypatch: pytest.MonkeyPatch, arguments: list[str]
+) -> None:
+    class FakePerflo:
+        def __init__(self, **_kwargs: object) -> None:
+            raise AssertionError("Perflo client must not be constructed")
+
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    result = runner.invoke(app, ["run", "--slug", "synthetic-weather", "--budget", "1", *arguments])
+
+    assert result.exit_code == 2
+    assert "apply only to --rail x402" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--slug", "synthetic-weather"],
+        ["--input", "{}"],
+        ["--query", "{}"],
+        ["--sub-account", "syn_account"],
+    ],
+    ids=["slug", "input", "query", "sub-account"],
+)
+def test_x402_run_rejects_perflo_only_options_before_any_call(
+    monkeypatch: pytest.MonkeyPatch, arguments: list[str]
+) -> None:
+    def forbidden_settings(*_args: object, **_kwargs: object) -> Settings:
+        raise AssertionError("Settings must not be constructed for invalid options")
+
+    monkeypatch.setattr("settlediff.cli.Settings", forbidden_settings)
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--rail",
+            "x402",
+            "--url",
+            "https://example.invalid",
+            "--body",
+            "{}",
+            "--budget",
+            "1",
+            *arguments,
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "apply only to --rail perflo" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--budget", "1"], "non-empty --slug"),
+        (
+            ["--slug", "synthetic-weather", "--input", "[1]", "--budget", "1"],
+            "--input must be a JSON object",
+        ),
+        (
+            ["--slug", "synthetic-weather", "--query", "5", "--budget", "1"],
+            "--query must be a JSON object",
+        ),
+        (
+            ["--slug", "synthetic-weather", "--input", "not json", "--budget", "1"],
+            "Invalid live preflight",
+        ),
+        (
+            ["--slug", "synthetic-weather", "--sub-account", " ", "--budget", "1"],
+            "Invalid live preflight",
+        ),
+    ],
+    ids=["missing-slug", "input-array", "query-scalar", "input-invalid", "blank-sub-account"],
+)
+def test_perflo_run_rejects_invalid_catalog_options_before_any_call(
+    monkeypatch: pytest.MonkeyPatch, arguments: list[str], message: str
+) -> None:
+    class FakePerflo:
+        def __init__(self, **_kwargs: object) -> None:
+            raise AssertionError("Perflo client must not be constructed")
+
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    result = runner.invoke(app, ["run", *arguments])
+
+    assert result.exit_code == 2
+    assert message in result.stderr
+
+
+def test_x402_run_requires_url_before_any_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden_settings(*_args: object, **_kwargs: object) -> Settings:
+        raise AssertionError("Settings must not be constructed for invalid options")
+
+    monkeypatch.setattr("settlediff.cli.Settings", forbidden_settings)
+    result = runner.invoke(app, ["run", "--rail", "x402", "--body", "{}", "--budget", "1"])
+
+    assert result.exit_code == 2
+    assert "x402 requires --url" in result.stderr
+
+
+def test_live_run_persists_drifted_reinspection_and_never_executes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+    observations = iter(
+        [
+            _PERFLO_VENDOR,
+            dict(_PERFLO_VENDOR, price={"amount": "0.02", "currency": "USD"}),
+        ]
+    )
+
+    class FakePerflo:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def probe_version(self) -> PerfloCliVersion:
+            return PerfloCliVersion(major=8, minor=1, patch=0)
+
+        async def inspect_service(self, _target: str) -> PerfloSuccessEnvelope:
+            calls.append("check")
+            return _vendor_envelope(next(observations))
+
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            calls.append("fetch")
+            raise AssertionError("drifted vendor contract must never reach paid execution")
+
+        async def get_activity(self) -> PerfloSuccessEnvelope:
+            raise AssertionError("drifted vendor contract must not recover")
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+    database = tmp_path / "reports.sqlite3"
+
+    result = runner.invoke(
+        app,
+        ["run", "--slug", "synthetic-search", "--budget", "0.05", "--database", str(database)],
+        input="y\n",
+    )
+
+    assert result.exit_code == 2
+    assert calls == ["check", "check"]
+    repository = SQLiteReportRepository(database)
+    try:
+        records = repository.records()
+        assert len(records) == 1
+        record = records[0]
+        assert record.latest_state is RunState.FAILED
+        assert record.failure is not None
+        artifact_ids = {artifact.artifact_id for artifact in repository.artifacts(record.run_id)}
+        assert f"{record.run_id}:service_contract" in artifact_ids
+        assert f"{record.run_id}:service_contract_reinspection" in artifact_ids
+    finally:
+        repository.close()
+
+
+def test_live_run_reports_reinspection_persistence_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+    observations = iter(
+        [
+            _PERFLO_VENDOR,
+            dict(_PERFLO_VENDOR, price={"amount": "0.02", "currency": "USD"}),
+        ]
+    )
+
+    class FakePerflo:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def probe_version(self) -> PerfloCliVersion:
+            return PerfloCliVersion(major=8, minor=1, patch=0)
+
+        async def inspect_service(self, _target: str) -> PerfloSuccessEnvelope:
+            calls.append("check")
+            return _vendor_envelope(next(observations))
+
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            calls.append("fetch")
+            raise AssertionError("drifted vendor contract must never reach paid execution")
+
+        async def get_activity(self) -> PerfloSuccessEnvelope:
+            raise AssertionError("drifted vendor contract must not recover")
+
+    original_save = SQLiteReportRepository.save_artifacts
+
+    def failing_save(
+        self: SQLiteReportRepository, run_id: str, artifacts: tuple[EvidenceArtifact, ...]
+    ) -> None:
+        if any(a.artifact_id.endswith("service_contract_reinspection") for a in artifacts):
+            raise OSError("syn-sensitive-storage-detail")
+        return original_save(self, run_id, artifacts)
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+    monkeypatch.setattr(SQLiteReportRepository, "save_artifacts", failing_save)
+    database = tmp_path / "reports.sqlite3"
+
+    result = runner.invoke(
+        app,
+        ["run", "--slug", "synthetic-search", "--budget", "0.05", "--database", str(database)],
+        input="y\n",
+    )
+
+    assert result.exit_code == 2
+    assert calls == ["check", "check"]
+    assert (
+        "Critical: reinspection evidence persistence failed; "
+        "the durable run may be incomplete." in result.stderr
+    )
+    assert "Payment terms revalidation failed" in result.stderr
+    assert "syn-sensitive-storage-detail" not in result.stderr

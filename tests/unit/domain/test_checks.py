@@ -196,6 +196,24 @@ def test_matched_activity_amount_verifies_missing_execution_charge() -> None:
     assert pending_findings["budget"].status.value == "UNKNOWN"
     assert pending_findings["price"].status.value == "UNKNOWN"
 
+    signed_ledger = ledger.model_copy(
+        update={"amount": Money(amount=Decimal("-0.02"), unit="USDC")}
+    )
+    signed_match = MatchResult(
+        MatchStatus.MATCHED,
+        MatchStrategy.TRANSACTION_HASH,
+        MatchConfidence.HIGH,
+        signed_ledger,
+        (signed_ledger.ledger_id,),
+    )
+    signed_findings = {
+        finding.check_id: finding
+        for finding in run_checks(intent, contract, execution, signed_match)
+    }
+
+    assert signed_findings["budget"].status.value == "UNKNOWN"
+    assert signed_findings["price"].status.value == "UNKNOWN"
+
 
 def test_ledger_outcome_flags_settlement_contradiction() -> None:
     intent = PurchaseIntent(

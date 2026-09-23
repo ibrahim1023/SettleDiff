@@ -189,3 +189,9 @@ def test_only_the_persisted_contract_digest_key_survives_hex_masking() -> None:
     assert redacted["content_sha256"] == "cccc…cccc"
     assert redacted["credential_digest"] == "dddd…dddd"
     assert redacted["credential"] == "[REDACTED]"
+
+
+def test_saved_to_local_path_is_redacted() -> None:
+    from settlediff.domain.redaction import redact_value
+
+    assert redact_value({"savedTo": "/Users/synthetic/secret.json"}) == {"savedTo": "[REDACTED]"}

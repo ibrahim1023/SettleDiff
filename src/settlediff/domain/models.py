@@ -199,14 +199,16 @@ class PurchaseIntent(CanonicalModel):
 
 
 class ExpectedContract(CanonicalModel):
-    schema_version: int = Field(default=2, ge=1, le=3)
+    schema_version: int = Field(default=2, ge=1, le=4)
     vendor_slug: NonEmptyStr | None
-    url: NonEmptyStr
+    url: NonEmptyStr | None
     price: Money | None
     asset: NonEmptyStr | None
     protocol: NonEmptyStr | None
     chain: NonEmptyStr | None
     request_schema: dict[str, JsonValue] | None = None
+    required_max_charge: Money | None = Field(default=None, exclude_if=lambda value: value is None)
+    payable: bool | None = Field(default=None, exclude_if=lambda value: value is None)
     scheme: NonEmptyStr | None = None
     network: Caip2Network | None = None
     asset_identity: AssetIdentity | None = None
@@ -233,7 +235,21 @@ class ExpectedContract(CanonicalModel):
             raise ValueError(
                 f"schema version {self.schema_version} cannot contain response_contract"
             )
+        if self.schema_version < 4 and "required_max_charge" in self.model_fields_set:
+            raise ValueError(
+                f"schema version {self.schema_version} cannot contain required_max_charge"
+            )
+        if self.schema_version < 4 and "payable" in self.model_fields_set:
+            raise ValueError(f"schema version {self.schema_version} cannot contain payable")
+        if self.schema_version < 4 and self.url is None:
+            raise ValueError(f"schema version {self.schema_version} requires a resource URL")
+        if self.url is None and self.vendor_slug is None:
+            raise ValueError("contract requires a resource URL or vendor slug identity")
         return self
+
+    @property
+    def digest(self) -> Sha256Digest:
+        return sha256_digest(self.model_dump(mode="json"))
 
 
 class ExecutionRecord(CanonicalModel):

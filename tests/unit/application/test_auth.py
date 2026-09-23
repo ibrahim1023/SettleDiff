@@ -400,3 +400,149 @@ def test_get_request_with_absent_body_has_stable_digest() -> None:
     assert PaidExecutionCapability.body_digest_for(
         get_request.body
     ) == PaidExecutionCapability.body_digest_for(None)
+
+
+def catalog_terms(req: PaidExecutionRequest, **overrides: object) -> PaymentTerms:
+    values: dict[str, object] = {
+        "schema_version": 3,
+        "adapter_id": "perflo",
+        "protocol_version": "8",
+        "scheme": None,
+        "network": None,
+        "chain": None,
+        "asset": None,
+        "asset_symbol": None,
+        "recipient": None,
+        "quoted_price": Money(amount=Decimal("0.01"), unit=req.budget.unit),
+        "resource_digest": req.resource_digest,
+        "contract_digest": "b" * 64,
+        "maximum_charge": req.budget,
+        "required_max_charge": Money(amount=Decimal("0.05"), unit=req.budget.unit),
+    }
+    return PaymentTerms.model_validate(values | overrides)
+
+
+@pytest.mark.asyncio
+async def test_schema3_terms_authorize_catalog_request() -> None:
+    req = catalog_request()
+    terms = catalog_terms(req)
+    capability = PaidExecutionCapability.issue(
+        req, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+    )
+
+    token = await capability.consume(req, payment_terms=terms, now=NOW)
+
+    assert token.run_id == req.run_id
+    token.require_exact_payment_terms(terms)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"resource_url": "https://example.invalid"},
+        {"method": "POST"},
+        {"body_digest": "a" * 64},
+        {"response_contract_digest": "a" * 64},
+    ],
+    ids=["resource_url", "method", "body_digest", "response_contract_digest"],
+)
+def test_schema3_rejects_http_fields(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        catalog_terms(catalog_request(), **overrides)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["resource_digest", "contract_digest", "maximum_charge", "required_max_charge"],
+)
+def test_schema3_requires_catalog_fields(missing: str) -> None:
+    req = catalog_request()
+    values = {
+        "resource_digest": req.resource_digest,
+        "contract_digest": "b" * 64,
+        "maximum_charge": req.budget,
+        "required_max_charge": Money(amount=Decimal("0.05"), unit=req.budget.unit),
+    }
+    values.pop(missing)
+    with pytest.raises(ValueError, match="catalog payment terms require"):
+        PaymentTerms(
+            schema_version=3,
+            adapter_id="perflo",
+            protocol_version="8",
+            scheme=None,
+            network=None,
+            chain=None,
+            asset=None,
+            asset_symbol=None,
+            recipient=None,
+            quoted_price=Money(amount=Decimal("0.01"), unit=req.budget.unit),
+            **values,  # type: ignore[arg-type]
+        )
+
+
+def test_schema3_rejects_quote_above_maximum_charge() -> None:
+    req = catalog_request()
+    with pytest.raises(ValueError, match="exceeds the required max charge"):
+        catalog_terms(req, quoted_price=Money(amount=Decimal("0.09"), unit="USDC"))
+
+
+def test_schema3_rejects_required_max_charge_above_maximum() -> None:
+    req = catalog_request()
+    with pytest.raises(ValueError, match="required max charge exceeds the maximum charge"):
+        catalog_terms(req, required_max_charge=Money(amount=Decimal("0.09"), unit="USDC"))
+
+
+def test_schema3_rejects_nonpositive_required_max_charge() -> None:
+    req = catalog_request()
+    with pytest.raises(ValueError, match="required max charge must be positive"):
+        catalog_terms(req, required_max_charge=Money(amount=Decimal("0"), unit="USDC"))
+
+
+def test_schema3_rejects_required_max_charge_unit_mismatch() -> None:
+    req = catalog_request()
+    with pytest.raises(ValueError, match="unit"):
+        catalog_terms(req, required_max_charge=Money(amount=Decimal("0.05"), unit="EUR"))
+
+
+def test_schema3_rejects_maximum_charge_unit_mismatch() -> None:
+    req = catalog_request()
+    with pytest.raises(ValueError, match="unit"):
+        catalog_terms(req, maximum_charge=Money(amount=Decimal("0.05"), unit="EUR"))
+
+
+def test_schema2_rejects_catalog_fields_and_missing_http_fields() -> None:
+    with pytest.raises(ValueError, match="schema version 3"):
+        payment_terms(resource_digest="b" * 64)
+    with pytest.raises(ValueError, match="schema version 3"):
+        payment_terms(required_max_charge=Money(amount=Decimal("0.05"), unit="USDC"))
+    with pytest.raises(ValueError, match="HTTP payment terms require"):
+        payment_terms(resource_url=None)
+
+
+def test_schema3_capability_rejects_http_request() -> None:
+    req = request()
+    terms = catalog_terms(req)
+    with pytest.raises(AuthorizationError, match="payment terms do not match"):
+        PaidExecutionCapability.issue(
+            req, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+        )
+
+
+def test_schema3_capability_rejects_resource_drift() -> None:
+    req = catalog_request()
+    other = catalog_request(resource=CatalogResourceReference(slug="other", input={}, query={}))
+    terms = catalog_terms(req)
+    with pytest.raises(AuthorizationError, match="payment terms do not match"):
+        PaidExecutionCapability.issue(
+            other, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+        )
+
+
+def test_schema3_capability_rejects_budget_change() -> None:
+    req = catalog_request()
+    terms = catalog_terms(req)
+    drifted = catalog_request(budget=Money(amount=Decimal("0.10"), unit="USDC"))
+    with pytest.raises(AuthorizationError, match="payment terms do not match"):
+        PaidExecutionCapability.issue(
+            drifted, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+        )

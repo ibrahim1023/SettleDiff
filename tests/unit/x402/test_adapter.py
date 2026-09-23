@@ -185,7 +185,7 @@ def payment_terms(contract: ExpectedContract, value: PaidExecutionRequest) -> Pa
         recipient=contract.recipient,
         quoted_price=contract.price,
         max_timeout_seconds=contract.max_timeout_seconds,
-        resource_url=contract.url,
+        resource_url=contract.url or value.target,
         method=value.method,
         body_digest=PaidExecutionCapability.body_digest_for(value.body),
         response_contract_digest=(

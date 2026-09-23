@@ -1,0 +1,1 @@
+{"ok": true, "result": {"status": "failed", "id": "syn_run_003", "terminal": true, "chargeIsFinal": false, "slug": "synthetic-weather", "failure": {"code": "SYNTHETIC_UPSTREAM", "message": "synthetic task failure"}, "createdAt": "2026-09-10T10:00:00Z"}}

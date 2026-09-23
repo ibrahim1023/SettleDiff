@@ -33,9 +33,11 @@ from settlediff.agent.model import build_hyperfusion_model
 from settlediff.agent.tools import build_investigation_dependencies
 from settlediff.api.app import create_app
 from settlediff.application.auth import (
+    CatalogResourceReference,
     HttpResourceReference,
     PaidExecutionCapability,
     PaidExecutionRequest,
+    ResourceReference,
 )
 from settlediff.application.budget import InvestigationBudget, InvestigationBudgetState
 from settlediff.application.bundle import (
@@ -148,7 +150,7 @@ PUBLICATION_FORCE_OPTION = typer.Option(
     False, "--force", help="Replace an existing output directory."
 )
 RAIL_OPTION = typer.Option(PaymentRail.PERFLO, "--rail")
-METHOD_OPTION = typer.Option(HttpMethod.POST, "--method")
+METHOD_OPTION = typer.Option(None, "--method")
 ALLOW_TESTNET_OPTION = typer.Option(False, "--allow-testnet")
 
 
@@ -330,26 +332,48 @@ async def _execute_live_run(
             if payment_terms.max_timeout_seconds is not None
             else "unknown"
         )
-        typer.echo(
-            f"Rail: {payment_terms.adapter_id}\n"
-            f"Version: {payment_terms.protocol_version or 'unknown'}\n"
-            f"Scheme: {payment_terms.scheme or 'unknown'}\n"
-            f"Network: {payment_terms.network or payment_terms.chain or 'unknown'}\n"
-            f"Target: {request.target}\n"
-            f"Resource: {payment_terms.resource_url}\n"
-            f"Method: {payment_terms.method}\n"
-            f"Body digest: {capability.body_digest}\n"
-            f"Payment terms digest: {capability.payment_terms_digest}\n"
-            f"Quoted price: {payment_terms.quoted_price.amount} "
-            f"{payment_terms.quoted_price.unit}\n"
-            f"Budget: {request.budget.amount} {request.budget.unit}\n"
-            f"Asset: {asset_label or 'unknown'}\n"
-            f"Asset reference: {asset_reference}\n"
-            f"Recipient: {recipient_label}\n"
-            f"Maximum timeout: {timeout_label}\n"
-            f"External signer: "
-            f"{'configured' if payment_terms.adapter_id == 'x402' else 'not applicable'}"
-        )
+        if isinstance(request.resource, CatalogResourceReference):
+            assert payment_terms.resource_digest is not None
+            assert payment_terms.contract_digest is not None
+            assert payment_terms.required_max_charge is not None
+            assert payment_terms.maximum_charge is not None
+            typer.echo(
+                f"Rail: {payment_terms.adapter_id}\n"
+                f"Version: {payment_terms.protocol_version or 'unknown'}\n"
+                f"Catalog slug: {request.resource.slug}\n"
+                f"Resource digest: {payment_terms.resource_digest}\n"
+                f"Vendor contract digest: {payment_terms.contract_digest}\n"
+                f"Advertised price: {payment_terms.quoted_price.amount} "
+                f"{payment_terms.quoted_price.unit}\n"
+                f"Advertised minimum maxChargePerCall: "
+                f"{payment_terms.required_max_charge.amount} "
+                f"{payment_terms.required_max_charge.unit}\n"
+                f"Authorized maximum charge: {payment_terms.maximum_charge.amount} "
+                f"{payment_terms.maximum_charge.unit}\n"
+                f"Payment terms digest: {capability.payment_terms_digest}\n"
+                f"Budget: {request.budget.amount} {request.budget.unit}\n"
+            )
+        else:
+            typer.echo(
+                f"Rail: {payment_terms.adapter_id}\n"
+                f"Version: {payment_terms.protocol_version or 'unknown'}\n"
+                f"Scheme: {payment_terms.scheme or 'unknown'}\n"
+                f"Network: {payment_terms.network or payment_terms.chain or 'unknown'}\n"
+                f"Target: {request.target}\n"
+                f"Resource: {payment_terms.resource_url}\n"
+                f"Method: {payment_terms.method}\n"
+                f"Body digest: {capability.body_digest}\n"
+                f"Payment terms digest: {capability.payment_terms_digest}\n"
+                f"Quoted price: {payment_terms.quoted_price.amount} "
+                f"{payment_terms.quoted_price.unit}\n"
+                f"Budget: {request.budget.amount} {request.budget.unit}\n"
+                f"Asset: {asset_label or 'unknown'}\n"
+                f"Asset reference: {asset_reference}\n"
+                f"Recipient: {recipient_label}\n"
+                f"Maximum timeout: {timeout_label}\n"
+                f"External signer: "
+                f"{'configured' if payment_terms.adapter_id == 'x402' else 'not applicable'}"
+            )
         typer.echo(
             "Investigation budget: Context.dev calls: 1, "
             f"model requests: {INVESTIGATION_REQUEST_LIMIT}, "
@@ -365,6 +389,29 @@ async def _execute_live_run(
                 )
             typer.echo("Authorization declined; no paid request was sent.")
             raise typer.Exit(code=1)
+
+        try:
+            await collector.revalidate_payment_terms(request)
+            if repository is not None:
+                repository.save_artifacts(request.run_id, collector.artifacts)
+        except (PerfloClientError, X402ClientError, OSError, ValueError) as error:
+            if repository is not None:
+                try:
+                    repository.save_artifacts(request.run_id, collector.artifacts)
+                except (OSError, sqlite3.Error, ValueError):
+                    typer.echo(
+                        "Critical: reinspection evidence persistence failed; "
+                        "the durable run may be incomplete.",
+                        err=True,
+                    )
+            _record_live_failure(
+                repository,
+                request.run_id,
+                error,
+                submission_uncertain=False,
+            )
+            typer.echo(f"Payment terms revalidation failed: {error}", err=True)
+            raise typer.Exit(code=2) from error
 
         model = _build_model_if_configured(settings)
         return await RunInvestigation(
@@ -521,49 +568,78 @@ def doctor(
 
 @app.command()
 def run(
-    url: str = typer.Option(...),
+    url: str | None = typer.Option(None, "--url"),
+    slug: str | None = typer.Option(None, "--slug"),
     budget: str = typer.Option(...),
-    body: str | None = typer.Option(None),
+    body: str | None = typer.Option(None, "--body"),
+    input_json: str | None = typer.Option(None, "--input"),
+    query_json: str | None = typer.Option(None, "--query"),
+    sub_account: str | None = typer.Option(None, "--sub-account"),
     rail: PaymentRail = RAIL_OPTION,
-    method: HttpMethod = METHOD_OPTION,
+    method: HttpMethod | None = METHOD_OPTION,
     allow_testnet: bool = ALLOW_TESTNET_OPTION,
     database: Path | None = OPTIONAL_DATABASE_OPTION,
     json_mode: bool = JSON_OPTION,
 ) -> None:
     """Run one explicit paid request after interactive authorization."""
     try:
-        parsed_body: JsonValue | None
-        if method is HttpMethod.GET:
-            if body is not None:
-                raise ValueError("GET requests must omit --body")
-            parsed_body = None
-        else:
-            if body is None:
-                raise ValueError("POST requests require --body")
-            parsed_body = cast(JsonValue, json.loads(body))
-            if rail is PaymentRail.PERFLO and not isinstance(parsed_body, dict):
-                raise ValueError("Perflo body must be a JSON object")
-        if rail is PaymentRail.PERFLO and method is not HttpMethod.POST:
-            raise ValueError("Perflo supports POST requests only")
         amount = Decimal(budget)
-        parsed_url = urlparse(url)
-        safe_url = (
-            is_safe_x402_target(url)
-            if rail is PaymentRail.X402
-            else (
-                parsed_url.scheme == "https"
-                and bool(parsed_url.netloc)
-                and parsed_url.username is None
-                and parsed_url.password is None
-                and not parsed_url.fragment
-            )
-        )
-        if not safe_url:
-            raise ValueError(
-                "url requires HTTPS, except loopback HTTP for x402, without credentials or fragment"
-            )
         if amount <= 0:
             raise ValueError("budget must be greater than zero")
+        resource: ResourceReference
+        if rail is PaymentRail.PERFLO:
+            if url is not None or body is not None or method is not None or allow_testnet:
+                raise ValueError(
+                    "--url, --body, --method, and --allow-testnet apply only to --rail x402"
+                )
+            if slug is None or not slug.strip():
+                raise ValueError("Perflo requires a non-empty --slug")
+            parsed_input = cast(JsonValue, json.loads(input_json)) if input_json is not None else {}
+            parsed_query = cast(JsonValue, json.loads(query_json)) if query_json is not None else {}
+            if not isinstance(parsed_input, dict):
+                raise ValueError("--input must be a JSON object")
+            if not isinstance(parsed_query, dict):
+                raise ValueError("--query must be a JSON object")
+            resource = CatalogResourceReference(
+                slug=slug.strip(),
+                input=cast(dict[str, JsonValue], parsed_input),
+                query=cast(dict[str, JsonValue], parsed_query),
+                sub_account=sub_account,
+            )
+            budget_unit = "USD"
+            task = f"perflo request to {resource.slug}"
+        else:
+            if (
+                slug is not None
+                or input_json is not None
+                or query_json is not None
+                or sub_account is not None
+            ):
+                raise ValueError(
+                    "--slug, --input, --query, and --sub-account apply only to --rail perflo"
+                )
+            if url is None:
+                raise ValueError("x402 requires --url")
+            effective_method = method or HttpMethod.POST
+            if effective_method is HttpMethod.GET:
+                if body is not None:
+                    raise ValueError("GET requests must omit --body")
+                parsed_body: JsonValue | None = None
+            else:
+                if body is None:
+                    raise ValueError("POST requests require --body")
+                parsed_body = cast(JsonValue, json.loads(body))
+            parsed_url = urlparse(url)
+            if not is_safe_x402_target(url):
+                raise ValueError(
+                    "url requires HTTPS, except loopback HTTP for x402, "
+                    "without credentials or fragment"
+                )
+            resource = HttpResourceReference(
+                url=url, method=effective_method.value, body=parsed_body
+            )
+            budget_unit = "USDC"
+            task = f"{rail.value} request to {parsed_url.hostname}"
     except (json.JSONDecodeError, InvalidOperation, ValueError) as error:
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error
@@ -592,8 +668,8 @@ def run(
     )
     request = PaidExecutionRequest(
         run_id=f"live_{uuid4().hex}",
-        resource=HttpResourceReference(url=url, method=method.value, body=parsed_body),
-        budget=Money(amount=amount, unit="USDC"),
+        resource=resource,
+        budget=Money(amount=amount, unit=budget_unit),
     )
     repository: SQLiteReportRepository | None = None
     if database is not None:
@@ -601,12 +677,12 @@ def run(
             repository = SQLiteReportRepository(database)
             provenance = (
                 RunProvenance.CONTROLLED_LIVE
-                if rail is PaymentRail.X402 and parsed_url.scheme == "http"
+                if rail is PaymentRail.X402 and url is not None and urlparse(url).scheme == "http"
                 else RunProvenance.EXTERNAL_LIVE
             )
             repository.begin_run(
                 request.run_id,
-                task=f"{rail.value} request to {parsed_url.hostname}",
+                task=task,
                 provenance=provenance,
                 created_at=datetime.now(UTC),
             )
@@ -852,43 +928,37 @@ def retry_analysis(
     typer.echo("Paid calls: 0")
 
 
-async def _inspect_contract(url: str, rail: PaymentRail) -> AdapterEvidence:
+async def _inspect_contract(target: str, rail: PaymentRail) -> AdapterEvidence:
     """Run exactly one unsigned contract inspection for the selected rail."""
-    parsed_url = urlparse(url)
     if rail is PaymentRail.X402:
-        if not is_safe_x402_target(url):
+        if not is_safe_x402_target(target):
             raise ValueError(
-                "url requires HTTPS, except loopback HTTP for x402, without credentials or fragment"
+                "target requires HTTPS, except loopback HTTP for x402, "
+                "without credentials or fragment"
             )
         client = httpx.AsyncClient(follow_redirects=False)
         try:
             request = PaidExecutionRequest(
                 run_id=f"inspection_{uuid4().hex}",
-                resource=HttpResourceReference(url=url, method="GET", body=None),
+                resource=HttpResourceReference(url=target, method="GET", body=None),
                 budget=Money(amount=Decimal(1), unit="USDC"),
             )
             adapter = X402Adapter.for_inspection(X402ResourceClient(client))
             return await adapter.inspect(request)
         finally:
             await client.aclose()
-    if not (
-        parsed_url.scheme == "https"
-        and bool(parsed_url.netloc)
-        and parsed_url.username is None
-        and parsed_url.password is None
-        and not parsed_url.fragment
-    ):
-        raise ValueError("url requires HTTPS without credentials or fragment")
+    if not target.strip() or "://" in target:
+        raise ValueError("Perflo snapshot requires a non-empty catalog slug target")
     request = PaidExecutionRequest(
         run_id=f"inspection_{uuid4().hex}",
-        resource=HttpResourceReference(url=url, method="POST", body={}),
-        budget=Money(amount=Decimal(1), unit="USDC"),
+        resource=CatalogResourceReference(slug=target, input={}, query={}),
+        budget=Money(amount=Decimal(1), unit="USD"),
     )
     return await PerfloAdapter(PerfloClient()).inspect(request)
 
 
 def _snapshot_from_evidence(
-    url: str, rail: PaymentRail, evidence: AdapterEvidence
+    target: str, rail: PaymentRail, evidence: AdapterEvidence
 ) -> ContractSnapshot:
     artifact = EvidenceArtifact(
         artifact_id="inspection:contract",
@@ -902,20 +972,20 @@ def _snapshot_from_evidence(
     source_contract = (
         evidence.source_contract if evidence.source_contract is not None else evidence.data
     )
-    return build_contract_snapshot(url, rail.value, contract, source_contract)
+    return build_contract_snapshot(target, rail.value, contract, source_contract)
 
 
 @app.command()
 def snapshot(
-    url: str,
+    target: str,
     database: Path = WRITABLE_DATABASE_OPTION,
     rail: PaymentRail = RAIL_OPTION,
     json_mode: bool = JSON_OPTION,
 ) -> None:
     """Inspect one contract and persist its content-addressed snapshot."""
     try:
-        evidence = asyncio.run(_inspect_contract(url, rail))
-        built = _snapshot_from_evidence(url, rail, evidence)
+        evidence = asyncio.run(_inspect_contract(target, rail))
+        built = _snapshot_from_evidence(target, rail, evidence)
         repository = SQLiteReportRepository(database)
         try:
             repository.save_contract_snapshot(built, evidence.observed_at or datetime.now(UTC))
@@ -925,7 +995,7 @@ def snapshot(
         typer.echo(f"Snapshot failed: {error}", err=True)
         raise typer.Exit(code=2) from error
     payload = {
-        "url": url,
+        "target": target,
         "rail": rail.value,
         "snapshot_digest": built.snapshot_digest,
         "semantic_fingerprint": built.semantic_fingerprint,
@@ -946,18 +1016,18 @@ def snapshot(
 
 @app.command()
 def drift(
-    url: str,
+    target: str,
     database: Path = WRITABLE_DATABASE_OPTION,
     rail: PaymentRail = RAIL_OPTION,
     json_mode: bool = JSON_OPTION,
 ) -> None:
     """Inspect one contract and compare it with the latest persisted snapshot."""
     try:
-        evidence = asyncio.run(_inspect_contract(url, rail))
-        built = _snapshot_from_evidence(url, rail, evidence)
+        evidence = asyncio.run(_inspect_contract(target, rail))
+        built = _snapshot_from_evidence(target, rail, evidence)
         repository = SQLiteReportRepository(database)
         try:
-            previous = repository.latest_contract_snapshot(url, rail.value)
+            previous = repository.latest_contract_snapshot(target, rail.value)
             repository.save_contract_snapshot(built, evidence.observed_at or datetime.now(UTC))
         finally:
             repository.close()
@@ -966,7 +1036,7 @@ def drift(
         typer.echo(f"Drift check failed: {error}", err=True)
         raise typer.Exit(code=2) from error
     payload = {
-        "url": url,
+        "target": target,
         "rail": rail.value,
         "status": result.status.value,
         "change_codes": list(result.change_codes),

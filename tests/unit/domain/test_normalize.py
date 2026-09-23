@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
+from typing import cast
 
 import pytest
 from hypothesis import given
@@ -549,3 +552,267 @@ def test_all_canonical_normalizers_round_trip_json_values() -> None:
     assert normalize_activity(
         artifact("artifact_activity", ArtifactType.ACTIVITY, [ledger.model_dump(mode="json")])
     ) == (ledger,)
+
+
+PERFLO_FIXTURES = Path("tests/contract/perflo")
+TX_HASH = "0x1111111111111111111111111111111111111111111111111111111111111111"
+
+
+def perflo_fixture(name: str) -> dict[str, JsonValue]:
+    return cast(dict[str, JsonValue], json.loads((PERFLO_FIXTURES / name).read_text()))
+
+
+def test_normalize_v8_vendor_maps_catalog_contract() -> None:
+    raw = artifact(
+        "artifact_vendor_v8",
+        ArtifactType.SERVICE_CONTRACT,
+        perflo_fixture("vendor.json")["vendor"],
+    )
+
+    contract = normalize_contract(raw)
+
+    assert contract.schema_version == 4
+    assert contract.vendor_slug == "synthetic-weather"
+    assert contract.url is None
+    assert contract.price == Money(amount=Decimal("0.01"), unit="USD")
+    assert contract.required_max_charge == Money(amount=Decimal("0.05"), unit="USD")
+    assert contract.request_schema == {
+        "fields": [
+            {
+                "name": "city",
+                "in": "body",
+                "type": "string",
+                "required": True,
+                "description": "Synthetic city",
+            },
+            {
+                "name": "units",
+                "in": "query",
+                "type": "string",
+                "required": False,
+                "description": None,
+            },
+        ],
+        "example": {"city": "Exampleville"},
+    }
+    assert contract.asset is None
+    assert contract.response_contract is None
+
+
+def test_normalize_v8_execution_maps_wallet_settlement() -> None:
+    raw = artifact(
+        "artifact_pay_v8",
+        ArtifactType.EXECUTION,
+        perflo_fixture("pay_wallet_success.json")["result"],
+    )
+
+    execution = normalize_execution(raw)
+
+    assert execution.vendor_slug == "synthetic-weather"
+    assert execution.charge == Money(amount=Decimal("0.01"), unit="USD")
+    assert execution.upstream_http_status == 200
+    assert execution.settlement_status is SettlementStatus.SETTLED
+    assert execution.chain == "base"
+    assert execution.transaction_hash == TX_HASH
+    assert execution.transaction_id == "syn_tx_wallet_001"
+    assert execution.response_body == {"weather": "synthetic-sunny"}
+    assert execution.executed_at == datetime(2026, 9, 10, 10, 0, 2, tzinfo=UTC)
+    assert execution.protocol is None
+    assert execution.recipient is None
+    assert execution.asset is None
+
+
+def test_normalize_v8_credit_execution_never_invents_transfer_facts() -> None:
+    raw = artifact(
+        "artifact_pay_credit",
+        ArtifactType.EXECUTION,
+        perflo_fixture("pay_credit_success.json")["result"],
+    )
+
+    execution = normalize_execution(raw)
+
+    assert execution.charge == Money(amount=Decimal("0.01"), unit="USD")
+    assert execution.settlement_status is SettlementStatus.SETTLED
+    assert execution.transaction_id == "syn_tx_credit_001"
+    assert execution.transaction_hash is None
+    assert execution.chain is None
+    assert execution.asset is None
+    assert execution.recipient is None
+
+
+def test_normalize_v8_failed_execution_preserves_bounded_failure() -> None:
+    raw = artifact(
+        "artifact_pay_failed",
+        ArtifactType.EXECUTION,
+        perflo_fixture("pay_failed.json")["result"],
+    )
+
+    execution = normalize_execution(raw)
+
+    assert execution.settlement_status is SettlementStatus.FAILED
+    assert execution.upstream_http_status == 500
+    assert execution.response_body == {"error": "synthetic-paid-failure"}
+    assert execution.transaction_hash is None
+
+
+@pytest.mark.parametrize(
+    ("name", "status"),
+    [
+        ("task_running.json", SettlementStatus.UNKNOWN),
+        ("task_indeterminate.json", SettlementStatus.UNKNOWN),
+        ("task_failed.json", SettlementStatus.UNKNOWN),
+    ],
+)
+def test_normalize_v8_task_results_leave_optional_fields_absent(
+    name: str, status: SettlementStatus
+) -> None:
+    raw = artifact("artifact_task", ArtifactType.EXECUTION, perflo_fixture(name)["result"])
+
+    execution = normalize_execution(raw)
+
+    assert execution.settlement_status is status
+    assert execution.charge is None
+    assert execution.transaction_hash is None
+    assert execution.executed_at is None
+
+
+def test_normalize_v8_activity_maps_ledger_states_and_money_objects() -> None:
+    raw = artifact(
+        "artifact_activity_v8",
+        ArtifactType.ACTIVITY,
+        perflo_fixture("activity.json")["agent"],
+    )
+
+    records = normalize_activity(raw)
+
+    assert [record.status for record in records] == [
+        LedgerStatus.CONFIRMED,
+        LedgerStatus.PENDING,
+        LedgerStatus.FAILED,
+    ]
+    posted, pending, voided = records
+    assert posted.ledger_id == "syn_activity_posted"
+    assert posted.vendor_slug == "synthetic-weather"
+    assert posted.amount == Money(amount=Decimal("-0.01"), unit="USD")
+    assert posted.transaction_hash == TX_HASH
+    assert posted.transaction_id is None
+    assert posted.occurred_at == datetime(2026, 9, 10, 10, 0, 2, tzinfo=UTC)
+    assert pending.transaction_hash is None
+    assert voided.transaction_hash is None
+    assert posted.asset is None
+
+
+def test_normalize_activity_rejects_malformed_v8_agent_object() -> None:
+    raw = artifact(
+        "artifact_activity_bad",
+        ArtifactType.ACTIVITY,
+        {"rows": "not-a-list", "meta": {}},
+    )
+
+    with pytest.raises(ArtifactParseError):
+        normalize_activity(raw)
+
+
+def test_normalize_v8_object_currency_does_not_create_asset_identity() -> None:
+    raw = artifact(
+        "artifact_contract_currency",
+        ArtifactType.SERVICE_CONTRACT,
+        {
+            "slug": "synthetic-weather",
+            "price": {"amount": "0.01", "currency": "USD"},
+        },
+    )
+
+    contract = normalize_contract(raw)
+
+    assert contract.price == Money(amount=Decimal("0.01"), unit="USD")
+    assert contract.asset is None
+    assert contract.asset_identity is None
+
+
+def test_normalize_rejects_malformed_money_object() -> None:
+    raw = artifact(
+        "artifact_contract_bad_money",
+        ArtifactType.SERVICE_CONTRACT,
+        {
+            "slug": "synthetic-weather",
+            "price": {"amount": "0.01", "currency": "USD", "extra": True},
+        },
+    )
+
+    with pytest.raises(ArtifactParseError):
+        normalize_contract(raw)
+
+
+def test_normalize_rejects_money_object_with_extra_keys() -> None:
+    raw = artifact(
+        "artifact_money_extra",
+        ArtifactType.SERVICE_CONTRACT,
+        {
+            "slug": "synthetic-weather",
+            "price": {"amount": "0.01", "currency": "USD", "fee": "0.001"},
+        },
+    )
+
+    with pytest.raises(ArtifactParseError):
+        normalize_contract(raw)
+
+
+def test_normalize_rejects_mixed_scalar_and_object_money() -> None:
+    raw = artifact(
+        "artifact_money_mixed",
+        ArtifactType.SERVICE_CONTRACT,
+        {
+            "slug": "synthetic-weather",
+            "price": {"amount": "0.01", "currency": "USD"},
+            "priceMinor": "100",
+            "asset": "USD",
+        },
+    )
+
+    with pytest.raises(ArtifactParseError, match="cannot mix"):
+        normalize_contract(raw)
+
+
+def test_normalize_keeps_legacy_money_object_compatibility() -> None:
+    raw = artifact(
+        "artifact_money_legacy",
+        ArtifactType.SERVICE_CONTRACT,
+        {
+            "url": "https://example.invalid/search",
+            "price": {"amount": "0.01", "unit": "USDC"},
+            "asset": "USDC",
+        },
+    )
+
+    contract = normalize_contract(raw)
+
+    assert contract.price == Money(amount=Decimal("0.01"), unit="USDC")
+
+
+def test_contract_digest_ignores_unnormalized_vendor_source_fields() -> None:
+    vendor = perflo_fixture("vendor.json")["vendor"]
+    first = normalize_contract(artifact("artifact_digest_a", ArtifactType.SERVICE_CONTRACT, vendor))
+    same = normalize_contract(artifact("artifact_digest_b", ArtifactType.SERVICE_CONTRACT, vendor))
+    assert first.digest == same.digest
+
+    assert isinstance(vendor, dict)
+    noisy: dict[str, JsonValue] = {
+        **vendor,
+        "name": "Renamed Vendor",
+        "latencyMsP50": 9999,
+        "futureField": {"changed": True},
+    }
+    noisy_contract = normalize_contract(
+        artifact("artifact_digest_noisy", ArtifactType.SERVICE_CONTRACT, noisy)
+    )
+    assert noisy_contract.digest == first.digest
+
+    drifted: dict[str, JsonValue] = {
+        **vendor,
+        "maxChargePerCall": {"amount": "0.09", "currency": "USD"},
+    }
+    drifted_contract = normalize_contract(
+        artifact("artifact_digest_drifted", ArtifactType.SERVICE_CONTRACT, drifted)
+    )
+    assert drifted_contract.digest != first.digest

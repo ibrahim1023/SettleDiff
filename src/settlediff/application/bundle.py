@@ -267,7 +267,9 @@ def export_bundle(repository: BundleRepository, run_id: str) -> EvidenceBundleV3
     snapshots: tuple[ContractSnapshot, ...] = ()
     contract = report.contract
     if contract is not None and report.adapter_id in _SUPPORTED_SNAPSHOT_RAILS:
-        snapshots = repository.contract_snapshots(contract.url, report.adapter_id)
+        target = contract.vendor_slug if report.adapter_id == "perflo" else contract.url
+        if target is not None:
+            snapshots = repository.contract_snapshots(target, report.adapter_id)
     snapshot_digests = [snapshot.snapshot_digest for snapshot in snapshots]
     if len(set(snapshot_digests)) != len(snapshot_digests):
         raise BundleError("persisted run contains duplicate snapshot digests")
@@ -453,8 +455,9 @@ def _verify_v3(bundle: EvidenceBundleV3) -> MachineReport:
         contract = report.contract
         if contract is None or report.adapter_id not in _SUPPORTED_SNAPSHOT_RAILS:
             raise BundleError("bundle snapshots require contract and adapter provenance")
+        target = contract.vendor_slug if report.adapter_id == "perflo" else contract.url
         for snapshot in snapshots:
-            if snapshot.target != contract.url or snapshot.rail != report.adapter_id:
+            if snapshot.target != target or snapshot.rail != report.adapter_id:
                 raise BundleError("bundle snapshot does not match report contract provenance")
 
     for position, event in enumerate(timeline):

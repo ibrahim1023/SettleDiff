@@ -118,7 +118,10 @@ def _select(findings: dict[str, Finding], check_id: str) -> InvestigationFinding
 def _drift(report: MachineReport, repository: InvestigationRepository) -> ContractDrift | None:
     if report.contract is None or report.adapter_id not in _SNAPSHOT_RAILS:
         return None
-    snapshots = repository.observed_contract_snapshots(report.contract.url, report.adapter_id)
+    target = report.contract.vendor_slug if report.adapter_id == "perflo" else report.contract.url
+    if target is None:
+        return None
+    snapshots = repository.observed_contract_snapshots(target, report.adapter_id)
     if not snapshots:
         return None
     try:

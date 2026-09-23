@@ -256,16 +256,37 @@ contract drift, embedded Bazaar comparison, publication masking, and exact funct
 agreement. Facilitator comparison is intentionally absent: ADR 0009 defers it because
 per-run provenance is not recorded.
 
-For a live call, `settlediff run --url URL --body JSON --budget AMOUNT` retains Perflo as
-the temporary default. Select x402 explicitly with `--rail x402 --allow-testnet`; configure
+For a live call, Perflo remains the default rail and addresses vendors by catalog slug:
+
+```bash
+uv run settlediff run --rail perflo --slug synthetic-weather \
+  --input '{"city":"Exampleville"}' --query '{"units":"metric"}' \
+  --budget 0.05
+```
+
+`--input` and `--query` are JSON objects passed to the vendor; `--sub-account` optionally
+selects a Perflo sub-account. `--budget` is a major-unit USD amount forwarded to `perflo pay`
+as its exact `--max-charge`. The advertised vendor `price`, the vendor's required minimum
+`maxChargePerCall`, and the user-authorized maximum charge are three distinct values shown
+before confirmation. Immediately after confirmation — and before any paid process launches —
+the vendor declaration is read a second time and compared to the authorized contract digest;
+drift or malformed evidence stops the run before payment.
+
+Select x402 explicitly with `--rail x402 --allow-testnet`; configure
 `SETTLEDIFF_X402_SIGNER_COMMAND` as a JSON argument array,
 `SETTLEDIFF_X402_RPC_URL`, and `SETTLEDIFF_X402_TESTNET_ENABLED=true`. SettleDiff has no
 private-key setting: wallet authority belongs to the separately installed signer. GET uses
 `--method GET` with no body; POST requires `--body` and preserves the JSON value exactly.
-Remote targets require HTTPS; x402 alone permits HTTP on an IP/hostname proven to be loopback for the controlled local reference cycle. Both rails show the exact target/resource, method, canonical body digest, adapter,
-protocol version, scheme, network, full public asset reference and recipient, timeout, quote,
-payment-terms digest, and budget before mandatory interactive authorization. Persisted and
-ordinary report views remain masked. Environment flags never
+Remote targets require HTTPS; x402 alone permits HTTP on an IP/hostname proven to be loopback for the controlled local reference cycle.
+
+Both rails display the exact resource, adapter, protocol version, quote, payment-terms
+digest, and budget before mandatory interactive authorization: catalog terms show the slug,
+resource digest, vendor contract digest, and all three charge values; HTTP terms show the
+URL, method, canonical body digest, scheme, network, full public asset reference, recipient,
+and timeout. Perflo's `vendor`, `pay`, agent Activity, and `tx status` surfaces remain one
+provider trust domain: agreement between them is consistency, not independent ledger
+verification, and credit-funded results expose no canonical on-chain transaction reference.
+Persisted and ordinary report views remain masked. Environment flags never
 bypass confirmation, and live/paid calls are never part of the default test suite.
 
 Before authorization, validate the selected database and live dependencies without signing or paying:

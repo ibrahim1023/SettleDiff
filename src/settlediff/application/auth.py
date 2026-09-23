@@ -20,7 +20,7 @@ class AuthorizationError(ValueError):
 class PaymentTerms(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
-    schema_version: Literal[1, 2] = 1
+    schema_version: Literal[1, 2, 3] = 1
     adapter_id: NonEmptyStr
     protocol_version: NonEmptyStr | None
     scheme: NonEmptyStr | None
@@ -31,12 +31,20 @@ class PaymentTerms(BaseModel):
     recipient: NonEmptyStr | None
     quoted_price: Money
     max_timeout_seconds: int | None = Field(default=None, gt=0, le=86_400)
-    resource_url: NonEmptyStr
-    method: Literal["GET", "POST"]
-    body_digest: Sha256Digest
+    resource_url: NonEmptyStr | None = None
+    method: Literal["GET", "POST"] | None = None
+    body_digest: Sha256Digest | None = None
     response_contract_digest: Sha256Digest | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    resource_digest: Sha256Digest | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    contract_digest: Sha256Digest | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    maximum_charge: Money | None = Field(default=None, exclude_if=lambda value: value is None)
+    required_max_charge: Money | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @property
     def digest(self) -> Sha256Digest:
@@ -44,6 +52,48 @@ class PaymentTerms(BaseModel):
 
     @model_validator(mode="after")
     def require_consistent_asset(self) -> Self:
+        catalog_fields = {
+            "resource_digest",
+            "contract_digest",
+            "maximum_charge",
+            "required_max_charge",
+        }
+        http_fields = {"resource_url", "method", "body_digest"}
+        if self.schema_version <= 2:
+            if catalog_fields & self.model_fields_set:
+                raise ValueError("catalog payment terms fields require schema version 3")
+            if self.resource_url is None or self.method is None or self.body_digest is None:
+                raise ValueError("HTTP payment terms require resource_url, method, and body_digest")
+        else:
+            if http_fields & self.model_fields_set:
+                raise ValueError("catalog payment terms cannot contain HTTP resource fields")
+            if "response_contract_digest" in self.model_fields_set:
+                raise ValueError("catalog payment terms cannot contain response_contract_digest")
+            if (
+                self.resource_digest is None
+                or self.contract_digest is None
+                or self.maximum_charge is None
+                or self.required_max_charge is None
+            ):
+                raise ValueError(
+                    "catalog payment terms require resource_digest, "
+                    "contract_digest, maximum_charge, and required_max_charge"
+                )
+            assert self.maximum_charge is not None
+            assert self.required_max_charge is not None
+            if self.maximum_charge.amount <= 0:
+                raise ValueError("payment terms maximum charge must be positive")
+            if self.required_max_charge.amount <= 0:
+                raise ValueError("payment terms required max charge must be positive")
+            if (
+                self.required_max_charge.unit != self.quoted_price.unit
+                or self.maximum_charge.unit != self.quoted_price.unit
+            ):
+                raise ValueError("payment terms charge units must match the quote unit")
+            if not self.quoted_price.is_within(self.required_max_charge):
+                raise ValueError("payment terms quote exceeds the required max charge")
+            if not self.required_max_charge.is_within(self.maximum_charge):
+                raise ValueError("payment terms required max charge exceeds the maximum charge")
         if self.schema_version == 1 and "response_contract_digest" in self.model_fields_set:
             raise ValueError("schema version 1 cannot contain response_contract_digest")
         if self.quoted_price.amount <= 0:
@@ -187,14 +237,25 @@ class PaidExecutionCapability:
         self._resource_digest = request.resource_digest
         self._body_digest = self.body_digest_for(request.body)
         self._budget = request.budget
-        if payment_terms is not None and (
-            payment_terms.resource_url != request.target
-            or payment_terms.method != request.method
-            or payment_terms.body_digest != self._body_digest
-            or payment_terms.quoted_price.unit != request.budget.unit
-            or not payment_terms.quoted_price.is_within(request.budget)
-        ):
-            raise AuthorizationError("payment terms do not match the request being authorized")
+        if payment_terms is not None:
+            if payment_terms.schema_version <= 2:
+                terms_match = (
+                    payment_terms.resource_url == request.target
+                    and payment_terms.method == request.method
+                    and payment_terms.body_digest == self._body_digest
+                    and payment_terms.quoted_price.unit == request.budget.unit
+                    and payment_terms.quoted_price.is_within(request.budget)
+                )
+            else:
+                terms_match = (
+                    isinstance(request.resource, CatalogResourceReference)
+                    and payment_terms.resource_digest == request.resource_digest
+                    and payment_terms.maximum_charge == request.budget
+                    and payment_terms.quoted_price.unit == request.budget.unit
+                    and payment_terms.quoted_price.is_within(request.budget)
+                )
+            if not terms_match:
+                raise AuthorizationError("payment terms do not match the request being authorized")
         self._payment_terms_digest = payment_terms.digest if payment_terms is not None else None
         self._expires_at = expires_at.astimezone(UTC)
         self._consumed = False

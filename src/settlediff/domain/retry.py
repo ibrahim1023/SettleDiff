@@ -50,10 +50,12 @@ _REASON_ORDER = (
     NON_SUBMISSION_UNPROVEN,
 )
 
-_RECEIPT_PENDING_STATES = frozenset({"pending", "unknown", "unresolved"})
+_RECEIPT_PENDING_STATES = frozenset({"pending", "unknown", "unresolved", "processing", "executing"})
 _RECEIPT_SUBMITTED_STATES = frozenset({"submitted"})
 _NON_SUBMISSION_SOURCES = frozenset({"not_submitted", "proven_not_submitted"})
-_ATTEMPT_STATUSES = frozenset({"settled", "failed", "pending", "confirmed", "submitted"})
+_ATTEMPT_STATUSES = frozenset(
+    {"settled", "failed", "pending", "confirmed", "submitted", "success", "processing", "executing"}
+)
 _ACTIVITY_ENTRY_KEYS = ("entries", "activity", "items", "records")
 
 _SAFE = RetrySafety.SAFE_TO_RETRY
@@ -80,7 +82,7 @@ def _receipt_signals(artifact: EvidenceArtifact, data: JsonValue) -> list[_Signa
     source_state = record.get("source_submission_state")
     if source_state == "submitted_confirmed":
         signals.append((_DO_NOT, TRANSMISSION_CONFIRMED, artifact_id))
-    if status == "confirmed":
+    if status in {"confirmed", "success"}:
         reason = (
             CONFIRMED_TRANSFER
             if "transaction_receipt" in artifact.source.casefold()

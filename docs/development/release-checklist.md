@@ -24,6 +24,11 @@ SettleDiff is MIT-licensed and versioned (`0.1.0`). No public distribution chann
 - [ ] Bundle checksum changes and internal inconsistencies are rejected; authenticated provenance is not claimed.
 - [ ] Public reports contain only the masked allowlist and publish exactly three static files.
 - [ ] Facilitator comparison remains deferred under ADR 0009 (per-run provenance is absent); it is not claimed.
+- [ ] The synthetic Perflo v8 corpus under `tests/contract/perflo/` matches the locally inspected `@perflo/cli@8.0.0` package declarations whose npm integrity is recorded in the testing strategy; no fixture is represented as captured live evidence.
+- [ ] Catalog authorization binds the exact resource digest, canonical vendor contract digest, advertised price, required `maxChargePerCall`, and authorized maximum; the second vendor observation runs after confirmation and before `pay`.
+- [ ] Perflo `pay`, agent Activity, and `tx status` are described as one provider trust domain wherever claims are made; no live Perflo v8 payment validation is claimed.
+- [ ] Legacy Perflo fixtures and schema-1/2 HTTP payment terms retain their accepted behavior.
+- [ ] Provider `savedTo` local paths are redacted before persistence.
 
 Run the cohesive release-hardening test directly:
 
