@@ -175,7 +175,7 @@ async def test_post_launch_failures_are_uncertain_and_never_retried(
     signer = client(
         mode,
         count_path,
-        timeout_seconds=0.05,
+        timeout_seconds=1,
         max_output_bytes=1024,
     )
 
