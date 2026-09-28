@@ -234,7 +234,7 @@ uv run settlediff verify-fixture fixtures/x402-independent-confirmed --database 
 uv run settlediff verify-fixture fixtures/perflo-v8-provider-only-success --database /tmp/settlediff-demo.sqlite3
 uv run settlediff retry-analysis syn_perflo_v8_provider_only --database /tmp/settlediff-demo.sqlite3
 uv run settlediff investigate-purchase syn_x402_independent_confirmed --database /tmp/settlediff-demo.sqlite3
-uv run settlediff publish syn_x402_independent_confirmed --database /tmp/settlediff-demo.sqlite3 --output /tmp/settlediff-public
+uv run settlediff publish syn_x402_independent_confirmed --database /tmp/settlediff-demo.sqlite3 --output "$(cd /tmp && pwd -P)/settlediff-public"
 uv run settlediff serve --database /tmp/settlediff-demo.sqlite3
 ```
 
@@ -245,7 +245,9 @@ already-persisted evidence and never sends or retries a request. `investigate-pu
 reconstructs the purchase recap from persisted evidence only and explicitly reports
 unavailable sections or bundle when the database lacks full persisted evidence — the bare
 `verify-fixture` seed stores the report without every cited artifact. `publish` emits exactly
-three masked allowlisted files (`index.html`, `report.json`, `public-manifest.json`). Public
+three masked allowlisted files (`index.html`, `report.json`, `public-manifest.json`) and
+refuses output paths with a symlinked ancestor, so the demo resolves `/tmp` (a symlink on
+macOS) to its physical path. Public
 schema 2 includes only settlement/comparison statuses and diagnostics, verification
 dimensions, and payer policy; it excludes the observer source, transaction reference,
 profile, ledgers, provider Activity, and evidence IDs.
