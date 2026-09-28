@@ -213,6 +213,7 @@ ones, provider Activity still fills the settlement role:
 | `x402-provider-failure-independent-confirmation` | provider failure contradicts confirmed transfer | `UNVERIFIABLE` |
 | `x402-wrong-{recipient,amount,asset,network}` | one canonical term differs | `VERIFIED_WITH_WARNINGS` |
 | `perflo-v8-provider-only-success` | provider reports settlement; independent settlement unavailable | `UNVERIFIABLE` |
+| `perflo-v8-credit-authorization` | credit-funded provider settlement hash correlates execution and Activity; independent settlement unavailable | `UNVERIFIABLE` |
 | `x402-independent-confirmed` | provider settlement matches an exact independent transfer | `VERIFIED` |
 
 The schema-4 pair makes the trust boundary explicit without an adapter-specific verdict branch:
@@ -304,7 +305,9 @@ show the signer-probed payer and settlement-profile digest alongside URL, method
 body digest, scheme, network, public asset reference, recipient, and timeout. Perflo's
 `vendor`, `pay`, agent Activity, and `tx status` surfaces remain one
 provider trust domain: agreement between them is consistency, not independent ledger
-verification, and credit-funded results expose no canonical on-chain transaction reference.
+verification. Credit-funded results may carry a Base `settlement.txHash` for Perflo's own
+vendor settlement (`flow: "authorization"`); SettleDiff retains it for provider Activity
+correlation, never as evidence of the customer's transfer or independent settlement.
 Persisted and ordinary report views remain masked. Environment flags never
 bypass confirmation, and live/paid calls are never part of the default test suite.
 
