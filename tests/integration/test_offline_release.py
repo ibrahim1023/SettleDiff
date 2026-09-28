@@ -4,7 +4,7 @@ import json
 import socket
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -297,13 +297,13 @@ def test_cross_feature_assurance_demo_remains_offline(
 
     assert report.contract is not None
     snapshot_one = build_contract_snapshot(
-        report.contract.url,
+        cast(str, report.contract.url),
         "x402",
         report.contract,
         {"synthetic": True, "revision": 1},
     )
     snapshot_two = build_contract_snapshot(
-        report.contract.url,
+        cast(str, report.contract.url),
         "x402",
         report.contract,
         {"synthetic": True, "revision": 2},

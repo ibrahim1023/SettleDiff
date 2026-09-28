@@ -8,6 +8,8 @@ import pytest
 
 from settlediff.application.auth import (
     AuthorizationError,
+    CatalogResourceReference,
+    HttpResourceReference,
     PaidExecutionCapability,
     PaidExecutionRequest,
     PaymentTerms,
@@ -21,8 +23,11 @@ NOW = datetime(2026, 8, 13, 10, tzinfo=UTC)
 def request(**overrides: object) -> PaidExecutionRequest:
     values: dict[str, object] = {
         "run_id": "syn_run_001",
-        "target": "https://example.invalid/search",
-        "body": {"query": "synthetic"},
+        "resource": HttpResourceReference(
+            url="https://example.invalid/search",
+            method="POST",
+            body={"query": "synthetic"},
+        ),
         "budget": Money(amount=Decimal("0.05"), unit="USDC"),
     }
     return PaidExecutionRequest(**(values | overrides))  # type: ignore[arg-type]
@@ -75,8 +80,26 @@ async def test_exact_authorization_consumes_once() -> None:
     ("override", "message"),
     [
         ({"run_id": "syn_run_other"}, "run"),
-        ({"target": "https://example.invalid/other"}, "target"),
-        ({"body": {"query": "changed"}}, "body"),
+        (
+            {
+                "resource": HttpResourceReference(
+                    url="https://example.invalid/other",
+                    method="POST",
+                    body={"query": "synthetic"},
+                )
+            },
+            "exact resource",
+        ),
+        (
+            {
+                "resource": HttpResourceReference(
+                    url="https://example.invalid/search",
+                    method="POST",
+                    body={"query": "changed"},
+                )
+            },
+            "exact resource",
+        ),
         ({"budget": Money(amount=Decimal("0.06"), unit="USDC")}, "budget"),
         ({"budget": Money(amount=Decimal("0.04"), unit="USDC")}, "budget"),
         ({"budget": Money(amount=Decimal("0.05"), unit="USD")}, "budget"),
@@ -101,11 +124,114 @@ async def test_expired_authorization_fails_closed(checked_at: datetime) -> None:
 
 
 def test_canonical_body_digest_ignores_object_key_order() -> None:
-    first = request(body={"query": "synthetic", "limit": 3})
-    reordered = request(body={"limit": 3, "query": "synthetic"})
+    first = request(
+        resource=HttpResourceReference(
+            url="https://example.invalid/search",
+            method="POST",
+            body={"query": "synthetic", "limit": 3},
+        )
+    )
+    reordered = request(
+        resource=HttpResourceReference(
+            url="https://example.invalid/search",
+            method="POST",
+            body={"limit": 3, "query": "synthetic"},
+        )
+    )
     authorized = PaidExecutionCapability.issue(first, expires_at=NOW + timedelta(minutes=5))
 
     assert authorized.body_digest == PaidExecutionCapability.body_digest_for(reordered.body)
+
+
+def catalog_request(**overrides: object) -> PaidExecutionRequest:
+    values: dict[str, object] = {
+        "run_id": "syn_run_001",
+        "resource": CatalogResourceReference(
+            slug="synthetic-search",
+            input={"query": "synthetic"},
+            query={"limit": 3},
+            sub_account="synthetic-sub",
+        ),
+        "budget": Money(amount=Decimal("0.05"), unit="USDC"),
+    }
+    return PaidExecutionRequest(**(values | overrides))  # type: ignore[arg-type]
+
+
+def catalog_resource(**overrides: object) -> CatalogResourceReference:
+    values: dict[str, object] = {
+        "slug": "synthetic-search",
+        "input": {"query": "synthetic"},
+        "query": {"limit": 3},
+        "sub_account": "synthetic-sub",
+    }
+    return CatalogResourceReference(**(values | overrides))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "resource",
+    [
+        catalog_resource(slug="synthetic-other"),
+        catalog_resource(input={"query": "changed"}),
+        catalog_resource(query={"limit": 4}),
+        catalog_resource(sub_account="other-sub"),
+        catalog_resource(sub_account=None),
+        catalog_resource(input={"query": "synthetic", "limit": 3}, query={}),
+    ],
+)
+async def test_catalog_resource_changes_invalidate_capability(
+    resource: CatalogResourceReference,
+) -> None:
+    authorized = PaidExecutionCapability.issue(
+        catalog_request(), expires_at=NOW + timedelta(minutes=5)
+    )
+
+    with pytest.raises(AuthorizationError, match="exact resource"):
+        await authorized.consume(catalog_request(resource=resource), now=NOW)
+
+    assert (await authorized.consume(catalog_request(), now=NOW)).run_id == "syn_run_001"
+
+
+@pytest.mark.asyncio
+async def test_catalog_budget_unit_remains_an_exact_check() -> None:
+    authorized = PaidExecutionCapability.issue(
+        catalog_request(), expires_at=NOW + timedelta(minutes=5)
+    )
+
+    with pytest.raises(AuthorizationError, match="exact budget"):
+        await authorized.consume(
+            catalog_request(budget=Money(amount=Decimal("0.05"), unit="USD")), now=NOW
+        )
+
+
+@pytest.mark.asyncio
+async def test_consumed_catalog_authorization_rejects_changed_resource() -> None:
+    token = await PaidExecutionCapability.issue(
+        catalog_request(), expires_at=NOW + timedelta(minutes=5)
+    ).consume(catalog_request(), now=NOW)
+
+    with pytest.raises(AuthorizationError, match="exact resource"):
+        token.require_exact_request(catalog_request(resource=catalog_resource(query={"limit": 4})))
+
+
+def test_catalog_resource_digest_covers_input_and_query_separately() -> None:
+    combined = catalog_resource(input={"query": "synthetic", "limit": 3}, query={})
+    assert catalog_request(resource=combined).resource_digest != catalog_request().resource_digest
+
+
+def test_resource_digest_ignores_canonical_key_ordering() -> None:
+    ordered = catalog_resource(input={"a": 1, "b": 2}, query={"x": True, "y": None})
+    reordered = catalog_resource(input={"b": 2, "a": 1}, query={"y": None, "x": True})
+
+    assert (
+        catalog_request(resource=ordered).resource_digest
+        == catalog_request(resource=reordered).resource_digest
+    )
+
+
+def test_http_get_resource_cannot_contain_a_body() -> None:
+    with pytest.raises(ValueError, match="GET"):
+        HttpResourceReference(url="https://example.invalid", method="GET", body={})
 
 
 @pytest.mark.asyncio
@@ -265,8 +391,158 @@ async def test_consumed_authorization_rejects_changed_payment_terms() -> None:
 
 
 def test_get_request_with_absent_body_has_stable_digest() -> None:
-    get_request = request(method="GET", body=None)
+    get_request = request(
+        resource=HttpResourceReference(
+            url="https://example.invalid/search", method="GET", body=None
+        )
+    )
 
     assert PaidExecutionCapability.body_digest_for(
         get_request.body
     ) == PaidExecutionCapability.body_digest_for(None)
+
+
+def catalog_terms(req: PaidExecutionRequest, **overrides: object) -> PaymentTerms:
+    values: dict[str, object] = {
+        "schema_version": 3,
+        "adapter_id": "perflo",
+        "protocol_version": "8",
+        "scheme": None,
+        "network": None,
+        "chain": None,
+        "asset": None,
+        "asset_symbol": None,
+        "recipient": None,
+        "quoted_price": Money(amount=Decimal("0.01"), unit=req.budget.unit),
+        "resource_digest": req.resource_digest,
+        "contract_digest": "b" * 64,
+        "maximum_charge": req.budget,
+        "required_max_charge": Money(amount=Decimal("0.05"), unit=req.budget.unit),
+    }
+    return PaymentTerms.model_validate(values | overrides)
+
+
+@pytest.mark.asyncio
+async def test_schema3_terms_authorize_catalog_request() -> None:
+    req = catalog_request()
+    terms = catalog_terms(req)
+    capability = PaidExecutionCapability.issue(
+        req, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+    )
+
+    token = await capability.consume(req, payment_terms=terms, now=NOW)
+
+    assert token.run_id == req.run_id
+    token.require_exact_payment_terms(terms)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"resource_url": "https://example.invalid"},
+        {"method": "POST"},
+        {"body_digest": "a" * 64},
+        {"response_contract_digest": "a" * 64},
+    ],
+    ids=["resource_url", "method", "body_digest", "response_contract_digest"],
+)
+def test_schema3_rejects_http_fields(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        catalog_terms(catalog_request(), **overrides)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["resource_digest", "contract_digest", "maximum_charge", "required_max_charge"],
+)
+def test_schema3_requires_catalog_fields(missing: str) -> None:
+    req = catalog_request()
+    values = {
+        "resource_digest": req.resource_digest,
+        "contract_digest": "b" * 64,
+        "maximum_charge": req.budget,
+        "required_max_charge": Money(amount=Decimal("0.05"), unit=req.budget.unit),
+    }
+    values.pop(missing)
+    with pytest.raises(ValueError, match="catalog payment terms require"):
+        PaymentTerms(
+            schema_version=3,
+            adapter_id="perflo",
+            protocol_version="8",
+            scheme=None,
+            network=None,
+            chain=None,
+            asset=None,
+            asset_symbol=None,
+            recipient=None,
+            quoted_price=Money(amount=Decimal("0.01"), unit=req.budget.unit),
+            **values,  # type: ignore[arg-type]
+        )
+
+
+def test_schema3_rejects_quote_above_maximum_charge() -> None:
+    req = catalog_request()
+    with pytest.raises(ValueError, match="exceeds the required max charge"):
+        catalog_terms(req, quoted_price=Money(amount=Decimal("0.09"), unit="USDC"))
+
+
+def test_schema3_rejects_required_max_charge_above_maximum() -> None:
+    req = catalog_request()
+    with pytest.raises(ValueError, match="required max charge exceeds the maximum charge"):
+        catalog_terms(req, required_max_charge=Money(amount=Decimal("0.09"), unit="USDC"))
+
+
+def test_schema3_rejects_nonpositive_required_max_charge() -> None:
+    req = catalog_request()
+    with pytest.raises(ValueError, match="required max charge must be positive"):
+        catalog_terms(req, required_max_charge=Money(amount=Decimal("0"), unit="USDC"))
+
+
+def test_schema3_rejects_required_max_charge_unit_mismatch() -> None:
+    req = catalog_request()
+    with pytest.raises(ValueError, match="unit"):
+        catalog_terms(req, required_max_charge=Money(amount=Decimal("0.05"), unit="EUR"))
+
+
+def test_schema3_rejects_maximum_charge_unit_mismatch() -> None:
+    req = catalog_request()
+    with pytest.raises(ValueError, match="unit"):
+        catalog_terms(req, maximum_charge=Money(amount=Decimal("0.05"), unit="EUR"))
+
+
+def test_schema2_rejects_catalog_fields_and_missing_http_fields() -> None:
+    with pytest.raises(ValueError, match="schema version 3"):
+        payment_terms(resource_digest="b" * 64)
+    with pytest.raises(ValueError, match="schema version 3"):
+        payment_terms(required_max_charge=Money(amount=Decimal("0.05"), unit="USDC"))
+    with pytest.raises(ValueError, match="HTTP payment terms require"):
+        payment_terms(resource_url=None)
+
+
+def test_schema3_capability_rejects_http_request() -> None:
+    req = request()
+    terms = catalog_terms(req)
+    with pytest.raises(AuthorizationError, match="payment terms do not match"):
+        PaidExecutionCapability.issue(
+            req, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+        )
+
+
+def test_schema3_capability_rejects_resource_drift() -> None:
+    req = catalog_request()
+    other = catalog_request(resource=CatalogResourceReference(slug="other", input={}, query={}))
+    terms = catalog_terms(req)
+    with pytest.raises(AuthorizationError, match="payment terms do not match"):
+        PaidExecutionCapability.issue(
+            other, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+        )
+
+
+def test_schema3_capability_rejects_budget_change() -> None:
+    req = catalog_request()
+    terms = catalog_terms(req)
+    drifted = catalog_request(budget=Money(amount=Decimal("0.10"), unit="USDC"))
+    with pytest.raises(AuthorizationError, match="payment terms do not match"):
+        PaidExecutionCapability.issue(
+            drifted, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+        )

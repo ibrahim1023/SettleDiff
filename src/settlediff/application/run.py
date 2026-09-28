@@ -25,7 +25,9 @@ from settlediff.agent.investigator import (
 )
 from settlediff.application.auth import (
     AuthorizationError,
+    CatalogResourceReference,
     ConsumedPaidAuthorization,
+    HttpResourceReference,
     PaidExecutionCapability,
     PaidExecutionRequest,
     PaymentTerms,
@@ -36,6 +38,7 @@ from settlediff.application.budget import (
 )
 from settlediff.application.payment_rails import (
     AdapterEvidence,
+    ContractReinspectionPort,
     PaymentRailAdapter,
     SchemaEvidencePort,
     SubmissionUncertainError,
@@ -60,6 +63,7 @@ from settlediff.domain.models import (
     DeliveryObservation,
     EvidenceArtifact,
     ExecutionRecord,
+    ExpectedContract,
     ExplanationRecord,
     ExplanationSource,
     MachineReport,
@@ -232,6 +236,7 @@ class LiveEvidenceCollector:
         self._budget = budget
         self._telemetry = telemetry
         self._contract: EvidenceArtifact | None = None
+        self._contract_reinspection: EvidenceArtifact | None = None
         self._quote: Money | None = None
         self._payment_terms: PaymentTerms | None = None
         self._schema: EvidenceArtifact | None = None
@@ -259,6 +264,7 @@ class LiveEvidenceCollector:
         artifact_ids: set[str] = set()
         for artifact in (
             self._contract,
+            self._contract_reinspection,
             self._schema,
             self._execution,
             self._receipt,
@@ -302,27 +308,50 @@ class LiveEvidenceCollector:
                 f"authorized budget {request.budget.amount} {request.budget.unit}"
             )
         self._quote = contract.price
-        self._payment_terms = PaymentTerms(
-            schema_version=2,
-            adapter_id=self._adapter.adapter_id,
-            protocol_version=contract_evidence.protocol_version,
-            scheme=contract.scheme,
-            network=contract.network,
-            chain=contract.chain,
-            asset=contract.asset_identity,
-            asset_symbol=contract.asset,
-            recipient=contract.recipient,
-            quoted_price=contract.price,
-            max_timeout_seconds=contract.max_timeout_seconds,
-            resource_url=contract.url,
-            method=request.method,
-            body_digest=PaidExecutionCapability.body_digest_for(request.body),
-            response_contract_digest=(
-                contract.response_contract.digest
-                if contract.response_contract is not None
-                else None
-            ),
-        )
+        if isinstance(request.resource, HttpResourceReference):
+            if contract.url is None:
+                raise RunTransitionError("HTTP payment terms require a contract resource URL")
+            self._payment_terms = PaymentTerms(
+                schema_version=2,
+                adapter_id=self._adapter.adapter_id,
+                protocol_version=contract_evidence.protocol_version,
+                scheme=contract.scheme,
+                network=contract.network,
+                chain=contract.chain,
+                asset=contract.asset_identity,
+                asset_symbol=contract.asset,
+                recipient=contract.recipient,
+                quoted_price=contract.price,
+                max_timeout_seconds=contract.max_timeout_seconds,
+                resource_url=contract.url,
+                method=request.method,
+                body_digest=PaidExecutionCapability.body_digest_for(request.body),
+                response_contract_digest=(
+                    contract.response_contract.digest
+                    if contract.response_contract is not None
+                    else None
+                ),
+            )
+        else:
+            _validate_catalog_contract(contract, request)
+            assert contract.price is not None
+            self._payment_terms = PaymentTerms(
+                schema_version=3,
+                adapter_id=self._adapter.adapter_id,
+                protocol_version=contract_evidence.protocol_version,
+                scheme=contract.scheme,
+                network=contract.network,
+                chain=contract.chain,
+                asset=contract.asset_identity,
+                asset_symbol=contract.asset,
+                recipient=contract.recipient,
+                quoted_price=contract.price,
+                max_timeout_seconds=contract.max_timeout_seconds,
+                resource_digest=request.resource_digest,
+                contract_digest=contract.digest,
+                maximum_charge=request.budget,
+                required_max_charge=contract.required_max_charge,
+            )
         if contract.request_schema is not None:
             self._schema = _artifact(
                 request.run_id,
@@ -350,6 +379,63 @@ class LiveEvidenceCollector:
                 expected_type=ArtifactType.CONTEXT_EVIDENCE,
                 expected_operation="schema",
                 adapter_id=self._adapter.adapter_id,
+            )
+
+    async def revalidate_payment_terms(self, request: PaidExecutionRequest) -> None:
+        """Re-read the vendor contract before capability consumption; fail on drift."""
+        if not isinstance(self._adapter, ContractReinspectionPort):
+            return
+        if not isinstance(request.resource, CatalogResourceReference):
+            return
+        terms = self._payment_terms
+        if terms is None or terms.schema_version != 3:
+            raise RunTransitionError(
+                "catalog payment terms revalidation requires schema 3 payment terms"
+            )
+        with self._span(
+            "settlediff.payment_rail.reinspect",
+            {
+                "run_id": request.run_id,
+                "component": "payment_rail",
+                "adapter": self._adapter.adapter_id,
+            },
+        ):
+            evidence = await self._adapter.reinspect(request)
+        artifact = _adapter_artifact(
+            request.run_id,
+            evidence,
+            expected_type=ArtifactType.SERVICE_CONTRACT,
+            expected_operation="inspect",
+            adapter_id=self._adapter.adapter_id,
+        )
+        self._contract_reinspection = artifact.model_copy(
+            update={"artifact_id": f"{request.run_id}:service_contract_reinspection"}
+        )
+        contract = normalize_contract(self._contract_reinspection)
+        _validate_catalog_contract(contract, request)
+        assert contract.price is not None
+        if contract.digest != terms.contract_digest:
+            raise RunTransitionError("vendor contract drifted between authorization and execution")
+        rebuilt = PaymentTerms(
+            schema_version=3,
+            adapter_id=terms.adapter_id,
+            protocol_version=evidence.protocol_version,
+            scheme=contract.scheme,
+            network=contract.network,
+            chain=contract.chain,
+            asset=contract.asset_identity,
+            asset_symbol=contract.asset,
+            recipient=contract.recipient,
+            quoted_price=contract.price,
+            max_timeout_seconds=contract.max_timeout_seconds,
+            resource_digest=request.resource_digest,
+            contract_digest=contract.digest,
+            maximum_charge=request.budget,
+            required_max_charge=contract.required_max_charge,
+        )
+        if rebuilt.digest != terms.digest:
+            raise RunTransitionError(
+                "catalog payment terms drifted between authorization and execution"
             )
 
     async def execute(
@@ -408,7 +494,7 @@ class LiveEvidenceCollector:
             self._recovery = artifact
             if isinstance(artifact.data, dict):
                 status = cast(dict[str, JsonValue], artifact.data).get("status")
-                if status in {"confirmed", "failed"}:
+                if status in {"confirmed", "failed", "success"}:
                     return RecoveryState.SUBMITTED, (artifact,)
                 proof = cast(dict[str, JsonValue], artifact.data).get("proof_of_non_submission")
                 if status == "not_submitted" and proof is True:
@@ -892,6 +978,30 @@ def _safe_status_url(url: str) -> str:
             "",
         )
     )
+
+
+def _validate_catalog_contract(contract: ExpectedContract, request: PaidExecutionRequest) -> None:
+    resource = request.resource
+    if not isinstance(resource, CatalogResourceReference):
+        raise RunTransitionError("catalog payment terms require a catalog resource")
+    if contract.payable is not True:
+        raise RunTransitionError("vendor contract is not payable")
+    if contract.vendor_slug != resource.slug:
+        raise RunTransitionError("vendor contract slug does not match the authorized resource")
+    if contract.price is None or contract.price.unit != "USD" or contract.price.amount <= 0:
+        raise RunTransitionError("catalog payment terms require a positive USD quoted price")
+    if (
+        contract.required_max_charge is None
+        or contract.required_max_charge.unit != "USD"
+        or contract.required_max_charge.amount <= 0
+    ):
+        raise RunTransitionError("catalog payment terms require a positive USD maximum charge")
+    if not contract.price.is_within(contract.required_max_charge):
+        raise RunTransitionError("vendor quoted price exceeds the advertised maxChargePerCall")
+    if request.budget.unit != "USD" or request.budget.amount <= 0:
+        raise RunTransitionError("catalog payment terms require a positive USD budget")
+    if not contract.required_max_charge.is_within(request.budget):
+        raise RunTransitionError("vendor maximum charge exceeds the authorized budget")
 
 
 def _artifact(

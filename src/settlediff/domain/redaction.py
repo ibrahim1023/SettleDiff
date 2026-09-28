@@ -35,6 +35,7 @@ SECRET_KEYS = {
     "paymentsignature",
     "privatekey",
     "refreshtoken",
+    "savedto",
     "signature",
     "secret",
     "token",

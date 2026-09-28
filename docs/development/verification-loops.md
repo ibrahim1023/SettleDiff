@@ -37,11 +37,16 @@ Review invariants:
 Before any Perflo execution change:
 
 1. run offline adapter contracts;
-2. prove authorization mismatch and reuse are rejected;
-3. prove timeout/uncertain submission cannot invoke execution again;
-4. inspect the exact subprocess argument list;
-5. confirm tests use a fake executable or captured envelopes;
-6. keep live/paid markers excluded.
+2. prove authorization mismatch and reuse are rejected, including mutations to catalog
+   slug, `input`, `query`, or sub-account bound by the exact resource digest;
+3. prove the second vendor observation (reinspection) precedes capability consumption
+   and that contract drift fails before `pay` launches;
+4. prove timeout/uncertain submission cannot invoke execution again;
+5. inspect the exact subprocess argument list: `pay <slug>` argv order, conditional
+   `--input`/`--query`/`--sub-account`, and the major-unit USD `--max-charge` equal to
+   the authorized budget;
+6. confirm tests use a fake executable or captured envelopes;
+7. keep live/paid markers excluded.
 
 No paid test runs without explicit user authorization in the current conversation, the paid environment flag, a test budget, and an interactive confirmation.
 

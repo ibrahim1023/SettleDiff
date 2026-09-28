@@ -32,7 +32,7 @@ def build_investigation_dependencies(
     by_source = {artifact.source: artifact for artifact in artifacts}
 
     async def inspect_contract() -> EvidenceSummary:
-        artifact = by_source.get("perflo.check")
+        artifact = by_source.get("perflo.vendor")
         contract = report.contract
         if contract is None:
             summary = "No normalized service contract is available."
@@ -64,7 +64,7 @@ def build_investigation_dependencies(
         )
 
     async def get_activity() -> EvidenceSummary:
-        artifact = by_source.get("perflo.activity")
+        artifact = by_source.get("perflo.activity.agent")
         ledger = report.ledger
         if ledger is None:
             summary = "No deterministically matched Activity record is available."

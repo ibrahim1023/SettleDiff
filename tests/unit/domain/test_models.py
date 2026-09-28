@@ -484,3 +484,47 @@ def test_payment_receipt_is_a_strict_versioned_canonical_record() -> None:
     assert PaymentReceipt.model_validate_json(receipt.model_dump_json()) == receipt
     with pytest.raises(ValidationError):
         PaymentReceipt.model_validate({**receipt.model_dump(), "invented": True})
+
+
+def test_contract_schema_below_4_requires_a_url() -> None:
+    values = contract_fixture().model_dump()
+    values["schema_version"] = 2
+    values["url"] = None
+
+    with pytest.raises(ValidationError, match="requires a resource URL"):
+        ExpectedContract.model_validate(values)
+
+
+def test_contract_schema_4_may_omit_url_for_catalog_resources() -> None:
+    values = contract_fixture().model_dump()
+    values["schema_version"] = 4
+    values["url"] = None
+    values["required_max_charge"] = Money(amount=Decimal("0.05"), unit="USDC")
+    values["payable"] = True
+
+    contract = ExpectedContract.model_validate(values)
+
+    assert contract.schema_version == 4
+    assert contract.url is None
+    assert contract.payable is True
+
+
+def test_contract_schema_4_requires_an_identity() -> None:
+    values = contract_fixture().model_dump()
+    values["schema_version"] = 4
+    values["url"] = None
+    values["vendor_slug"] = None
+
+    with pytest.raises(ValidationError, match="identity"):
+        ExpectedContract.model_validate(values)
+
+
+def test_contract_schema_4_url_without_vendor_slug_is_valid() -> None:
+    values = contract_fixture().model_dump()
+    values["schema_version"] = 4
+    values["vendor_slug"] = None
+
+    contract = ExpectedContract.model_validate(values)
+
+    assert contract.url is not None
+    assert contract.vendor_slug is None

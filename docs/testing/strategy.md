@@ -145,9 +145,44 @@ and mislabeled adapter/artifact evidence fails closed. Provider contract tests p
   proof classifies as not submitted, and all ambiguous trajectories remain unresolved;
 - every post-launch signer failure is one-shot and cannot be launched again;
 - x402 adapter tests perform two unsigned challenge observations, reject pre-launch drift without invoking the signer, preserve post-launch contradictory references as uncertain, keep provider receipt and independent ledger evidence separate, and expose no second mutation path;
-- URL-policy tests accept controlled loopback HTTP only on x402 while retaining HTTPS for Perflo and every remote x402 target; credentials, fragments, and redirects remain rejected;
+- URL-policy tests accept controlled loopback HTTP only on x402 and retain HTTPS for every remote x402 target; Perflo v8 addresses catalog slugs rather than HTTP targets, so credentials, fragments, redirects, and HTTP resources presented to the Perflo adapter remain rejected;
 - CLI/config tests require explicit rail selection and both testnet gates, preserve GET-without-body and POST JSON semantics, reject missing/secret-bearing configuration, and prove interactive decline prevents signer invocation;
 - storage, bundle, JSON, and local UI tests retain adapter identity and label provider versus independent settlement without recomputing findings.
+
+### Perflo v8 synthetic corpus
+
+The catalog corpus under `tests/contract/perflo/` is synthetic and shaped from the
+published `@perflo/cli@8.0.0` package declarations and command surfaces, which were
+inspected locally:
+
+```text
+package    @perflo/cli@8.0.0
+tarball    https://registry.npmjs.org/@perflo/cli/-/cli-8.0.0.tgz
+integrity  sha512-WC0qn6T9GzahGX8vURIG9jam725hTZI/OgepSH5S4fEgNlfb2W5wrFdFsWEKXN8ZJkYsoAu6xoF3ioRP7OaHfw==
+shasum     edd240a39cae2e3873292def91a5e7d
+node       >=20
+```
+
+No fixture is represented as captured live evidence, and no live Perflo v8 payment has
+been validated. The corpus covers exactly the surfaces the adapter exercises:
+
+- exact argv construction with no shell: `vendor <slug> --json`, `pay <slug>` with
+  canonical-JSON `--input`/`--query`/`--sub-account` and a major-unit USD `--max-charge`,
+  `activity --json`, and `tx status <hash> --json`;
+- strict top-level envelope roots (`vendor`, `result`, `agent`, tx status object) with
+  no fallback to wrong envelopes;
+- terminal `PayResult` variants and `TaskResult` status variants
+  (`succeeded|running|indeterminate|failed`);
+- bounded output projections: capped-output and `savedTo` file projections preserved as
+  provider evidence with local paths redacted;
+- signed Activity `ledgerState` rows where a non-positive amount never supplies charge
+  evidence;
+- credit-funded results exposing no canonical on-chain transaction reference;
+- transaction-hash identity matching (case-insensitive only for exact 32-byte `0x`
+  hashes);
+- vendor reinspection drift stopping before capability consumption and before `pay`;
+- one-shot mutation semantics: no second paid call after timeout or uncertain
+  submission.
 
 ## Interface tests
 

@@ -349,6 +349,8 @@ def _request_schema(body: JsonValue | None) -> dict[str, JsonValue]:
 def _payment_terms(contract: ExpectedContract, request: PaidExecutionRequest) -> PaymentTerms:
     if contract.price is None:
         raise AdapterProtocolError("x402 challenge omitted its quoted price")
+    if contract.url is None:
+        raise AdapterProtocolError("x402 challenge omitted its resource URL")
     return PaymentTerms(
         schema_version=2,
         adapter_id="x402",

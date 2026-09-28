@@ -67,3 +67,8 @@ class SchemaEvidencePort(Protocol):
 @runtime_checkable
 class TransactionEvidencePort(Protocol):
     async def collect_transaction(self, transaction_reference: str) -> AdapterEvidence: ...
+
+
+@runtime_checkable
+class ContractReinspectionPort(Protocol):
+    async def reinspect(self, request: PaidExecutionRequest) -> AdapterEvidence: ...

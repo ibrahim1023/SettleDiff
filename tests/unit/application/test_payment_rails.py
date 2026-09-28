@@ -6,7 +6,11 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from settlediff.application.auth import ConsumedPaidAuthorization, PaidExecutionRequest
+from settlediff.application.auth import (
+    ConsumedPaidAuthorization,
+    HttpResourceReference,
+    PaidExecutionRequest,
+)
 from settlediff.application.payment_rails import (
     AdapterEvidence,
     PaymentRailAdapter,
@@ -100,8 +104,7 @@ def test_optional_capabilities_are_not_forced_onto_every_adapter() -> None:
 def test_paid_request_shape_remains_independent_of_adapter_results() -> None:
     request = PaidExecutionRequest(
         run_id="syn_run",
-        target="https://example.invalid",
-        body={},
+        resource=HttpResourceReference(url="https://example.invalid", method="POST", body={}),
         budget=Money(amount=Decimal("0.01"), unit="USDC"),
     )
 

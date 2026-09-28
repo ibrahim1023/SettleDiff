@@ -14,6 +14,7 @@ Resolved choices are recorded alongside the remaining gates so implemented testn
 | Release channel | Build and install local artifacts only. Choose package registry, signing, checksums/SBOM publication, and release ownership together. | First public release |
 | Hosted deployment target | Keep the MVP loopback-only. Choose hosting, authentication, retention, and secret management together in a new threat model and ADR. | Post-MVP deployment |
 | ElevenLabs voice demo | Keep it outside the financial core; add only for a concrete interface use case over the same persisted report. | Post-core demo |
+| Perflo external settlement observer | Keep Perflo `pay`, agent Activity, and `tx status` as one provider trust domain. An independent Perflo settlement observer requires captured exact network/chain ID, asset reference and decimals, atomic amount, recipient, mandatory payer, scheme/correlation, and observer provenance/bounds — fields the current Perflo surfaces do not supply and cannot fill. | PR2 external observer design gate |
 
 ## Resolved choices
 

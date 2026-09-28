@@ -177,6 +177,7 @@ def _actual_charge(
         and match.matched is not None
         and match.matched.status is LedgerStatus.CONFIRMED
         and match.matched.amount is not None
+        and match.matched.amount.amount > 0
     ):
         return match.matched.amount, "activity", "activity.amount"
     return None, None, None
