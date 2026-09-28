@@ -95,6 +95,7 @@ def test_environment_example_contains_only_blank_safe_assignments() -> None:
         "SETTLEDIFF_LIVE_CONTEXTDEV_URL": "",
         "SETTLEDIFF_LIVE_HYPERFUSION": "",
         "SETTLEDIFF_OTLP_ENDPOINT": "",
+        "SETTLEDIFF_PERFLO_RPC_URL": "",
         "SETTLEDIFF_X402_SIGNER_COMMAND": "",
         "SETTLEDIFF_X402_RPC_URL": "",
         "SETTLEDIFF_X402_TESTNET_ENABLED": "",

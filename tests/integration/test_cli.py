@@ -2486,8 +2486,9 @@ def test_show_legacy_report_omits_settlement_provenance(tmp_path: Path) -> None:
     assert "Provider Activity:" not in result.stdout
 
 
+@pytest.mark.parametrize("rpc_configured", [False, True])
 def test_perflo_credit_authorization_live_shape_builds_provider_only_report(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rpc_configured: bool
 ) -> None:
     database = tmp_path / "perflo-credit.sqlite3"
     command_log = tmp_path / "perflo-commands.jsonl"
@@ -2500,7 +2501,35 @@ def test_perflo_credit_authorization_live_shape_builds_provider_only_report(
             timeout_seconds=5,
         )
 
-    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    if rpc_configured:
+
+        def settings_with_rpc() -> Settings:
+            return Settings(
+                _env_file=None,  # pyright: ignore[reportCallIssue]
+                contextdev_api_key=SecretStr("syn-contextdev-key"),
+                perflo_rpc_url=SecretStr("https://rpc.example.invalid"),
+            )
+
+        class FakeRpc:
+            def __init__(self, _http: object) -> None:
+                pass
+
+            async def call(self, method: str, params: tuple[JsonValue, ...]) -> JsonValue:
+                del params
+                return (
+                    "0x2105"
+                    if method == "eth_chainId"
+                    else {
+                        "transactionHash": "0x" + "1" * 64,
+                        "status": "0x0",
+                        "logs": [],
+                    }
+                )
+
+        monkeypatch.setattr("settlediff.cli.Settings", settings_with_rpc)
+        monkeypatch.setattr("settlediff.cli.EvmRpcClient", FakeRpc)
+    else:
+        monkeypatch.setattr("settlediff.cli.Settings", live_settings)
     monkeypatch.setattr("settlediff.cli.PerfloClient", client_factory)
     monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
 
@@ -2547,6 +2576,25 @@ def test_perflo_credit_authorization_live_shape_builds_provider_only_report(
     assert findings["activity_persistence"].status is CheckStatus.PASS
     assert report.retry is not None
     assert report.retry.safety is RetrySafety.REQUIRES_HUMAN_DECISION
+    corroboration = next(
+        artifact
+        for artifact in repository.artifacts(records[0].run_id)
+        if artifact.source == "evm_rpc.provider_transaction"
+    )
+    assert corroboration.redacted is True
+    assert isinstance(corroboration.data, dict)
+    assert corroboration.data["status"] == ("RECEIPT_REVERTED" if rpc_configured else "UNAVAILABLE")
+    assert corroboration.data["diagnostic"] == (
+        "PROVIDER_FINALIZED_RECEIPT_REVERTED" if rpc_configured else "OBSERVER_NOT_CONFIGURED"
+    )
+    assert corroboration.data["comparison"] == (
+        "CONTRADICTED" if rpc_configured else "NOT_COMPARABLE"
+    )
+    assert "0x111111111111" not in json.dumps(corroboration.data)
+    if rpc_configured:
+        assert (
+            "Perflo vendor transaction (not customer settlement): RECEIPT_REVERTED" in result.stdout
+        )
     repository.close()
     calls = [json.loads(line) for line in command_log.read_text().splitlines()]
     assert calls == [

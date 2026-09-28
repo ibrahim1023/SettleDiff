@@ -79,6 +79,7 @@ class Settings(BaseSettings):
         env_prefix="SETTLEDIFF_",
         env_file=".env",
         env_ignore_empty=True,
+        hide_input_in_errors=True,
         extra="ignore",
         frozen=True,
     )
@@ -97,6 +98,14 @@ class Settings(BaseSettings):
     x402_resource_timeout_seconds: float = Field(default=10, gt=0, le=60)
     x402_signer_timeout_seconds: float = Field(default=30, gt=0, le=60)
     x402_rpc_timeout_seconds: float = Field(default=10, gt=0, le=60)
+    perflo_rpc_url: SecretStr | None = Field(default=None, repr=False)
+
+    @field_validator("perflo_rpc_url")
+    @classmethod
+    def validate_perflo_rpc_url(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None:
+            _safe_rpc_url(value.get_secret_value(), label="Perflo RPC")
+        return value
 
     @field_validator("otlp_endpoint")
     @classmethod
@@ -177,12 +186,12 @@ def _safe_signer_command(value: tuple[str, ...]) -> tuple[str, ...]:
     return value
 
 
-def _safe_rpc_url(value: str) -> str:
+def _safe_rpc_url(value: str, *, label: str = "x402 RPC") -> str:
     try:
         parsed = urlparse(value)
         host = parsed.hostname
     except ValueError as error:
-        raise ValueError("x402 RPC URL must be an eligible HTTP(S) URL") from error
+        raise ValueError(f"{label} URL must be an eligible HTTP(S) URL") from error
     if (
         host is None
         or parsed.username is not None
@@ -190,12 +199,12 @@ def _safe_rpc_url(value: str) -> str:
         or parsed.query
         or parsed.fragment
     ):
-        raise ValueError("x402 RPC URL must not contain credentials, query, or fragment")
+        raise ValueError(f"{label} URL must not contain credentials, query, or fragment")
     if parsed.scheme == "https":
         return value
     loopback = host.casefold() == "localhost"
     with suppress(ValueError):
         loopback = loopback or ip_address(host).is_loopback
     if parsed.scheme != "http" or not loopback:
-        raise ValueError("x402 RPC URL requires HTTPS unless it is loopback HTTP")
+        raise ValueError(f"{label} URL requires HTTPS unless it is loopback HTTP")
     return value

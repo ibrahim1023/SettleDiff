@@ -17,6 +17,7 @@ from settlediff.domain.models import (
     UtcDatetime,
 )
 from settlediff.domain.money import Money
+from settlediff.observers.perflo_chain import PerfloChainCorroboration
 
 
 class AdapterProtocolError(ValueError):
@@ -46,6 +47,7 @@ class AdapterEvidence(BaseModel):
     delivery_observation: DeliveryObservation | None = None
     source_contract: JsonValue | None = None
     settlement_profile: SettlementProfile | None = None
+    provider_chain_observation: PerfloChainCorroboration | None = None
 
 
 @runtime_checkable

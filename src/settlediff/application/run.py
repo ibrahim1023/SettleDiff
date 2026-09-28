@@ -249,6 +249,7 @@ class LiveEvidenceCollector:
         self._schema: EvidenceArtifact | None = None
         self._execution: EvidenceArtifact | None = None
         self._receipt: EvidenceArtifact | None = None
+        self._provider_chain: EvidenceArtifact | None = None
         self._activity: EvidenceArtifact | None = None
         self._activity_evidence_class = EvidenceClass.PROVIDER_ASSERTION
         self._context: EvidenceArtifact | None = None
@@ -276,6 +277,7 @@ class LiveEvidenceCollector:
             self._schema,
             self._execution,
             self._receipt,
+            self._provider_chain,
             self._activity,
             self._context,
             self._recovery,
@@ -478,6 +480,18 @@ class LiveEvidenceCollector:
                 collected_at=execution_evidence.observed_at or datetime.now(UTC),
                 redacted=False,
                 data=execution_evidence.provider_receipt,
+            )
+        if execution_evidence.provider_chain_observation is not None:
+            observation = execution_evidence.provider_chain_observation
+            self._provider_chain = redact_artifact(
+                EvidenceArtifact(
+                    artifact_id=f"{request.run_id}:provider_chain_observation",
+                    artifact_type=ArtifactType.CONTEXT_EVIDENCE,
+                    source="evm_rpc.provider_transaction",
+                    collected_at=observation.observed_at,
+                    redacted=False,
+                    data=cast(JsonValue, observation.model_dump(mode="json")),
+                )
             )
         self._delivery_observation = execution_evidence.delivery_observation
         self._transaction_reference = execution_evidence.transaction_reference

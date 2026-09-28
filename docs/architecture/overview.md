@@ -157,6 +157,12 @@ interpreted as the customer's transfer. Perflo v8 does not expose the exact pre-
 network, asset reference/decimals, atomic amount, recipient, and mandatory payer needed for
 a `SettlementProfile`. Current Perflo reports therefore record
 `SETTLEMENT_PROFILE_UNAVAILABLE`; provider-only success remains `UNVERIFIABLE`.
+When the user configures `SETTLEDIFF_PERFLO_RPC_URL`, an optional Base mainnet RPC
+checks only the chain ID and receipt for the in-memory provider-referenced hash.
+It records a separate redacted `evm_rpc.provider_transaction` artifact; a reverted receipt
+can contradict `finalized`, but a successful receipt never proves a transfer or a
+customer debit. Without configuration the artifact records `OBSERVER_NOT_CONFIGURED`.
+This corroboration never changes findings or the report verdict (ADR 0011).
 
 ### x402 adapter
 

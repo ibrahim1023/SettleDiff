@@ -81,6 +81,7 @@ def test_adapter_evidence_is_strict_and_preserves_operation_identity() -> None:
         "delivery_observation": None,
         "source_contract": None,
         "settlement_profile": None,
+        "provider_chain_observation": None,
     }
     with pytest.raises(ValidationError):
         AdapterEvidence.model_validate({**evidence.model_dump(), "invented": True})

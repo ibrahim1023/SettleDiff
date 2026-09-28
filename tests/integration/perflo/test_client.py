@@ -223,7 +223,7 @@ async def test_timeout_is_uncertain_and_consumed_capability_cannot_retry(tmp_pat
     request = paid_request()
     authorized = capability(request)
     counter = tmp_path / "count.txt"
-    timed_client = client("count-sleep", str(counter), timeout=0.05)
+    timed_client = client("count-sleep", str(counter), timeout=1)
     authorization = await authorized.consume(request, now=NOW)
 
     with pytest.raises(PerfloMutationUncertainError):

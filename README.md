@@ -308,6 +308,15 @@ provider trust domain: agreement between them is consistency, not independent le
 verification. Credit-funded results may carry a Base `settlement.txHash` for Perflo's own
 vendor settlement (`flow: "authorization"`); SettleDiff retains it for provider Activity
 correlation, never as evidence of the customer's transfer or independent settlement.
+
+Optionally set `SETTLEDIFF_PERFLO_RPC_URL` to a user-controlled HTTPS Base mainnet
+read-only RPC. After a Perflo call, SettleDiff checks the provider-referenced
+transaction's chain ID and receipt (at most two RPC requests). A reverted receipt
+contradicts a `finalized` Perflo claim; a successful receipt **does not** establish
+that the vendor was paid or that the customer was charged. The result appears as a
+separate redacted `evm_rpc.provider_transaction` artifact and in local CLI text, never in
+the settlement verdict or public report. Without an RPC setting, the artifact says
+`OBSERVER_NOT_CONFIGURED`. See [ADR 0011](docs/decisions/0011-perflo-provider-chain-corroboration.md).
 Persisted and ordinary report views remain masked. Environment flags never
 bypass confirmation, and live/paid calls are never part of the default test suite.
 

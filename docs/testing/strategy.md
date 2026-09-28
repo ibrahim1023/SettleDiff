@@ -173,8 +173,10 @@ shasum     edd240a39cae2e3873292def91a5e7d
 node       >=20
 ```
 
-No fixture is represented as captured live evidence, and no live Perflo v8 payment has
-been validated. The corpus covers exactly the surfaces the adapter exercises:
+Fixtures are synthetic and are not represented as captured live evidence. One
+owner-authorized Perflo v8 payment has been validated separately in the
+[PR 2 live validation](pr2-live-validation-2026-09-28.md). The corpus covers the
+surfaces the adapter exercises:
 
 - exact argv construction with no shell: `vendor <slug> --json`, `pay <slug>` with
   canonical-JSON `--input`/`--query`/`--sub-account` and a major-unit USD `--max-charge`,
@@ -192,6 +194,9 @@ been validated. The corpus covers exactly the surfaces the adapter exercises:
   transfer or independent settlement;
 - transaction-hash identity matching across execution and Activity, case-insensitive only
   for exact 32-byte `0x` hashes;
+- optional read-only Base RPC corroboration of the provider-referenced receipt: reverted
+  versus finalized is flagged, success cannot prove the customer's debit or a transfer,
+  and neither outcome can change an independent settlement finding;
 - vendor reinspection drift stopping before capability consumption and before `pay`;
 - one-shot mutation semantics: no second paid call after timeout or uncertain
   submission.

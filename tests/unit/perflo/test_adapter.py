@@ -18,6 +18,7 @@ from settlediff.application.auth import (
 )
 from settlediff.application.payment_rails import AdapterProtocolError
 from settlediff.domain.money import Money
+from settlediff.observers.perflo_chain import PerfloChainStatus
 from settlediff.perflo.adapter import PerfloAdapter, PerfloClientPort
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 
@@ -119,6 +120,41 @@ async def test_execute_extracts_result_and_separates_payment_and_transaction_ref
     assert evidence.payment_reference == "syn_tx_wallet_001"
     assert evidence.transaction_reference == TX_HASH
     assert cast(dict[str, JsonValue], evidence.data)["additiveField"] == {"preserved": True}
+
+
+@pytest.mark.asyncio
+async def test_credit_result_corroborates_external_receipt_without_verifying_customer_charge() -> (
+    None
+):
+    payload = _payload("pay_credit_authorization_finalized.json")
+    result = cast(dict[str, JsonValue], payload["result"])
+    settlement = cast(dict[str, JsonValue], result["settlement"])
+    tx_hash = cast(str, settlement["txHash"])
+
+    class FakeRpc:
+        async def call(self, method: str, params: tuple[JsonValue, ...]) -> JsonValue:
+            del params
+            return (
+                "0x2105"
+                if method == "eth_chainId"
+                else {"transactionHash": tx_hash, "status": "0x1", "logs": []}
+            )
+
+    class FakePerflo:
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            return _envelope(payload)
+
+    request = _request()
+    evidence = await PerfloAdapter(
+        cast(PerfloClientPort, FakePerflo()), rpc=FakeRpc()
+    ).execute_once(
+        await _authorization(request), request, Money(amount=Decimal("0.001"), unit="USD")
+    )
+
+    assert evidence.provider_chain_observation is not None
+    assert evidence.provider_chain_observation.status is PerfloChainStatus.RECEIPT_SUCCEEDED
+    assert evidence.provider_chain_observation.comparison == "NOT_COMPARABLE"
+    assert tx_hash not in evidence.provider_chain_observation.model_dump_json()
 
 
 @pytest.mark.asyncio
