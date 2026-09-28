@@ -5,7 +5,11 @@ import json
 import httpx
 import pytest
 
-from settlediff.x402.rpc import X402RpcClient, X402RpcError
+from settlediff.observers.evm_rpc import (
+    EvmRpcClient,
+    EvmRpcError,
+    EvmRpcProtocolError,
+)
 
 
 @pytest.mark.asyncio
@@ -27,7 +31,7 @@ async def test_rpc_client_uses_bounded_read_only_json_rpc_calls() -> None:
         transport=httpx.MockTransport(handler),
         base_url="https://rpc.example.invalid/base-sepolia/syn-key",
     ) as http:
-        client = X402RpcClient(http, max_requests=2, timeout_seconds=0.25)
+        client = EvmRpcClient(http, max_requests=2, timeout_seconds=0.25)
 
         assert await client.call("eth_chainId", ()) == "0x14a34"
         assert await client.call("eth_getTransactionReceipt", ("syn_hash",)) is None
@@ -52,17 +56,30 @@ async def test_rpc_client_rejects_calls_after_request_budget() -> None:
         transport=httpx.MockTransport(handler),
         base_url="https://rpc.example.invalid",
     ) as http:
-        client = X402RpcClient(http, max_requests=1)
+        client = EvmRpcClient(http, max_requests=1)
         await client.call("eth_chainId", ())
-        with pytest.raises(X402RpcError, match="request limit"):
+        with pytest.raises(EvmRpcError, match="request limit") as error:
             await client.call("eth_chainId", ())
+        assert type(error.value) is EvmRpcError
 
     assert calls == 1
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["oversized", "timeout", "status", "malformed", "rpc_error"])
-async def test_rpc_client_fails_safely_without_retry(mode: str) -> None:
+@pytest.mark.parametrize(
+    ("mode", "error_type"),
+    [
+        ("oversized", EvmRpcProtocolError),
+        ("timeout", EvmRpcError),
+        ("status", EvmRpcError),
+        ("malformed", EvmRpcProtocolError),
+        ("rpc_error", EvmRpcProtocolError),
+        ("non_object", EvmRpcProtocolError),
+    ],
+)
+async def test_rpc_client_fails_safely_without_retry(
+    mode: str, error_type: type[EvmRpcError]
+) -> None:
     calls = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -83,17 +100,20 @@ async def test_rpc_client_fails_safely_without_retry(mode: str) -> None:
                     "error": {"code": -1, "message": "synthetic secret"},
                 },
             )
+        if mode == "non_object":
+            return httpx.Response(200, json=[])
         return httpx.Response(200, content=b"{" + b" " * 2_000 + b"}")
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(handler),
         base_url="https://rpc.example.invalid",
     ) as http:
-        client = X402RpcClient(http, max_response_bytes=512)
-        with pytest.raises(X402RpcError) as error:
+        client = EvmRpcClient(http, max_response_bytes=512)
+        with pytest.raises(error_type) as error:
             await client.call("eth_chainId", ())
 
     assert calls == 1
+    assert type(error.value) is error_type
     assert "synthetic secret" not in str(error.value)
 
 
@@ -110,8 +130,8 @@ async def test_rpc_client_rejects_mutating_or_unknown_methods_before_request() -
         transport=httpx.MockTransport(handler),
         base_url="https://rpc.example.invalid",
     ) as http:
-        client = X402RpcClient(http)
-        with pytest.raises(X402RpcError, match="method"):
+        client = EvmRpcClient(http)
+        with pytest.raises(EvmRpcError, match="method"):
             await client.call("eth_sendRawTransaction", ("syn_payload",))
 
     assert calls == 0

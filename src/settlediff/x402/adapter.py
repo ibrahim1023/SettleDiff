@@ -23,12 +23,14 @@ from settlediff.domain.models import (
     DeliveryObservation,
     ExecutionRecord,
     ExpectedContract,
+    IndependentSettlementObservation,
     LedgerStatus,
     PaymentReceipt,
     SettlementProfile,
     SettlementStatus,
 )
 from settlediff.domain.money import Money
+from settlediff.observers.evm_transfer import ReadOnlyRpcPort
 from settlediff.x402.client import X402SubmissionUncertainError
 from settlediff.x402.client_contract import (
     ExternalSignerRequest,
@@ -44,7 +46,6 @@ from settlediff.x402.normalize import (
 )
 from settlediff.x402.parser import parse_payment_required
 from settlediff.x402.recovery import (
-    ReadOnlyRpcPort,
     X402SubmissionRecovery,
     recover_x402_submission,
     x402_recovery_evidence,
@@ -166,8 +167,8 @@ class X402Adapter:
             self._recovery = await recover_x402_submission(
                 result,
                 rpc,
-                requirement,
-                expected_payer=expected_payer,
+                self._preflight_profile,
+                scheme=requirement.scheme,
                 observed_at=observed.observed_at,
             )
             execution = _execution(
@@ -185,8 +186,8 @@ class X402Adapter:
         self._recovery = await recover_x402_submission(
             result,
             rpc,
-            returned_requirement,
-            expected_payer=expected_payer,
+            self._preflight_profile,
+            scheme=requirement.scheme,
             observed_at=observed.observed_at,
         )
         execution = _execution(
@@ -205,6 +206,9 @@ class X402Adapter:
             result.submission_state is SignerSubmissionState.SUBMISSION_UNCERTAIN,
             observation,
         )
+
+    def independent_settlement(self) -> IndependentSettlementObservation | None:
+        return self._recovery.independent_observation if self._recovery is not None else None
 
     async def collect_activity(self) -> AdapterEvidence:
         self._require_paid_ports()

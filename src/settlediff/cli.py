@@ -97,6 +97,7 @@ from settlediff.domain.money import Money
 from settlediff.domain.normalize import normalize_contract
 from settlediff.domain.redaction import mask_identifier
 from settlediff.domain.retry import RetryRunStateSnapshot, analyze_retry
+from settlediff.observers.evm_rpc import EvmRpcClient
 from settlediff.perflo.adapter import PerfloAdapter
 from settlediff.perflo.client import (
     PerfloClient,
@@ -117,7 +118,6 @@ from settlediff.x402.http import X402ResourceClient, X402ResourceResponse
 from settlediff.x402.models import PaymentRequired
 from settlediff.x402.normalize import normalize_payment_required
 from settlediff.x402.parser import X402ProtocolError, decode_payment_required
-from settlediff.x402.rpc import X402RpcClient
 from settlediff.x402.urls import is_safe_x402_target
 
 
@@ -487,7 +487,7 @@ def _build_payment_adapter(
             command=config.signer_command,
             timeout_seconds=config.signer_timeout_seconds,
         ),
-        X402RpcClient(
+        EvmRpcClient(
             rpc_http,
             timeout_seconds=config.rpc_timeout_seconds,
         ),
@@ -529,7 +529,7 @@ async def _doctor_x402(settings: Settings) -> tuple[str, str]:
         follow_redirects=False,
     )
     try:
-        chain_id = await X402RpcClient(
+        chain_id = await EvmRpcClient(
             rpc_http,
             max_requests=1,
             timeout_seconds=config.rpc_timeout_seconds,

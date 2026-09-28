@@ -19,19 +19,21 @@ from settlediff.application.auth import (
     PaymentTerms,
 )
 from settlediff.application.payment_rails import AdapterProtocolError
-from settlediff.domain.integrity import sha256_digest
 from settlediff.application.run import LiveEvidenceCollector
 from settlediff.contextdev.client import ContextEvidencePort
+from settlediff.domain.integrity import sha256_digest
 from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
     ExpectedContract,
+    IndependentSettlementStatus,
     LedgerStatus,
     SettlementProfile,
     SettlementStatus,
     Verdict,
 )
 from settlediff.domain.money import Money
+from settlediff.observers.evm_transfer import TRANSFER_TOPIC
 from settlediff.x402.adapter import X402Adapter
 from settlediff.x402.client_contract import (
     ExternalSignerRequest,
@@ -42,7 +44,6 @@ from settlediff.x402.client_contract import (
 from settlediff.x402.http import X402ResourceResponse
 from settlediff.x402.normalize import USDC_DECIMALS
 from settlediff.x402.parser import parse_payment_required
-from settlediff.x402.recovery import TRANSFER_TOPIC
 
 FIXTURE = Path(__file__).parents[2] / "contract/x402/fixtures/payment-required-v2.json"
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -474,6 +475,7 @@ async def test_inspect_carries_raw_source_contract() -> None:
     inspected = await adapter.inspect(request())
 
     assert inspected.source_contract == required_payload()
+    assert adapter.independent_settlement() is None
 
 
 @pytest.mark.asyncio
@@ -597,4 +599,9 @@ async def test_signer_payer_mismatch_is_uncertain_and_uses_authorized_payer() ->
     assert executed.provider_receipt is None
     assert cast(dict[str, JsonValue], executed.data)["settlement_status"] == "unknown"
     assert cast(dict[str, JsonValue], recovered.data)["status"] == "confirmed"
+    independent = adapter.independent_settlement()
+    assert independent is not None
+    assert independent.status is IndependentSettlementStatus.CONFIRMED
+    assert independent.profile is not None
+    assert independent.profile.payer == PAYER
     assert rpc.calls == ["eth_chainId", "eth_getTransactionReceipt"]
