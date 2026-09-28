@@ -148,6 +148,7 @@ def _evidence(
 ) -> AdapterEvidence:
     return AdapterEvidence(
         adapter_id="perflo",
+        protocol_version="8",
         operation=operation,
         source=source,
         artifact_type=artifact_type,
@@ -179,8 +180,6 @@ def _settlement_reference(data: JsonValue) -> str | None:
     if not isinstance(data, dict):
         return None
     result = cast(dict[str, JsonValue], data)
-    if result.get("chargedTo") == "credit":
-        return None
     settlement = result.get("settlement")
     if not isinstance(settlement, dict):
         return None

@@ -41,14 +41,19 @@ from settlediff.contextdev.client import ContextDevClient
 from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
+    CheckStatus,
     EvidenceArtifact,
     ExplanationRecord,
     ExplanationSource,
+    IndependentSettlementStatus,
+    RetrySafety,
+    SettlementComparisonStatus,
     SettlementProfile,
+    SettlementStatus,
 )
 from settlediff.domain.money import Money
 from settlediff.perflo.adapter import PerfloAdapter, PerfloClientPort
-from settlediff.perflo.client import PerfloCliVersion, PerfloVersionError
+from settlediff.perflo.client import PerfloClient, PerfloCliVersion, PerfloVersionError
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 from settlediff.storage.sqlite import SQLiteReportRepository
 from settlediff.x402.adapter import X402Adapter
@@ -2479,3 +2484,83 @@ def test_show_legacy_report_omits_settlement_provenance(tmp_path: Path) -> None:
     assert "Independent settlement:" not in result.stdout
     assert "Provider comparison:" not in result.stdout
     assert "Provider Activity:" not in result.stdout
+
+
+def test_perflo_credit_authorization_live_shape_builds_provider_only_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "perflo-credit.sqlite3"
+    command_log = tmp_path / "perflo-commands.jsonl"
+    fake = Path("tests/integration/perflo/fake_perflo.py")
+    client_type = PerfloClient
+
+    def client_factory(**_kwargs: object) -> PerfloClient:
+        return client_type(
+            command=(sys.executable, str(fake), "live-credit", str(command_log)),
+            timeout_seconds=5,
+        )
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", client_factory)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--rail",
+            "perflo",
+            "--slug",
+            "synthetic-news",
+            "--query",
+            '{"topic":"synthetic"}',
+            "--budget",
+            "0.001",
+            "--database",
+            str(database),
+        ],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "UNVERIFIABLE" in result.stdout
+    assert "Version: 8" in result.stdout
+    repository = SQLiteReportRepository(database)
+    records = repository.records()
+    assert len(records) == 1
+    report = records[0].report
+    assert report is not None
+    assert report.execution is not None
+    assert report.execution.settlement_status is SettlementStatus.SETTLED
+    assert report.execution.transaction_hash == "0x1111…1111"
+    assert report.provider_activity is not None
+    assert report.provider_activity.ledger_id == "syn_activity_posted_001"
+    assert report.provider_activity.transaction_id is None
+    assert report.provider_activity.transaction_hash == report.execution.transaction_hash
+    assert report.independent_settlement is not None
+    assert report.independent_settlement.status is IndependentSettlementStatus.UNAVAILABLE
+    assert report.independent_settlement.diagnostic == "SETTLEMENT_PROFILE_UNAVAILABLE"
+    assert report.settlement_comparison is not None
+    assert report.settlement_comparison.status is SettlementComparisonStatus.NOT_COMPARABLE
+    findings = {finding.check_id: finding for finding in report.findings}
+    assert findings["settlement"].status is CheckStatus.UNKNOWN
+    assert findings["activity_persistence"].status is CheckStatus.PASS
+    assert report.retry is not None
+    assert report.retry.safety is RetrySafety.REQUIRES_HUMAN_DECISION
+    repository.close()
+    calls = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert calls == [
+        ["--version"],
+        ["vendor", "synthetic-news", "--json"],
+        ["vendor", "synthetic-news", "--json"],
+        [
+            "pay",
+            "synthetic-news",
+            "--query",
+            '{"topic":"synthetic"}',
+            "--max-charge",
+            "0.001",
+            "--json",
+        ],
+        ["activity", "--json"],
+    ]

@@ -84,10 +84,11 @@ def normalize_execution(raw: EvidenceArtifact) -> ExecutionRecord:
     raw_data = _artifact_object(raw, ArtifactType.EXECUTION)
     data = _merge_upstream_response(raw_data, raw)
     data = _merge_nested(data, raw, "upstream", {"httpStatus": "upstream_http_status"})
-    settlement_fields = {"status": "settlement_status"}
-    if data.get("chargedTo") != "credit":
-        settlement_fields["txHash"] = "transaction_hash"
-        settlement_fields["chain"] = "chain"
+    settlement_fields = {
+        "status": "settlement_status",
+        "txHash": "transaction_hash",
+        "chain": "chain",
+    }
     data = _merge_nested(data, raw, "settlement", settlement_fields)
     notes = _stored_notes(data, raw)
     return ExecutionRecord(
@@ -494,8 +495,15 @@ def _settlement_status(
         return SettlementStatus.UNKNOWN
     if not isinstance(value, str):
         raise ArtifactParseError(raw.artifact_id, "data.settlement_status", "string or null")
+    normalized = value.lower()
+    aliases = {
+        "finalized": SettlementStatus.SETTLED,
+        "submitted": SettlementStatus.PENDING,
+    }
+    if normalized in aliases:
+        return aliases[normalized]
     try:
-        return SettlementStatus(value.lower())
+        return SettlementStatus(normalized)
     except ValueError:
         notes.append("unknown settlement status at data.settlement_status")
         return SettlementStatus.UNKNOWN

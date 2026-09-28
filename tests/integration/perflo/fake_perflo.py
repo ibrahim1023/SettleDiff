@@ -39,6 +39,47 @@ def main() -> None:
         count = int(counter.read_text()) if counter.exists() else 0
         counter.write_text(str(count + 1))
         time.sleep(2)
+    elif mode == "live-credit":
+        log = Path(args.pop(0))
+        with log.open("a") as handle:
+            handle.write(json.dumps(args) + "\n")
+        fixtures = Path(__file__).parents[2] / "contract" / "perflo"
+        if args == ["--version"]:
+            sys.stdout.write("8.0.0\n")
+        elif args[:1] == ["vendor"]:
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "vendor": {
+                            "slug": "synthetic-news",
+                            "price": {"amount": "0.001", "currency": "USD"},
+                            "maxChargePerCall": {"amount": "0.001", "currency": "USD"},
+                            "payable": True,
+                            "schemaConfidence": "high",
+                            "input": {
+                                "fields": [
+                                    {
+                                        "name": "topic",
+                                        "in": "query",
+                                        "type": "string",
+                                        "required": True,
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                )
+            )
+        elif args[:2] == ["pay", "synthetic-news"]:
+            sys.stdout.write((fixtures / "pay_credit_authorization_finalized.json").read_text())
+        elif args == ["activity", "--json"]:
+            payload = json.loads((fixtures / "activity_credit_authorization.json").read_text())
+            payload["agent"]["rows"] = payload["agent"]["rows"][-1:]
+            sys.stdout.write(json.dumps(payload))
+        else:
+            sys.stderr.write("unexpected live-credit arguments")
+            raise SystemExit(1)
     elif mode in {"refusal", "uncertain", "unknown-certainty"}:
         error: dict[str, object] = {
             "code": "GUARDRAIL_DENIED" if mode == "refusal" else "UPSTREAM_UNAVAILABLE",

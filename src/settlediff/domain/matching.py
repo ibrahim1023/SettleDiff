@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
 
 from settlediff.domain.models import ExecutionRecord, LedgerRecord
+
+_TX_HASH_PATTERN = re.compile(r"^0x[0-9a-fA-F]{64}$")
 
 
 class MatchStatus(StrEnum):
@@ -113,8 +116,17 @@ def _matching_transaction_hash(
     if execution.transaction_hash is None:
         return ()
     return tuple(
-        record for record in candidates if record.transaction_hash == execution.transaction_hash
+        record
+        for record in candidates
+        if record.transaction_hash is not None
+        and _same_transaction_hash(record.transaction_hash, execution.transaction_hash)
     )
+
+
+def _same_transaction_hash(candidate: str, execution: str) -> bool:
+    if _TX_HASH_PATTERN.fullmatch(candidate) and _TX_HASH_PATTERN.fullmatch(execution):
+        return candidate.lower() == execution.lower()
+    return candidate == execution
 
 
 def _strong_result(strategy: MatchStrategy, matches: tuple[LedgerRecord, ...]) -> MatchResult:
