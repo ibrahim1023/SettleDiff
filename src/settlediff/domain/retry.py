@@ -195,13 +195,13 @@ def _report_signals(report: MachineReport | None, run_id: str) -> list[_Signal]:
         or execution.transaction_hash
     ):
         attempted = True
-    ledger = report.ledger
-    if ledger is not None and (
-        ledger.status in {LedgerStatus.CONFIRMED, LedgerStatus.FAILED, LedgerStatus.PENDING}
-        or ledger.transaction_id
-        or ledger.transaction_hash
-    ):
-        attempted = True
+    for ledger in (report.ledger, report.provider_activity):
+        if ledger is not None and (
+            ledger.status in {LedgerStatus.CONFIRMED, LedgerStatus.FAILED, LedgerStatus.PENDING}
+            or ledger.transaction_id
+            or ledger.transaction_hash
+        ):
+            attempted = True
     if attempted:
         return [(_HUMAN, PROVIDER_PAYMENT_ATTEMPT, f"{run_id}:report")]
     return []

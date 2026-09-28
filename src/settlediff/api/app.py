@@ -87,7 +87,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
     def diagnostics() -> str:
         return templates.get_template("diagnostics.html").render(
             version=__version__,
-            report_schema=2,
+            report_schema=4,
             database_schema=DATABASE_SCHEMA_VERSION,
             bundle_schema=3,
             contextdev_api_path=CONTEXTDEV_API_PATH,
@@ -217,6 +217,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
             recovery_artifact=_recovery_artifact(repository.artifacts(run_id)),
             context_artifact=_context_artifact(repository.artifacts(run_id)),
             investigation=investigate_purchase(repository, run_id),
+            settlement_observer_source=_settlement_observer_source(report),
         )
 
     app.get("/runs/{run_id}", response_class=HTMLResponse)(run_detail)
@@ -280,6 +281,17 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
     app.get("/runs/{run_id}/artifacts", response_class=HTMLResponse)(run_artifacts)
 
     return app
+
+
+def _settlement_observer_source(report: MachineReport) -> str | None:
+    observation = report.independent_settlement
+    if observation is None:
+        return None
+    return (
+        _display(observation.source, identifier=True)
+        if "://" in observation.source
+        else observation.source
+    )
 
 
 def _artifact_anchor(artifact_id: str) -> str:

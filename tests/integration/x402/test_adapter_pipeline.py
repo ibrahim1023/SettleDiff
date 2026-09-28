@@ -22,11 +22,11 @@ from settlediff.contextdev.client import ContextEvidencePort
 from settlediff.domain.models import LedgerStatus, RetrySafety, SettlementStatus, Verdict
 from settlediff.domain.money import Money
 from settlediff.domain.retry import CONFIRMED_TRANSFER
+from settlediff.observers.evm_rpc import EvmRpcClient
+from settlediff.observers.evm_transfer import TRANSFER_TOPIC
 from settlediff.x402.adapter import X402Adapter
 from settlediff.x402.client import X402ExternalClient
 from settlediff.x402.http import X402ResourceClient
-from settlediff.x402.recovery import TRANSFER_TOPIC
-from settlediff.x402.rpc import X402RpcClient
 
 FIXTURE = Path(__file__).parents[2] / "contract/x402/fixtures/payment-required-v2.json"
 SIGNER = Path(__file__).with_name("fake_x402_signer.py")
@@ -116,7 +116,8 @@ async def test_offline_pipeline_composes_http_signer_rpc_and_canonical_verifier(
                     str(challenge_path),
                 )
             ),
-            X402RpcClient(rpc_http),
+            EvmRpcClient(rpc_http),
+            expected_payer=PAYER,
         )
         collector = LiveEvidenceCollector(adapter, cast(ContextEvidencePort, object()))
         request = PaidExecutionRequest(
@@ -138,7 +139,7 @@ async def test_offline_pipeline_composes_http_signer_rpc_and_canonical_verifier(
     assert count_path.read_text() == "1"
     assert rpc_methods == ["eth_chainId", "eth_getTransactionReceipt"]
     assert report.adapter_id == "x402"
-    assert report.schema_version == 3
+    assert report.schema_version == 4
     assert report.verdict is Verdict.VERIFIED
     assert report.delivery is not None
     assert report.delivery.status.value == "SATISFIED"

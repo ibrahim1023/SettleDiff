@@ -29,6 +29,7 @@ Review invariants:
 - no I/O or agent imports in domain code;
 - `Decimal` and explicit units for money;
 - missing/unknown values remain explicit;
+- schema-4 settlement comes only from `IndependentSettlementObservation`, never provider Activity or status;
 - finding order does not affect verdict;
 - new failure states cannot improve verdict severity.
 
@@ -47,6 +48,15 @@ Before any Perflo execution change:
    the authorized budget;
 6. confirm tests use a fake executable or captured envelopes;
 7. keep live/paid markers excluded.
+
+Before any x402 execution or settlement-observer change:
+
+1. prove the signer metadata probe runs before authorization and supplies the mandatory payer;
+2. prove `PaymentTerms` schema 4 binds the canonical settlement-profile digest;
+3. prove the second challenge rebuilds the same profile before signer launch and drift prevents launch;
+4. run `tests/unit/observers/` and `tests/integration/observers/` to cover exact-transfer dimensions, bounded RPC classification, and all four observation statuses;
+5. prove provider Activity and transaction status cannot establish settlement, while retry analysis still treats them as attempt evidence;
+6. prove the public projection excludes observer source, transaction reference, profile, ledgers, provider Activity, and evidence IDs.
 
 No paid test runs without explicit user authorization in the current conversation, the paid environment flag, a test budget, and an interactive confirmation.
 

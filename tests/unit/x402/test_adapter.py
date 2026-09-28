@@ -21,14 +21,20 @@ from settlediff.application.auth import (
 from settlediff.application.payment_rails import AdapterProtocolError
 from settlediff.application.run import LiveEvidenceCollector
 from settlediff.contextdev.client import ContextEvidencePort
+from settlediff.domain.integrity import sha256_digest
 from settlediff.domain.models import (
     ArtifactType,
+    AssetIdentity,
+    EvidenceClass,
     ExpectedContract,
+    IndependentSettlementStatus,
     LedgerStatus,
+    SettlementProfile,
     SettlementStatus,
     Verdict,
 )
 from settlediff.domain.money import Money
+from settlediff.observers.evm_transfer import TRANSFER_TOPIC
 from settlediff.x402.adapter import X402Adapter
 from settlediff.x402.client_contract import (
     ExternalSignerRequest,
@@ -37,8 +43,8 @@ from settlediff.x402.client_contract import (
     SignerSubmissionState,
 )
 from settlediff.x402.http import X402ResourceResponse
+from settlediff.x402.normalize import USDC_DECIMALS
 from settlediff.x402.parser import parse_payment_required
-from settlediff.x402.recovery import TRANSFER_TOPIC
 
 FIXTURE = Path(__file__).parents[2] / "contract/x402/fixtures/payment-required-v2.json"
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -171,10 +177,34 @@ def signer_result(
     )
 
 
-def payment_terms(contract: ExpectedContract, value: PaidExecutionRequest) -> PaymentTerms:
+def settlement_profile(payer: str = PAYER) -> SettlementProfile:
+    selected = parse_payment_required(required_header()).selected_requirement()
+    return SettlementProfile(
+        network=selected.network,
+        chain_id=int(selected.network.split(":", 1)[1]),
+        asset_identity=AssetIdentity(
+            symbol="USDC",
+            network=selected.network,
+            reference=selected.asset,
+            decimals=USDC_DECIMALS,
+        ),
+        atomic_amount=int(selected.amount),
+        recipient=selected.pay_to,
+        payer=payer,
+    )
+
+
+def payment_terms(
+    contract: ExpectedContract,
+    value: PaidExecutionRequest,
+    profile: SettlementProfile | None = None,
+) -> PaymentTerms:
     assert contract.price is not None
+    profile = profile if profile is not None else settlement_profile()
     return PaymentTerms(
-        schema_version=2,
+        schema_version=4,
+        payer=profile.payer,
+        settlement_profile_digest=sha256_digest(profile.model_dump(mode="json")),
         adapter_id="x402",
         protocol_version="2",
         scheme=contract.scheme,
@@ -210,7 +240,7 @@ async def test_adapter_revalidates_terms_and_keeps_provider_and_independent_evid
     resource = FakeResource(response(required_header()), response(required_header()))
     signer = FakeSigner(signer_result())
     rpc = FakeRpc(receipt())
-    adapter = X402Adapter(resource, signer, rpc)
+    adapter = X402Adapter(resource, signer, rpc, expected_payer=PAYER)
     value = request()
 
     inspected = await adapter.inspect(value)
@@ -244,6 +274,7 @@ async def test_adapter_revalidates_terms_and_keeps_provider_and_independent_evid
     assert executed.transaction_reference == TX_HASH
     assert executed.submission_uncertain is False
     assert activity.artifact_type is ArtifactType.ACTIVITY
+    assert activity.evidence_class is EvidenceClass.INDEPENDENT_OBSERVATION
     records = cast(list[JsonValue], activity.data)
     assert len(records) == 1
     assert cast(dict[str, JsonValue], records[0])["status"] == "confirmed"
@@ -257,12 +288,12 @@ async def test_changed_preflight_terms_fail_before_signer_invocation() -> None:
     cast(dict[str, JsonValue], accepts[0])["payTo"] = "0x4444444444444444444444444444444444444444"
     resource = FakeResource(response(required_header()), response(required_header(changed)))
     signer = FakeSigner(signer_result())
-    adapter = X402Adapter(resource, signer, FakeRpc(receipt()))
+    adapter = X402Adapter(resource, signer, FakeRpc(receipt()), expected_payer=PAYER)
     value = request()
     inspected = await adapter.inspect(value)
     contract = ExpectedContract.model_validate_json(json.dumps(inspected.data))
 
-    with pytest.raises(ValueError, match="terms changed"):
+    with pytest.raises(ValueError, match="changed"):
         await adapter.execute_once(
             await authorization(contract, value), value, cast(Money, contract.price)
         )
@@ -277,12 +308,12 @@ async def test_changed_response_contract_fails_before_signer_invocation() -> Non
     resource_metadata["mimeType"] = "text/plain"
     resource = FakeResource(response(required_header()), response(required_header(changed)))
     signer = FakeSigner(signer_result())
-    adapter = X402Adapter(resource, signer, FakeRpc(receipt()))
+    adapter = X402Adapter(resource, signer, FakeRpc(receipt()), expected_payer=PAYER)
     value = request()
     inspected = await adapter.inspect(value)
     contract = ExpectedContract.model_validate_json(json.dumps(inspected.data))
 
-    with pytest.raises(ValueError, match="terms changed"):
+    with pytest.raises(ValueError, match="changed"):
         await adapter.execute_once(
             await authorization(contract, value), value, cast(Money, contract.price)
         )
@@ -297,7 +328,7 @@ async def test_signer_returned_challenge_drift_is_submission_uncertain() -> None
     cast(dict[str, JsonValue], accepts[0])["payTo"] = "0x4444444444444444444444444444444444444444"
     resource = FakeResource(response(required_header()), response(required_header()))
     signer = FakeSigner(signer_result(challenge=changed))
-    adapter = X402Adapter(resource, signer, FakeRpc(receipt()))
+    adapter = X402Adapter(resource, signer, FakeRpc(receipt()), expected_payer=PAYER)
     value = request()
     contract = ExpectedContract.model_validate_json(json.dumps((await adapter.inspect(value)).data))
 
@@ -319,7 +350,7 @@ async def test_provider_and_signer_payer_mismatch_is_submission_uncertain() -> N
         update={"payer": "0x4444444444444444444444444444444444444444"}
     )
     signer = FakeSigner(result)
-    adapter = X402Adapter(resource, signer, FakeRpc(receipt()))
+    adapter = X402Adapter(resource, signer, FakeRpc(receipt()), expected_payer=PAYER)
     value = request()
     contract = ExpectedContract.model_validate_json(json.dumps((await adapter.inspect(value)).data))
 
@@ -336,7 +367,7 @@ async def test_provider_and_signer_payer_mismatch_is_submission_uncertain() -> N
 async def test_uncertain_submission_exposes_read_only_recovery_without_resubmission() -> None:
     resource = FakeResource(response(required_header()), response(required_header()))
     signer = FakeSigner(signer_result(state=SignerSubmissionState.SUBMISSION_UNCERTAIN))
-    adapter = X402Adapter(resource, signer, FakeRpc(None))
+    adapter = X402Adapter(resource, signer, FakeRpc(None), expected_payer=PAYER)
     value = request()
     contract = ExpectedContract.model_validate_json(json.dumps((await adapter.inspect(value)).data))
 
@@ -358,7 +389,7 @@ async def test_missing_service_response_maps_to_unknown_execution_evidence() -> 
     )
     resource = FakeResource(response(required_header()), response(required_header()))
     signer = FakeSigner(result)
-    adapter = X402Adapter(resource, signer, FakeRpc(None))
+    adapter = X402Adapter(resource, signer, FakeRpc(None), expected_payer=PAYER)
     value = request()
     contract = ExpectedContract.model_validate_json(json.dumps((await adapter.inspect(value)).data))
 
@@ -378,6 +409,7 @@ async def test_collector_keeps_provider_receipt_separate_from_independent_ledger
         FakeResource(response(required_header()), response(required_header())),
         FakeSigner(signer_result()),
         FakeRpc(receipt()),
+        expected_payer=PAYER,
     )
     collector = LiveEvidenceCollector(adapter, cast(ContextEvidencePort, object()))
     value = request()
@@ -415,7 +447,9 @@ async def test_unsupported_bazaar_declaration_never_blocks_inspection_or_authori
         }
     }
     resource = FakeResource(response(required_header(payload)))
-    adapter = X402Adapter(resource, FakeSigner(signer_result()), FakeRpc(None))
+    adapter = X402Adapter(
+        resource, FakeSigner(signer_result()), FakeRpc(None), expected_payer=PAYER
+    )
     value = request()
 
     inspected = await adapter.inspect(value)
@@ -434,12 +468,16 @@ async def test_unsupported_bazaar_declaration_never_blocks_inspection_or_authori
 @pytest.mark.asyncio
 async def test_inspect_carries_raw_source_contract() -> None:
     adapter = X402Adapter(
-        FakeResource(response(required_header())), FakeSigner(signer_result()), FakeRpc(None)
+        FakeResource(response(required_header())),
+        FakeSigner(signer_result()),
+        FakeRpc(None),
+        expected_payer=PAYER,
     )
 
     inspected = await adapter.inspect(request())
 
     assert inspected.source_contract == required_payload()
+    assert adapter.independent_settlement() is None
 
 
 @pytest.mark.asyncio
@@ -482,3 +520,90 @@ async def test_inspection_only_execute_fails_before_authorization() -> None:
             value,
             Money(amount=Decimal(1), unit="USDC"),
         )
+
+
+@pytest.mark.asyncio
+async def test_paid_inspect_emits_exact_settlement_profile() -> None:
+    adapter = X402Adapter(
+        FakeResource(response(required_header())),
+        FakeSigner(signer_result()),
+        FakeRpc(None),
+        expected_payer=PAYER,
+    )
+
+    inspected = await adapter.inspect(request())
+
+    expected = settlement_profile()
+    assert inspected.settlement_profile == expected
+    assert inspected.settlement_profile is not None
+    assert inspected.settlement_profile.payer == PAYER
+    assert inspected.settlement_profile.recipient == expected.recipient
+    assert inspected.settlement_profile.atomic_amount == 1000
+    assert inspected.settlement_profile.chain_id == 84532
+
+
+@pytest.mark.asyncio
+async def test_paid_adapter_requires_expected_payer_before_signer() -> None:
+    resource = FakeResource(response(required_header()), response(required_header()))
+    signer = FakeSigner(signer_result())
+    adapter = X402Adapter(resource, signer, FakeRpc(receipt()))
+    value = request()
+    inspected = await adapter.inspect(value)
+    assert inspected.settlement_profile is None
+    contract = ExpectedContract.model_validate_json(json.dumps(inspected.data))
+
+    with pytest.raises(AdapterProtocolError, match="inspection-only"):
+        await adapter.execute_once(
+            await authorization(contract, value), value, cast(Money, contract.price)
+        )
+
+    assert signer.requests == []
+
+
+@pytest.mark.asyncio
+async def test_changed_challenge_settlement_profile_fails_before_signer() -> None:
+    changed = deepcopy(required_payload())
+    accepts = cast(list[JsonValue], changed["accepts"])
+    cast(dict[str, JsonValue], accepts[0])["amount"] = "2000"
+    resource = FakeResource(response(required_header()), response(required_header(changed)))
+    signer = FakeSigner(signer_result())
+    adapter = X402Adapter(resource, signer, FakeRpc(receipt()), expected_payer=PAYER)
+    value = request()
+    inspected = await adapter.inspect(value)
+    contract = ExpectedContract.model_validate_json(json.dumps(inspected.data))
+
+    with pytest.raises(AdapterProtocolError, match="settlement profile changed"):
+        await adapter.execute_once(
+            await authorization(contract, value), value, cast(Money, contract.price)
+        )
+
+    assert signer.requests == []
+
+
+@pytest.mark.asyncio
+async def test_signer_payer_mismatch_is_uncertain_and_uses_authorized_payer() -> None:
+    resource = FakeResource(response(required_header()), response(required_header()))
+    result = signer_result().model_copy(
+        update={"payer": "0x4444444444444444444444444444444444444444"}
+    )
+    signer = FakeSigner(result)
+    rpc = FakeRpc(receipt())
+    adapter = X402Adapter(resource, signer, rpc, expected_payer=PAYER)
+    value = request()
+    contract = ExpectedContract.model_validate_json(json.dumps((await adapter.inspect(value)).data))
+
+    executed = await adapter.execute_once(
+        await authorization(contract, value), value, cast(Money, contract.price)
+    )
+    recovered = await adapter.collect_transaction(TX_HASH)
+
+    assert executed.submission_uncertain is True
+    assert executed.provider_receipt is None
+    assert cast(dict[str, JsonValue], executed.data)["settlement_status"] == "unknown"
+    assert cast(dict[str, JsonValue], recovered.data)["status"] == "confirmed"
+    independent = adapter.independent_settlement()
+    assert independent is not None
+    assert independent.status is IndependentSettlementStatus.CONFIRMED
+    assert independent.profile is not None
+    assert independent.profile.payer == PAYER
+    assert rpc.calls == ["eth_chainId", "eth_getTransactionReceipt"]

@@ -15,6 +15,7 @@ from settlediff.application import publication
 from settlediff.application.publication import (
     PublicationError,
     PublicManifest,
+    PublicReport,
     build_public_report,
     build_publication,
     render_public_report,
@@ -750,3 +751,69 @@ def test_restore_parent_fsync_failure_reports_restored_truthfully(
 
     assert (output / "stale.txt").read_text() == "original-bytes"
     assert not any(".backup." in p.name for p in output.parent.iterdir())
+
+
+def test_schema4_public_report_exposes_only_settlement_allowlist(tmp_path: Path) -> None:
+    repository, report = _persisted(tmp_path, "x402-independent-confirmed")
+
+    public = build_public_report(report, repository.timeline(report.run_id))
+    payload = public.model_dump(mode="json")
+
+    assert public.schema_version == 2
+    assert PublicReport.model_validate_json(public.model_dump_json(), strict=True) == public
+    assert public.settlement is not None
+    assert set(payload["settlement"]) == {
+        "schema_version",
+        "independent_status",
+        "independent_diagnostic",
+        "comparison_status",
+        "comparison_diagnostic",
+        "chain_verified",
+        "asset_verified",
+        "amount_verified",
+        "recipient_verified",
+        "payer_verified",
+        "payer_policy",
+    }
+    assert payload["settlement"]["independent_status"] == "CONFIRMED"
+    assert payload["settlement"]["comparison_status"] == "MATCH"
+    serialized = json.dumps(payload)
+    for excluded in (
+        "observer_evidence_ids",
+        "provider_evidence_ids",
+        "transaction_reference",
+        "profile",
+        "provider_activity",
+        "evm_rpc",
+        "syn_x402_payer",
+        "syn_x402_recipient",
+        "syn_usdc_base_sepolia",
+    ):
+        assert excluded not in serialized
+    html = render_public_report(public).decode()
+    assert "Settlement provenance" in html
+    assert "EXACT_TRANSFER_CONFIRMED" in html
+    assert "PROVIDER_SETTLEMENT_CONFIRMED" in html
+    assert "Payer policy" in html
+    repository.close()
+
+
+def test_legacy_public_report_remains_version1_without_settlement(tmp_path: Path) -> None:
+    repository, report = _persisted(tmp_path, "clean-success")
+
+    public = build_public_report(report, repository.timeline(report.run_id))
+    payload = public.model_dump(mode="json")
+
+    assert public.schema_version == 1
+    assert "settlement" not in payload
+    repository.close()
+
+
+def test_public_report_version_validates_settlement_presence() -> None:
+    report = replay_fixture(FIXTURES / "clean-success")
+    payload = build_public_report(report, ()).model_dump()
+
+    with pytest.raises(ValidationError, match="version 1"):
+        PublicReport.model_validate(payload | {"settlement": None})
+    with pytest.raises(ValidationError, match="version 2"):
+        PublicReport.model_validate(payload | {"schema_version": 2})

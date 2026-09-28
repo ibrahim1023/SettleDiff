@@ -79,6 +79,22 @@
         </dl>
       </section>
 
+      {% if report.settlement is not none %}
+      <section class="panel">
+        <h2>Settlement provenance</h2>
+        <dl>
+          <dt>Independent settlement</dt><dd>{{ report.settlement.independent_status.value }} (<code>{{ report.settlement.independent_diagnostic }}</code>)</dd>
+          <dt>Provider comparison</dt><dd>{{ report.settlement.comparison_status.value }} (<code>{{ report.settlement.comparison_diagnostic }}</code>)</dd>
+          <dt>Chain</dt><dd>{{ "Verified" if report.settlement.chain_verified else "Not verified" }}</dd>
+          <dt>Asset</dt><dd>{{ "Verified" if report.settlement.asset_verified else "Not verified" }}</dd>
+          <dt>Amount</dt><dd>{{ "Verified" if report.settlement.amount_verified else "Not verified" }}</dd>
+          <dt>Recipient</dt><dd>{{ "Verified" if report.settlement.recipient_verified else "Not verified" }}</dd>
+          <dt>Payer</dt><dd>{{ "Verified" if report.settlement.payer_verified else "Not verified" }}</dd>
+          <dt>Payer policy</dt><dd>{{ report.settlement.payer_policy.value }}</dd>
+        </dl>
+      </section>
+      {% endif %}
+
       <section class="panel">
         <h2>Findings</h2>
         <div class="table-wrap">

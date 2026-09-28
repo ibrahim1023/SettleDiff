@@ -20,7 +20,7 @@ class AuthorizationError(ValueError):
 class PaymentTerms(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
-    schema_version: Literal[1, 2, 3] = 1
+    schema_version: Literal[1, 2, 3, 4] = 1
     adapter_id: NonEmptyStr
     protocol_version: NonEmptyStr | None
     scheme: NonEmptyStr | None
@@ -45,6 +45,10 @@ class PaymentTerms(BaseModel):
     )
     maximum_charge: Money | None = Field(default=None, exclude_if=lambda value: value is None)
     required_max_charge: Money | None = Field(default=None, exclude_if=lambda value: value is None)
+    payer: NonEmptyStr | None = Field(default=None, exclude_if=lambda value: value is None)
+    settlement_profile_digest: Sha256Digest | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @property
     def digest(self) -> Sha256Digest:
@@ -59,14 +63,28 @@ class PaymentTerms(BaseModel):
             "required_max_charge",
         }
         http_fields = {"resource_url", "method", "body_digest"}
-        if self.schema_version <= 2:
+        payer_fields = {"payer", "settlement_profile_digest"}
+        if self.schema_version in (1, 2):
             if catalog_fields & self.model_fields_set:
                 raise ValueError("catalog payment terms fields require schema version 3")
+            if payer_fields & self.model_fields_set:
+                raise ValueError("settlement payer fields require schema version 4")
             if self.resource_url is None or self.method is None or self.body_digest is None:
                 raise ValueError("HTTP payment terms require resource_url, method, and body_digest")
+        elif self.schema_version == 4:
+            if catalog_fields & self.model_fields_set:
+                raise ValueError("HTTP payment terms cannot contain catalog fields")
+            if self.resource_url is None or self.method is None or self.body_digest is None:
+                raise ValueError("HTTP payment terms require resource_url, method, and body_digest")
+            if self.payer is None or self.settlement_profile_digest is None:
+                raise ValueError(
+                    "schema version 4 payment terms require payer and settlement_profile_digest"
+                )
         else:
-            if http_fields & self.model_fields_set:
-                raise ValueError("catalog payment terms cannot contain HTTP resource fields")
+            if (http_fields | payer_fields) & self.model_fields_set:
+                raise ValueError(
+                    "catalog payment terms cannot contain HTTP or settlement payer fields"
+                )
             if "response_contract_digest" in self.model_fields_set:
                 raise ValueError("catalog payment terms cannot contain response_contract_digest")
             if (
@@ -238,7 +256,7 @@ class PaidExecutionCapability:
         self._body_digest = self.body_digest_for(request.body)
         self._budget = request.budget
         if payment_terms is not None:
-            if payment_terms.schema_version <= 2:
+            if payment_terms.schema_version in (1, 2, 4):
                 terms_match = (
                     payment_terms.resource_url == request.target
                     and payment_terms.method == request.method

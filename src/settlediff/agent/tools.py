@@ -65,9 +65,14 @@ def build_investigation_dependencies(
 
     async def get_activity() -> EvidenceSummary:
         artifact = by_source.get("perflo.activity.agent")
-        ledger = report.ledger
+        schema4 = report.schema_version >= 4
+        ledger = report.provider_activity if schema4 else report.ledger
         if ledger is None:
-            summary = "No deterministically matched Activity record is available."
+            summary = (
+                "No provider Activity record is available"
+                if schema4
+                else "No deterministically matched Activity record is available."
+            )
         else:
             amount = (
                 f"{ledger.amount.amount} {ledger.amount.unit}"
@@ -78,6 +83,17 @@ def build_investigation_dependencies(
                 f"status={ledger.status.value}; amount={amount}; "
                 f"asset={ledger.asset or 'unknown'}; "
                 f"protocol={ledger.protocol or 'unknown'}; chain={ledger.chain or 'unknown'}"
+            )
+            if schema4:
+                summary = "provider assertion: " + summary
+        if schema4:
+            independent = report.independent_settlement
+            comparison = report.settlement_comparison
+            assert independent is not None
+            assert comparison is not None
+            summary += (
+                f"; independent settlement={independent.status.value} "
+                f"({independent.diagnostic}); comparison={comparison.status.value}"
             )
         return EvidenceSummary(
             artifact_id=artifact.artifact_id if artifact is not None else "report:activity",

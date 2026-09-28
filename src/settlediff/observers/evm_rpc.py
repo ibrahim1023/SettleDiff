@@ -1,4 +1,4 @@
-"""Bounded read-only JSON-RPC client for x402 settlement evidence."""
+"""Bounded read-only JSON-RPC client for EVM settlement evidence."""
 
 from __future__ import annotations
 
@@ -12,11 +12,15 @@ from pydantic import JsonValue
 _ALLOWED_METHODS = frozenset({"eth_chainId", "eth_getTransactionReceipt"})
 
 
-class X402RpcError(RuntimeError):
+class EvmRpcError(RuntimeError):
     pass
 
 
-class X402RpcClient:
+class EvmRpcProtocolError(EvmRpcError):
+    pass
+
+
+class EvmRpcClient:
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -26,7 +30,7 @@ class X402RpcClient:
         timeout_seconds: float = 10.0,
     ) -> None:
         if max_requests < 1 or max_response_bytes < 1 or not 0 < timeout_seconds <= 60:
-            raise ValueError("invalid x402 RPC limits")
+            raise ValueError("invalid EVM RPC limits")
         self._client = client
         self._max_requests = max_requests
         self._max_response_bytes = max_response_bytes
@@ -36,10 +40,10 @@ class X402RpcClient:
 
     async def call(self, method: str, params: tuple[JsonValue, ...]) -> JsonValue:
         if method not in _ALLOWED_METHODS:
-            raise X402RpcError("x402 RPC method is not read-only allowlisted")
+            raise EvmRpcError("EVM RPC method is not read-only allowlisted")
         async with self._lock:
             if self._requests >= self._max_requests:
-                raise X402RpcError("x402 RPC request limit exhausted")
+                raise EvmRpcError("EVM RPC request limit exhausted")
             self._requests += 1
             request_id = self._requests
         try:
@@ -50,20 +54,20 @@ class X402RpcClient:
                 timeout=self._timeout_seconds,
             ) as response:
                 if response.status_code != 200:
-                    raise X402RpcError("x402 RPC returned a non-success HTTP status")
+                    raise EvmRpcError("EVM RPC returned a non-success HTTP status")
                 content = bytearray()
                 async for chunk in response.aiter_bytes():
                     content.extend(chunk)
                     if len(content) > self._max_response_bytes:
-                        raise X402RpcError("x402 RPC response exceeded its configured limit")
+                        raise EvmRpcProtocolError("EVM RPC response exceeded its configured limit")
         except httpx.HTTPError as error:
-            raise X402RpcError("x402 RPC request failed") from error
+            raise EvmRpcError("EVM RPC request failed") from error
         try:
             loaded: object = json.loads(content)
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            raise X402RpcError("x402 RPC returned invalid JSON") from error
+            raise EvmRpcProtocolError("EVM RPC returned invalid JSON") from error
         if not isinstance(loaded, dict):
-            raise X402RpcError("x402 RPC response must be an object")
+            raise EvmRpcProtocolError("EVM RPC response must be an object")
         payload = cast(dict[str, JsonValue], loaded)
         if (
             payload.get("jsonrpc") != "2.0"
@@ -71,5 +75,5 @@ class X402RpcClient:
             or "error" in payload
             or "result" not in payload
         ):
-            raise X402RpcError("x402 RPC response envelope is invalid")
+            raise EvmRpcProtocolError("EVM RPC response envelope is invalid")
         return payload["result"]

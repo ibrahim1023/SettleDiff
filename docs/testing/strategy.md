@@ -55,10 +55,10 @@ intent.json
 contract.json
 execution.json
 activity.json
-# optional receipt.json declared by manifest
+# optional receipt.json or independent_settlement.json declared by manifest
 ```
 
-Optional artifacts such as `receipt.json` or `context-evidence.json` are declared by the manifest. Fixtures must use synthetic identifiers, fixed UTC timestamps, and no secrets. The sanitizer test rejects emails, likely API keys, unmasked addresses, private keys, and unexpected high-entropy strings.
+Optional artifacts such as `receipt.json`, `independent_settlement.json`, or `context-evidence.json` are declared by the manifest. The manifest labels Activity evidence as a provider assertion or independent observation. Fixtures must use synthetic identifiers, fixed UTC timestamps, and no secrets. The sanitizer test rejects emails, likely API keys, unmasked addresses, private keys, and unexpected high-entropy strings.
 
 Initial scenarios:
 
@@ -72,7 +72,7 @@ Initial scenarios:
 - payment failure;
 - malformed provider envelope preserved as unverifiable evidence.
 
-The two Perflo Activity regressions preserve different financial semantics:
+The two historical schema-2 Perflo Activity regressions preserve their original financial semantics:
 
 - `failed-broadcast` proves that a failed Activity record can be matched without becoming
   charge evidence; chain disagreement remains visible, settlement remains unknown, and the
@@ -81,16 +81,19 @@ The two Perflo Activity regressions preserve different financial semantics:
   a normalized amount can supply a missing execution charge. Budget and price pass; with
   only chain `DIFF` and recipient `WARN`, the verdict is `VERIFIED_WITH_WARNINGS`.
 
-The x402 corpus adds complete schema-v2 canonical reports for clean success, confirmed
-settlement with service failure, uncertain submission, both directions of
+The historical x402 corpus retains complete schema-v2 canonical reports for clean success,
+confirmed settlement with service failure, uncertain submission, both directions of
 provider/independent settlement contradiction, and recipient/amount/asset/network
-differences. These are explicitly synthetic reports modeled from captured protocol
-shapes and controlled local outcomes; challenge-only wire payloads remain contract-test
-fixtures and are never padded with fabricated execution or ledger evidence.
+differences. Schema-4 fixtures add the current boundary: `perflo-v8-provider-only-success`
+records unavailable independent settlement and is `UNVERIFIABLE`, while
+`x402-independent-confirmed` records a matching exact transfer and is `VERIFIED`. These
+are explicitly synthetic reports modeled from accepted contracts and controlled local
+outcomes; challenge-only wire payloads remain contract-test fixtures and are never padded
+with fabricated execution or ledger evidence.
 
 ## Cross-rail contract tests
 
-Semantic-equivalence tests compare canonical economic relations, evidence states, selected financial findings, verdicts, and uncertainty—not provider payloads, references, or nominal test amounts. Clean success, settled-payment/service-failure, and insufficient-settlement cases must remain equivalent across Perflo and x402. AST-based architecture tests prevent domain/application imports of adapter implementations and provider-specific branch terms. Well-formed provider settlement without independent evidence stays unknown, while malformed provider evidence is rejected before financial checks.
+Cross-rail tests compare canonical economic relations without asserting that provider evidence and independent evidence are equivalent. The schema-4 pair proves provider-only Perflo success is `UNVERIFIABLE`/`NOT_COMPARABLE`, while x402 with an exact independent transfer is `VERIFIED`/`MATCH`; checks still contain no adapter-specific verdict branch. AST-based architecture tests prevent domain/application imports of adapter implementations and provider-specific branch terms. Well-formed provider settlement without independent evidence stays unknown, while malformed provider evidence is rejected before financial checks.
 
 ## Agent-loop tests
 
@@ -132,22 +135,27 @@ and mislabeled adapter/artifact evidence fails closed. Provider contract tests p
 - the external signer client uses one shell-free invocation, bounded stdin/stdout/stderr,
   a controlled environment without wallet keys, and uncertainty-safe timeout, malformed,
   secret-bearing, oversized, and post-launch failure behavior;
-- x402 independent settlement requires the expected Base Sepolia chain ID and exactly
-  one matching USDC transfer log; receipt existence, facilitator transaction sender,
-  wrong token/payer/recipient/amount, malformed logs, and missing/pending receipts are
-  covered explicitly;
-- the RPC client permits only `eth_chainId` and `eth_getTransactionReceipt`, enforces
-  request/response limits, and does not retry or poll;
+- x402 paid preflight probes signer metadata before authorization, requires the payer,
+  binds the canonical settlement-profile digest in `PaymentTerms` schema 4, rebuilds the
+  profile from the second challenge before signer launch, and refuses drift;
+- the rail-neutral observer requires the expected chain ID and exactly one matching ERC-20
+  transfer log; receipt existence, facilitator transaction sender, wrong
+  token/payer/recipient/amount, malformed logs, and missing/pending receipts are covered in
+  `tests/unit/observers/test_evm_transfer.py`;
+- `EvmRpcClient` in `observers/evm_rpc.py` permits only `eth_chainId` and
+  `eth_getTransactionReceipt`, enforces request/response limits, classifies transport versus
+  protocol failure, and does not retry or poll; its integration tests live under
+  `tests/integration/observers/`;
 - x402 recovery covers not submitted, proven not submitted, submitted confirmed,
   submission uncertain with and without a transaction reference, mined reverts,
   missing receipts, invalid evidence, and RPC failure;
 - confirmed and reverted receipts classify as submitted; only explicit non-submission
   proof classifies as not submitted, and all ambiguous trajectories remain unresolved;
 - every post-launch signer failure is one-shot and cannot be launched again;
-- x402 adapter tests perform two unsigned challenge observations, reject pre-launch drift without invoking the signer, preserve post-launch contradictory references as uncertain, keep provider receipt and independent ledger evidence separate, and expose no second mutation path;
+- x402 adapter tests perform two unsigned challenge observations, reject profile drift without invoking the signer, preserve post-launch contradictory references as uncertain, keep provider receipt, provider Activity, and independent observation separate, and expose no second mutation path;
 - URL-policy tests accept controlled loopback HTTP only on x402 and retain HTTPS for every remote x402 target; Perflo v8 addresses catalog slugs rather than HTTP targets, so credentials, fragments, redirects, and HTTP resources presented to the Perflo adapter remain rejected;
 - CLI/config tests require explicit rail selection and both testnet gates, preserve GET-without-body and POST JSON semantics, reject missing/secret-bearing configuration, and prove interactive decline prevents signer invocation;
-- storage, bundle, JSON, and local UI tests retain adapter identity and label provider versus independent settlement without recomputing findings.
+- storage and bundle tests round-trip schema-4 provenance and reject tampering; CLI, agent, JSON, local UI, and public-report tests preserve the provider/observer boundary without recomputing findings.
 
 ### Perflo v8 synthetic corpus
 
@@ -265,7 +273,7 @@ The cross-cutting evidence surfaces each have focused tests plus one cohesive en
 | Contract drift | Chronological snapshot observations (including repeats) drive then/now comparison |
 | Bazaar comparison | Embedded declaration fields compare objectively; paid evidence stays unavailable without a paid report |
 | Purchase investigation | Persisted findings, delivery, retry, timeline, and bundle availability project unchanged into the recap |
-| Public publication | Exactly three static files, masked run ID, allowlisted fields only |
+| Public publication | Exactly three static files; public schema 2 adds only settlement statuses/diagnostics, five dimensions, and payer policy |
 | Storage migration | A schema-4 database upgrades through migrations 5 and 6 preserving reports, events, artifacts, and explanation, with deterministic timeline backfill for historical runs |
 
 `test_cross_feature_assurance_demo_remains_offline` in

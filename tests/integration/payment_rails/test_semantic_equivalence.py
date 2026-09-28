@@ -15,6 +15,7 @@ from settlediff.domain.models import (
     LedgerStatus,
     MachineReport,
     PaymentReceipt,
+    SettlementComparisonStatus,
     SettlementStatus,
     Verdict,
 )
@@ -64,24 +65,17 @@ def semantics(report: MachineReport) -> SemanticOutcome:
     )
 
 
-@pytest.mark.parametrize(
-    ("perflo_fixture", "x402_fixture", "verdict"),
-    [
-        ("clean-success", "x402-clean-success", Verdict.VERIFIED),
-        ("paid-failure", "x402-paid-failure", Verdict.PAID_FAILURE),
-    ],
-)
-def test_equivalent_economic_outcomes_have_rail_neutral_semantics(
-    perflo_fixture: str, x402_fixture: str, verdict: Verdict
-) -> None:
-    perflo = replay_fixture(FIXTURES / perflo_fixture)
-    x402 = replay_fixture(FIXTURES / x402_fixture)
+def test_cross_rail_settlement_verdicts_reflect_independent_evidence() -> None:
+    perflo = replay_fixture(FIXTURES / "perflo-v8-provider-only-success")
+    x402 = replay_fixture(FIXTURES / "x402-independent-confirmed")
 
-    assert perflo.execution is not None
-    assert x402.execution is not None
-    assert perflo.execution.transaction_hash != x402.execution.transaction_hash
-    assert semantics(perflo) == semantics(x402)
-    assert perflo.verdict is x402.verdict is verdict
+    assert perflo.schema_version == x402.schema_version == 4
+    assert perflo.verdict is Verdict.UNVERIFIABLE
+    assert x402.verdict is Verdict.VERIFIED
+    assert perflo.settlement_comparison is not None
+    assert x402.settlement_comparison is not None
+    assert perflo.settlement_comparison.status is SettlementComparisonStatus.NOT_COMPARABLE
+    assert x402.settlement_comparison.status is SettlementComparisonStatus.MATCH
 
 
 def test_equivalent_insufficient_settlement_evidence_is_unverifiable_on_both_rails() -> None:

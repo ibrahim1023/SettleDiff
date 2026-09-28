@@ -1,0 +1,1 @@
+{"schema_version":1,"scenario":"perflo-v8-provider-only-success","synthetic":true,"expected_verdict":"UNVERIFIABLE","artifacts":["contract.json","execution.json","activity.json","independent_settlement.json"],"activity_evidence_class":"provider_assertion"}

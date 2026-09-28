@@ -192,3 +192,42 @@ def test_publication_contains_no_private_bundle_fields(tmp_path: Path) -> None:
     ):
         assert private_field not in payload, private_field
     assert "syn_run_clean" not in files.report_json.decode()
+
+
+def test_schema4_publication_excludes_observer_and_profile_identifiers() -> None:
+    report = replay_fixture(FIXTURES / "x402-independent-confirmed")
+    observation = report.independent_settlement
+    assert observation is not None
+    assert observation.profile is not None
+    tampered_observation = observation.model_copy(
+        update={
+            "source": "https://private-observer.example/rpc?api_key=CANARY",
+            "transaction_reference": CANARY_RECEIPT,
+            "profile": observation.profile.model_copy(
+                update={
+                    "payer": CANARY_TXN,
+                    "recipient": CANARY_LEDGER,
+                    "asset_identity": observation.profile.asset_identity.model_copy(
+                        update={"reference": CANARY_SESSION}
+                    ),
+                }
+            ),
+        }
+    )
+    tampered = report.model_copy(update={"independent_settlement": tampered_observation})
+
+    public = build_public_report(tampered, ())
+    output = json.dumps(public.model_dump(mode="json"))
+
+    for excluded in (
+        "private-observer.example",
+        "api_key",
+        CANARY_RECEIPT,
+        CANARY_TXN,
+        CANARY_LEDGER,
+        CANARY_SESSION,
+        "transaction_reference",
+        "profile",
+        "provider_activity",
+    ):
+        assert excluded not in output

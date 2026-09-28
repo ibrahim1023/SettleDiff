@@ -12,13 +12,21 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from settlediff.domain.checks import run_checks
 from settlediff.domain.matching import match_activity
-from settlediff.domain.models import ArtifactType, EvidenceArtifact, MachineReport, PurchaseIntent
+from settlediff.domain.models import (
+    ArtifactType,
+    EvidenceArtifact,
+    EvidenceClass,
+    IndependentSettlementObservation,
+    MachineReport,
+    PurchaseIntent,
+)
 from settlediff.domain.normalize import (
     normalize_activity,
     normalize_contract,
     normalize_execution,
     normalize_receipt,
 )
+from settlediff.domain.settlement import compare_settlement, provider_settlement_status
 from settlediff.domain.verdict import derive_verdict
 
 _EMAIL = re.compile(r"\b[^\s@]+@[^\s@]+\.[^\s@]+\b")
@@ -35,6 +43,7 @@ class FixtureManifest(BaseModel):
     synthetic: bool
     expected_verdict: str
     artifacts: tuple[str, ...]
+    activity_evidence_class: EvidenceClass = EvidenceClass.PROVIDER_ASSERTION
 
 
 def replay_fixture(path: Path) -> MachineReport:
@@ -63,17 +72,66 @@ def replay_fixture(path: Path) -> MachineReport:
         activity,
         expected_vendor_slug=contract.vendor_slug,
     )
-    findings = run_checks(intent, contract, execution, match, receipt=receipt)
-    report = MachineReport(
-        run_id=intent.run_id,
-        intent=intent,
-        contract=contract,
-        execution=execution,
-        ledger=match.matched,
-        findings=findings,
-        verdict=derive_verdict(findings),
-        receipt=receipt,
-    )
+    if "independent_settlement.json" in manifest.artifacts:
+        observation = IndependentSettlementObservation.model_validate_json(
+            (path / "independent_settlement.json").read_text(), strict=True
+        )
+        provider_activity = (
+            match.matched
+            if manifest.activity_evidence_class is EvidenceClass.PROVIDER_ASSERTION
+            else None
+        )
+        provider_evidence_ids = (
+            (f"{path.name}:receipt.json",)
+            if receipt is not None
+            else (f"{path.name}:execution.json",)
+        )
+        observer_evidence_ids = (
+            (f"{path.name}:activity.json",)
+            if observation.ledger is not None
+            and manifest.activity_evidence_class is EvidenceClass.INDEPENDENT_OBSERVATION
+            else ()
+        )
+        comparison = compare_settlement(
+            provider_settlement_status(execution, receipt),
+            observation,
+            provider_evidence_ids=provider_evidence_ids,
+            observer_evidence_ids=observer_evidence_ids,
+        )
+        findings = run_checks(
+            intent,
+            contract,
+            execution,
+            match,
+            receipt=receipt,
+            independent=observation,
+        )
+        report = MachineReport(
+            schema_version=4,
+            run_id=intent.run_id,
+            intent=intent,
+            contract=contract,
+            execution=execution,
+            ledger=observation.ledger,
+            findings=findings,
+            verdict=derive_verdict(findings),
+            receipt=receipt,
+            provider_activity=provider_activity,
+            independent_settlement=observation,
+            settlement_comparison=comparison,
+        )
+    else:
+        findings = run_checks(intent, contract, execution, match, receipt=receipt)
+        report = MachineReport(
+            run_id=intent.run_id,
+            intent=intent,
+            contract=contract,
+            execution=execution,
+            ledger=match.matched,
+            findings=findings,
+            verdict=derive_verdict(findings),
+            receipt=receipt,
+        )
     if report.verdict.value != manifest.expected_verdict:
         raise ValueError(
             f"fixture expected {manifest.expected_verdict}, got {report.verdict.value}"

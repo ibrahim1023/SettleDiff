@@ -10,7 +10,10 @@ from settlediff.application.auth import ConsumedPaidAuthorization, PaidExecution
 from settlediff.domain.models import (
     ArtifactType,
     DeliveryObservation,
+    EvidenceClass,
+    IndependentSettlementObservation,
     NonEmptyStr,
+    SettlementProfile,
     UtcDatetime,
 )
 from settlediff.domain.money import Money
@@ -33,6 +36,7 @@ class AdapterEvidence(BaseModel):
     operation: NonEmptyStr
     source: NonEmptyStr
     artifact_type: ArtifactType
+    evidence_class: EvidenceClass = EvidenceClass.PROVIDER_ASSERTION
     data: JsonValue
     observed_at: UtcDatetime | None = None
     submission_uncertain: bool = False
@@ -41,6 +45,7 @@ class AdapterEvidence(BaseModel):
     provider_receipt: JsonValue | None = None
     delivery_observation: DeliveryObservation | None = None
     source_contract: JsonValue | None = None
+    settlement_profile: SettlementProfile | None = None
 
 
 @runtime_checkable
@@ -72,3 +77,8 @@ class TransactionEvidencePort(Protocol):
 @runtime_checkable
 class ContractReinspectionPort(Protocol):
     async def reinspect(self, request: PaidExecutionRequest) -> AdapterEvidence: ...
+
+
+@runtime_checkable
+class IndependentSettlementPort(Protocol):
+    def independent_settlement(self) -> IndependentSettlementObservation | None: ...

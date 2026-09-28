@@ -97,6 +97,7 @@ from settlediff.domain.money import Money
 from settlediff.domain.normalize import normalize_contract
 from settlediff.domain.redaction import mask_identifier
 from settlediff.domain.retry import RetryRunStateSnapshot, analyze_retry
+from settlediff.observers.evm_rpc import EvmRpcClient
 from settlediff.perflo.adapter import PerfloAdapter
 from settlediff.perflo.client import (
     PerfloClient,
@@ -117,7 +118,6 @@ from settlediff.x402.http import X402ResourceClient, X402ResourceResponse
 from settlediff.x402.models import PaymentRequired
 from settlediff.x402.normalize import normalize_payment_required
 from settlediff.x402.parser import X402ProtocolError, decode_payment_required
-from settlediff.x402.rpc import X402RpcClient
 from settlediff.x402.urls import is_safe_x402_target
 
 
@@ -195,6 +195,16 @@ def _render(
     typer.echo(report.verdict.value)
     for finding in report.findings:
         typer.echo(f"{finding.status}: {finding.message}")
+    if report.independent_settlement is not None:
+        independent = report.independent_settlement
+        typer.echo(f"Independent settlement: {independent.status.value} ({independent.diagnostic})")
+        comparison = report.settlement_comparison
+        if comparison is not None:
+            typer.echo(f"Provider comparison: {comparison.status.value} ({comparison.diagnostic})")
+        if report.provider_activity is not None:
+            typer.echo(
+                f"Provider Activity: {report.provider_activity.status.value} (provider assertion)"
+            )
     if explanation is not None:
         typer.echo(f"Explanation ({explanation.source.value}): {explanation.explanation.summary}")
         typer.echo(
@@ -354,6 +364,14 @@ async def _execute_live_run(
                 f"Budget: {request.budget.amount} {request.budget.unit}\n"
             )
         else:
+            settlement_lines = ""
+            if payment_terms.schema_version == 4:
+                settlement_lines = (
+                    f"Settlement payer: "
+                    f"{mask_identifier(payment_terms.payer or 'unknown')}\n"
+                    f"Settlement profile digest: "
+                    f"{payment_terms.settlement_profile_digest or 'unknown'}\n"
+                )
             typer.echo(
                 f"Rail: {payment_terms.adapter_id}\n"
                 f"Version: {payment_terms.protocol_version or 'unknown'}\n"
@@ -364,6 +382,7 @@ async def _execute_live_run(
                 f"Method: {payment_terms.method}\n"
                 f"Body digest: {capability.body_digest}\n"
                 f"Payment terms digest: {capability.payment_terms_digest}\n"
+                f"{settlement_lines}"
                 f"Quoted price: {payment_terms.quoted_price.amount} "
                 f"{payment_terms.quoted_price.unit}\n"
                 f"Budget: {request.budget.amount} {request.budget.unit}\n"
@@ -460,10 +479,12 @@ def verify_fixture(
 
 
 def _build_payment_adapter(
-    rail: PaymentRail, settings: Settings
+    rail: PaymentRail, settings: Settings, x402_payer: str | None = None
 ) -> tuple[PaymentRailAdapter, AdapterCloser | None]:
     if rail is PaymentRail.PERFLO:
         return PerfloAdapter(PerfloClient()), None
+    if x402_payer is None:
+        raise ValueError("x402 paid execution requires a probed signer payer")
     config = settings.require_x402()
     resource_http = httpx.AsyncClient(follow_redirects=False)
     rpc_http = httpx.AsyncClient(base_url=config.rpc_url.get_secret_value(), follow_redirects=False)
@@ -476,10 +497,11 @@ def _build_payment_adapter(
             command=config.signer_command,
             timeout_seconds=config.signer_timeout_seconds,
         ),
-        X402RpcClient(
+        EvmRpcClient(
             rpc_http,
             timeout_seconds=config.rpc_timeout_seconds,
         ),
+        expected_payer=x402_payer,
     )
 
     async def close() -> None:
@@ -517,7 +539,7 @@ async def _doctor_x402(settings: Settings) -> tuple[str, str]:
         follow_redirects=False,
     )
     try:
-        chain_id = await X402RpcClient(
+        chain_id = await EvmRpcClient(
             rpc_http,
             max_requests=1,
             timeout_seconds=config.rpc_timeout_seconds,
@@ -643,6 +665,7 @@ def run(
     except (json.JSONDecodeError, InvalidOperation, ValueError) as error:
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error
+    x402_payer: str | None = None
     try:
         settings = Settings()
         contextdev_config = settings.require_contextdev()
@@ -655,9 +678,16 @@ def run(
                 )
             if shutil.which(x402_config.signer_command[0]) is None:
                 raise ValueError("x402 signer launcher is unavailable; run settlediff doctor")
+            signer_metadata = asyncio.run(
+                probe_x402_signer(
+                    x402_config.signer_command,
+                    timeout_seconds=x402_config.signer_timeout_seconds,
+                )
+            )
+            x402_payer = signer_metadata.payer
         else:
             asyncio.run(_doctor_perflo())
-    except ValueError as error:
+    except (OSError, X402ClientError, ValueError) as error:
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error
     telemetry = configure_telemetry(settings)
@@ -701,7 +731,7 @@ def run(
             output_tokens=INVESTIGATION_OUTPUT_TOKEN_LIMIT,
         )
     )
-    adapter, adapter_close = _build_payment_adapter(rail, settings)
+    adapter, adapter_close = _build_payment_adapter(rail, settings, x402_payer)
     collector = LiveEvidenceCollector(
         adapter,
         contextdev=contextdev,

@@ -177,3 +177,79 @@ def test_schema_v2_report_serialization_remains_backward_readable() -> None:
     assert "delivery" not in payload
     assert "retry" not in payload
     assert MachineReport.model_validate_json(json.dumps(payload)).schema_version == 2
+
+
+def settlement_provenance_payload() -> dict[str, object]:
+    return {
+        "independent_settlement": {
+            "status": "UNAVAILABLE",
+            "diagnostic": "SETTLEMENT_PROFILE_UNAVAILABLE",
+            "source": "rpc:base-sepolia",
+            "observed_at": NOW.isoformat(),
+            "transaction_reference": None,
+            "profile": None,
+            "dimensions": {
+                "chain_verified": False,
+                "asset_verified": False,
+                "amount_verified": False,
+                "recipient_verified": False,
+                "payer_verified": False,
+                "payer_policy": "REQUIRED",
+            },
+            "ledger": None,
+        },
+        "settlement_comparison": {
+            "status": "NOT_COMPARABLE",
+            "diagnostic": "NO_INDEPENDENT_SETTLEMENT_OBSERVATION",
+            "provider_evidence_ids": (),
+            "observer_evidence_ids": (),
+        },
+    }
+
+
+def test_schema_v4_report_requires_settlement_provenance() -> None:
+    base = report_payload() | {"schema_version": 4, "ledger": None}
+
+    for missing in ("independent_settlement", "settlement_comparison"):
+        payload = dict(base) | settlement_provenance_payload()
+        payload.pop(missing)
+        with pytest.raises(ValidationError, match="schema version 4"):
+            MachineReport.model_validate_json(json.dumps(payload))
+        payload = dict(base) | settlement_provenance_payload()
+        payload[missing] = None
+        with pytest.raises(ValidationError, match="schema version 4"):
+            MachineReport.model_validate_json(json.dumps(payload))
+
+    report = MachineReport.model_validate_json(
+        json.dumps(dict(base) | settlement_provenance_payload())
+    )
+    assert report.schema_version == 4
+    assert report.independent_settlement is not None
+    assert report.independent_settlement.status == "UNAVAILABLE"
+    assert report.settlement_comparison is not None
+    assert report.settlement_comparison.status == "NOT_COMPARABLE"
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3])
+@pytest.mark.parametrize(
+    "field",
+    ["provider_activity", "independent_settlement", "settlement_comparison"],
+)
+def test_old_reports_reject_settlement_fields_even_when_null(
+    schema_version: int, field: str
+) -> None:
+    payload = report_payload() | {"schema_version": schema_version, field: None}
+
+    with pytest.raises(ValidationError, match=f"schema version {schema_version}"):
+        MachineReport.model_validate_json(json.dumps(payload))
+
+
+def test_schema_v3_report_serialization_omits_settlement_fields() -> None:
+    payload = report_payload() | {"schema_version": 3}
+
+    report = MachineReport.model_validate_json(json.dumps(payload))
+    dumped = report.model_dump(mode="json")
+
+    assert "provider_activity" not in dumped
+    assert "independent_settlement" not in dumped
+    assert "settlement_comparison" not in dumped

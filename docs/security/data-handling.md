@@ -27,7 +27,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 ### Paid execution
 
 - Validate URL, JSON body, and explicit budget before authorization.
-- Bind authorization to run, target, method, canonical request-body digest, exact budget, and the versioned selected payment-terms digest (adapter/version, scheme, network/chain, asset, recipient, quote, timeout, and resource URL). The authorization prompt shows full public asset/recipient identifiers and timeout so the owner can verify every bound term; persistence, telemetry, and ordinary report views remain masked.
+- Bind authorization to run, exact resource digest, budget, and versioned payment-terms digest. Catalog schema 3 binds vendor contract and all three charge values. x402 schema 4 binds HTTP terms plus the mandatory signer-probed payer and canonical `SettlementProfile` digest (network/chain ID, asset reference and decimals, atomic amount, recipient, payer). The authorization prompt exposes the bound public terms for owner review; persistence, telemetry, and ordinary report views remain masked.
 - Consume authorization with the same payment terms and revalidate the terms immediately before invoking a payment-rail adapter.
 - Permit at most one paid execution per live run.
 - Never retry on uncertain submission; verify history/status and ask before a new run.
@@ -47,16 +47,16 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Enforce encoded-header, decoded-JSON, and nesting-depth limits before strict validation.
 - Support only x402 v2 `exact` on Base Sepolia test USDC until another contract is accepted.
 - Treat `PAYMENT-SIGNATURE`, nested signatures, and reusable payment payloads as secret-bearing ephemeral material; never persist, display, export, log, or emit them through telemetry.
-- Invoke an independently owned signer at most once through the versioned bounded JSON contract. SettleDiff passes a controlled environment that does not inherit private-key variables; the signer must obtain authority independently without returning it. Before authorization, `settlediff doctor --rail x402` invokes only the signer's non-paying `--version` contract to verify metadata schema 3 and its public payer address.
+- Invoke an independently owned signer at most once through the versioned bounded JSON contract. SettleDiff passes a controlled environment that does not inherit private-key variables; the signer must obtain authority independently without returning it. Before live authorization, the CLI invokes only the signer's non-paying metadata contract, requires schema 3 and its public payer address, and binds that payer into the exact profile. `settlediff doctor --rail x402` exercises the same read-only metadata surface.
 - Reject oversized signer input before launch; treat timeout, malformed/secret-bearing output, output overflow, and non-proven post-launch failure as submission uncertainty.
 - A provider settlement response remains provider-asserted evidence and cannot replace independent settlement verification.
-- Independent x402 verification permits only `eth_chainId` and `eth_getTransactionReceipt`, with bounded request count and response size and no retry/poll loop. The configured RPC is independent of the resource/facilitator but is still untrusted input: chain identity, receipt structure, token address, event signature, payer when supplied, recipient, and amount are validated rather than accepted by source reputation.
-- Receipt success alone is insufficient: require the expected Base Sepolia chain plus exactly one matching USDC transfer event for token, payer when supplied, recipient, and amount. The facilitator transaction sender is not the payer.
+- Rail-neutral EVM observation in `observers/evm_rpc.py` and `observers/evm_transfer.py` permits only `eth_chainId` and `eth_getTransactionReceipt`, with bounded request count and response size and no retry/poll loop. The configured RPC is outside the provider CLI evidence surface but remains untrusted input: chain identity, receipt structure, token address, event signature, mandatory payer, recipient, and amount are validated against the pre-authorized profile rather than source reputation.
+- Receipt success alone is insufficient: require the expected chain plus exactly one matching ERC-20 transfer event for asset, mandatory payer, recipient, and amount. The facilitator transaction sender is not the payer.
 - A mined reverted transaction proves submission, not non-submission. Missing/pending receipts, malformed evidence, and RPC failure remain unresolved; only an explicit pre-transmission result or separately proven non-submission may set the non-submission state.
 - Once an external signer process launches, that client instance cannot launch again, including after timeout, overflow, malformed output, or another uncertain failure.
 - SettleDiff configuration contains only a signer command and RPC URL, never a wallet key; both fields are hidden from configuration representations, the potentially credential-bearing RPC URL uses `SecretStr`, secret-bearing command arguments are rejected, and no private-key setting exists.
 - x402 live composition requires explicit rail selection, environment and CLI testnet gates, and the same interactive exact-request authorization. No gate bypasses confirmation.
-- The resource client does not follow redirects. Remote targets require HTTPS; x402 permits HTTP only for parsed loopback hosts without credentials or fragments. It repeats the unsigned challenge immediately before signing; pre-launch drift fails without signer invocation, while post-launch signer/provider contradictions preserve the transaction reference and force settlement unknown.
+- The resource client does not follow redirects. Remote targets require HTTPS; x402 permits HTTP only for parsed loopback hosts without credentials or fragments. It repeats the unsigned challenge and rebuilds the exact settlement profile immediately before signing; profile drift fails without signer invocation, while post-launch signer/provider contradictions preserve the transaction reference and force settlement unknown.
 
 ### Data minimization
 
@@ -66,7 +66,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Send the model normalized summaries and artifact handles, not unrestricted raw data.
 - Keep reports local for MVP. Retain sanitized reports until explicit per-run deletion or an owner-applied age purge; do not retain x402 signatures, reusable authorizations, signer secrets, or raw live captures in the report database.
 - Export only redacted artifacts and checksum-protected compatibility metadata. Schema-3 bundles are a single JSON document of named logical objects; logical paths are verified in memory and are never extracted to the filesystem. Bundle verification detects checksum changes and internal inconsistency — digests provide integrity, not authenticity — and does not authenticate origin; authenticated provenance requires a separately accepted signing-key owner and trust model. Bundle export never upgrades provider evidence into independent evidence and never exports signer material.
-- `publish` emits a separate public artifact, not a redacted bundle copy. It is produced by a dedicated strict allowlist projection (`PublicReport`/`PublicManifest`) that copies only bounded codes, statuses, timestamps, and counts — generic redaction of local evidence is not sufficient for public disclosure. `public_run_id` is a masked identifier, `evidence_through`/`source_timestamp` are reproducible evidence-derived timestamps (never wall clock), and a recursive disclosure guard rejects URLs, emails, unmasked hex identifiers, local paths, and credential-shaped keys before output. The rendered `index.html` is a static standalone file with no scripts, external assets, or tracking; publication never uploads anything — the owner chooses where the three files go.
+- `publish` emits a separate public artifact, not a redacted bundle copy. It is produced by a dedicated strict allowlist projection (`PublicReport`/`PublicManifest`) — generic redaction of local evidence is not sufficient for public disclosure. Public schema 2 adds only independent/comparison statuses and diagnostics, five verification booleans, and `REQUIRED` payer policy. It excludes observer source, transaction reference, profile, ledgers, provider Activity, and evidence IDs. `public_run_id` is masked; evidence timestamps are reproducible; a recursive disclosure guard rejects URLs, emails, unmasked hex identifiers, local paths, and credential-shaped keys. The static `index.html` has no scripts, external assets, or tracking, and publication uploads nothing.
 
 ### Web UI
 
@@ -91,6 +91,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 5. An uncertain mutation cannot be retried automatically.
 6. Telemetry failure cannot alter the financial result.
 7. External content is untrusted at parsing, prompting, logging, and rendering boundaries.
+8. Provider Activity, receipts, and transaction status cannot confirm schema-4 settlement; only the independent observation can.
 
 ## Deferred threat model
 

@@ -16,16 +16,22 @@ from settlediff.application.auth import (
     PaymentTerms,
 )
 from settlediff.application.payment_rails import AdapterEvidence, AdapterProtocolError
+from settlediff.domain.integrity import sha256_digest
 from settlediff.domain.models import (
     ArtifactType,
+    AssetIdentity,
     DeliveryObservation,
+    EvidenceClass,
     ExecutionRecord,
     ExpectedContract,
+    IndependentSettlementObservation,
     LedgerStatus,
     PaymentReceipt,
+    SettlementProfile,
     SettlementStatus,
 )
 from settlediff.domain.money import Money
+from settlediff.observers.evm_transfer import ReadOnlyRpcPort
 from settlediff.x402.client import X402SubmissionUncertainError
 from settlediff.x402.client_contract import (
     ExternalSignerRequest,
@@ -34,10 +40,13 @@ from settlediff.x402.client_contract import (
 )
 from settlediff.x402.http import X402ResourcePort
 from settlediff.x402.models import PaymentRequired, PaymentRequirements, SettlementResponse
-from settlediff.x402.normalize import normalize_payment_required, normalize_payment_response
+from settlediff.x402.normalize import (
+    USDC_DECIMALS,
+    normalize_payment_required,
+    normalize_payment_response,
+)
 from settlediff.x402.parser import parse_payment_required
 from settlediff.x402.recovery import (
-    ReadOnlyRpcPort,
     X402SubmissionRecovery,
     recover_x402_submission,
     x402_recovery_evidence,
@@ -56,11 +65,15 @@ class X402Adapter:
         resource: X402ResourcePort,
         signer: X402SignerPort | None = None,
         rpc: ReadOnlyRpcPort | None = None,
+        *,
+        expected_payer: str | None = None,
     ) -> None:
         self._resource = resource
         self._signer = signer
         self._rpc = rpc
+        self._expected_payer = expected_payer
         self._preflight_contract: ExpectedContract | None = None
+        self._preflight_profile: SettlementProfile | None = None
         self._recovery: X402SubmissionRecovery | None = None
 
     @classmethod
@@ -69,17 +82,21 @@ class X402Adapter:
         return cls(resource)
 
     def _require_paid_ports(self) -> None:
-        if self._signer is None or self._rpc is None:
+        if self._signer is None or self._rpc is None or self._expected_payer is None:
             raise AdapterProtocolError(
                 "x402 inspection-only adapter cannot execute or recover payments"
             )
 
     async def inspect(self, request: PaidExecutionRequest) -> AdapterEvidence:
         observed = await self._resource.challenge(request)
-        required, _, contract = self._contract_from_challenge(
+        required, requirement, contract = self._contract_from_challenge(
             observed.status_code, observed.payment_required, request
         )
         self._preflight_contract = contract
+        profile = None
+        if self._expected_payer is not None:
+            profile = _settlement_profile(requirement, self._expected_payer)
+            self._preflight_profile = profile
         return AdapterEvidence(
             adapter_id=self.adapter_id,
             protocol_version=str(required.x402_version),
@@ -89,6 +106,7 @@ class X402Adapter:
             data=cast(JsonValue, contract.model_dump(mode="json")),
             observed_at=observed.observed_at,
             source_contract=cast(JsonValue, required.model_dump(mode="json", by_alias=True)),
+            settlement_profile=profile,
         )
 
     async def execute_once(
@@ -110,7 +128,13 @@ class X402Adapter:
         _, requirement, contract = self._contract_from_challenge(
             observed.status_code, observed.payment_required, request
         )
-        terms = _payment_terms(contract, request)
+        expected_payer = cast(str, self._expected_payer)
+        profile = _settlement_profile(requirement, expected_payer)
+        if self._preflight_profile is None:
+            raise AdapterProtocolError("x402 execution requires a preflight settlement profile")
+        if profile != self._preflight_profile:
+            raise AdapterProtocolError("x402 settlement profile changed after preflight")
+        terms = _payment_terms(contract, request, profile)
         try:
             authorization.require_exact_payment_terms(terms)
         except AuthorizationError as error:
@@ -130,6 +154,12 @@ class X402Adapter:
         result = await signer.execute_once(signer_request)
         observation = _delivery_observation(result, request)
         try:
+            if result.transaction_reference is not None and (
+                result.payer is None or result.payer.casefold() != expected_payer.casefold()
+            ):
+                raise X402SubmissionUncertainError(
+                    "x402 signer payer differs from the pre-authorized payer"
+                )
             returned_requirement = self._require_returned_terms(result, request, terms)
             provider_receipt = self._provider_receipt(
                 result, returned_requirement, observed.observed_at
@@ -138,8 +168,8 @@ class X402Adapter:
             self._recovery = await recover_x402_submission(
                 result,
                 rpc,
-                requirement,
-                expected_payer=result.payer,
+                self._preflight_profile,
+                scheme=requirement.scheme,
                 observed_at=observed.observed_at,
             )
             execution = _execution(
@@ -157,8 +187,8 @@ class X402Adapter:
         self._recovery = await recover_x402_submission(
             result,
             rpc,
-            returned_requirement,
-            expected_payer=result.payer,
+            self._preflight_profile,
+            scheme=requirement.scheme,
             observed_at=observed.observed_at,
         )
         execution = _execution(
@@ -178,6 +208,9 @@ class X402Adapter:
             observation,
         )
 
+    def independent_settlement(self) -> IndependentSettlementObservation | None:
+        return self._recovery.independent_observation if self._recovery is not None else None
+
     async def collect_activity(self) -> AdapterEvidence:
         self._require_paid_ports()
         records: list[JsonValue] = []
@@ -191,6 +224,7 @@ class X402Adapter:
             operation="activity",
             source="x402.base_sepolia.transaction_receipt",
             artifact_type=ArtifactType.ACTIVITY,
+            evidence_class=EvidenceClass.INDEPENDENT_OBSERVATION,
             data=records,
             observed_at=datetime.now(UTC),
         )
@@ -222,8 +256,8 @@ class X402Adapter:
             raise AdapterProtocolError("x402 primary payment requirement is unsupported") from error
         return required, requirement, contract
 
-    @staticmethod
     def _require_returned_terms(
+        self,
         result: ExternalSignerResult,
         request: PaidExecutionRequest,
         selected_terms: PaymentTerms,
@@ -235,7 +269,22 @@ class X402Adapter:
             contract = normalize_payment_required(
                 required, request_schema=_request_schema(request.body)
             )
-            returned_terms = _payment_terms(contract, request)
+        except (ValidationError, ValueError) as error:
+            raise X402SubmissionUncertainError(
+                "x402 signer returned an invalid challenge after possible submission"
+            ) from error
+        try:
+            requirement = required.selected_requirement()
+        except ValueError as error:
+            raise X402SubmissionUncertainError(
+                "x402 signer selected an unsupported payment requirement"
+            ) from error
+        try:
+            returned_terms = _payment_terms(
+                contract,
+                request,
+                _settlement_profile(requirement, cast(str, self._expected_payer)),
+            )
         except (ValidationError, ValueError) as error:
             raise X402SubmissionUncertainError(
                 "x402 signer returned an invalid challenge after possible submission"
@@ -244,12 +293,7 @@ class X402Adapter:
             raise X402SubmissionUncertainError(
                 "x402 signer challenge changed after possible submission"
             )
-        try:
-            return required.selected_requirement()
-        except ValueError as error:
-            raise X402SubmissionUncertainError(
-                "x402 signer selected an unsupported payment requirement"
-            ) from error
+        return requirement
 
     @staticmethod
     def _provider_receipt(
@@ -346,13 +390,35 @@ def _request_schema(body: JsonValue | None) -> dict[str, JsonValue]:
     return {"type": schema_type}
 
 
-def _payment_terms(contract: ExpectedContract, request: PaidExecutionRequest) -> PaymentTerms:
+def _settlement_profile(requirement: PaymentRequirements, payer: str) -> SettlementProfile:
+    return SettlementProfile(
+        network=requirement.network,
+        chain_id=int(requirement.network.split(":", 1)[1]),
+        asset_identity=AssetIdentity(
+            symbol="USDC",
+            network=requirement.network,
+            reference=requirement.asset,
+            decimals=USDC_DECIMALS,
+        ),
+        atomic_amount=int(requirement.amount),
+        recipient=requirement.pay_to,
+        payer=payer,
+    )
+
+
+def _payment_terms(
+    contract: ExpectedContract,
+    request: PaidExecutionRequest,
+    profile: SettlementProfile,
+) -> PaymentTerms:
     if contract.price is None:
         raise AdapterProtocolError("x402 challenge omitted its quoted price")
     if contract.url is None:
         raise AdapterProtocolError("x402 challenge omitted its resource URL")
     return PaymentTerms(
-        schema_version=2,
+        schema_version=4,
+        payer=profile.payer,
+        settlement_profile_digest=sha256_digest(profile.model_dump(mode="json")),
         adapter_id="x402",
         protocol_version="2",
         scheme=contract.scheme,

@@ -11,6 +11,8 @@ from settlediff.domain.models import (
     ExecutionRecord,
     ExpectedContract,
     Finding,
+    IndependentSettlementObservation,
+    IndependentSettlementStatus,
     LedgerStatus,
     PaymentReceipt,
     PurchaseIntent,
@@ -18,6 +20,7 @@ from settlediff.domain.models import (
     Severity,
 )
 from settlediff.domain.money import Money
+from settlediff.domain.settlement import provider_settlement_status
 
 
 def run_checks(
@@ -28,6 +31,7 @@ def run_checks(
     *,
     receipt: PaymentReceipt | None = None,
     delivery: DeliveryAssessment | None = None,
+    independent: IndependentSettlementObservation | None = None,
 ) -> tuple[Finding, ...]:
     """Run the fixed verification suite without I/O, model calls, or check dependencies."""
     network_present = any(
@@ -61,9 +65,9 @@ def run_checks(
         _price(contract, execution, match),
         *field_findings,
         _recipient(contract, execution, match, receipt),
-        _settlement(execution, match, receipt),
+        _settlement(execution, match, receipt, independent),
         _service_execution(execution),
-        _paid_failure(execution, match, receipt),
+        _paid_failure(execution, match, receipt, independent),
         _ledger_outcome(execution, match, receipt),
         _activity_persistence(match),
         *(_delivery(delivery) if _assesses_delivery(delivery) else ()),
@@ -371,24 +375,74 @@ def _effective_settlement_status(
     return SettlementStatus.UNKNOWN
 
 
+def _independent_effective_settlement_status(
+    execution: ExecutionRecord | None,
+    receipt: PaymentReceipt | None,
+    independent: IndependentSettlementObservation,
+) -> SettlementStatus:
+    provider_status = provider_settlement_status(execution, receipt)
+    if independent.status is IndependentSettlementStatus.CONFIRMED:
+        return (
+            SettlementStatus.UNKNOWN
+            if provider_status is SettlementStatus.FAILED
+            else SettlementStatus.SETTLED
+        )
+    if independent.status is IndependentSettlementStatus.FAILED:
+        return (
+            SettlementStatus.UNKNOWN
+            if provider_status is SettlementStatus.SETTLED
+            else SettlementStatus.FAILED
+        )
+    return SettlementStatus.UNKNOWN
+
+
+def _provider_settlement_citation(
+    receipt: PaymentReceipt | None,
+) -> tuple[str, str]:
+    if receipt is not None:
+        return "receipt", "receipt.settlement_status"
+    return "execution", "execution.settlement_status"
+
+
 def _settlement(
     execution: ExecutionRecord | None,
     match: MatchResult,
     receipt: PaymentReceipt | None,
+    independent: IndependentSettlementObservation | None,
 ) -> Finding:
-    status = _effective_settlement_status(execution, match, receipt)
-    if status is SettlementStatus.UNKNOWN:
-        return _unknown("settlement", "Financial settlement evidence is unavailable or conflicts.")
-    artifact_ids = (
-        ("receipt", "activity")
-        if receipt is not None and match.matched is not None
-        else ("execution",)
-    )
-    field_paths = (
-        ("receipt.settlement_status", "activity.status")
-        if receipt is not None and match.matched is not None
-        else ("execution.settlement_status",)
-    )
+    if independent is None:
+        status = _effective_settlement_status(execution, match, receipt)
+        if status is SettlementStatus.UNKNOWN:
+            return _unknown(
+                "settlement", "Financial settlement evidence is unavailable or conflicts."
+            )
+        artifact_ids = (
+            ("receipt", "activity")
+            if receipt is not None and match.matched is not None
+            else ("execution",)
+        )
+        field_paths = (
+            ("receipt.settlement_status", "activity.status")
+            if receipt is not None and match.matched is not None
+            else ("execution.settlement_status",)
+        )
+    else:
+        status = _independent_effective_settlement_status(execution, receipt, independent)
+        provider_artifact, provider_field = _provider_settlement_citation(receipt)
+        artifact_ids = (provider_artifact, "independent_settlement")
+        field_paths = (provider_field, "independent_settlement.status")
+        if status is SettlementStatus.UNKNOWN:
+            return _finding(
+                "settlement",
+                Severity.WARNING,
+                CheckStatus.UNKNOWN,
+                SettlementStatus.SETTLED,
+                SettlementStatus.UNKNOWN,
+                "Independent settlement is unavailable, inconclusive, or "
+                "contradicts provider evidence.",
+                artifact_ids,
+                field_paths,
+            )
     if status is SettlementStatus.SETTLED:
         return _finding(
             "settlement",
@@ -436,25 +490,52 @@ def _paid_failure(
     execution: ExecutionRecord | None,
     match: MatchResult,
     receipt: PaymentReceipt | None,
+    independent: IndependentSettlementObservation | None,
 ) -> Finding:
-    settlement_status = _effective_settlement_status(execution, match, receipt)
+    if independent is None:
+        settlement_status = _effective_settlement_status(execution, match, receipt)
+        artifact_ids = (
+            ("execution", "receipt", "activity") if receipt is not None else ("execution",)
+        )
+        field_paths = (
+            (
+                "receipt.settlement_status",
+                "activity.status",
+                "execution.upstream_http_status",
+            )
+            if receipt is not None
+            else ("execution.settlement_status", "execution.upstream_http_status")
+        )
+    else:
+        settlement_status = _independent_effective_settlement_status(
+            execution, receipt, independent
+        )
+        provider_artifact, provider_field = _provider_settlement_citation(receipt)
+        artifact_ids = ("execution", provider_artifact, "independent_settlement")
+        field_paths = (
+            "execution.upstream_http_status",
+            provider_field,
+            "independent_settlement.status",
+        )
     if (
         execution is None
         or execution.upstream_http_status is None
         or settlement_status is SettlementStatus.UNKNOWN
     ):
-        return _unknown("paid_failure", "Settlement or service outcome is unavailable.")
-    failed_service = not 200 <= execution.upstream_http_status < 300
-    artifact_ids = ("execution", "receipt", "activity") if receipt is not None else ("execution",)
-    field_paths = (
-        (
-            "receipt.settlement_status",
-            "activity.status",
-            "execution.upstream_http_status",
+        if independent is None:
+            return _unknown("paid_failure", "Settlement or service outcome is unavailable.")
+        return _finding(
+            "paid_failure",
+            Severity.WARNING,
+            CheckStatus.UNKNOWN,
+            SettlementStatus.SETTLED,
+            SettlementStatus.UNKNOWN,
+            "Independent settlement is unavailable, inconclusive, or "
+            "contradicts provider evidence.",
+            artifact_ids,
+            field_paths,
         )
-        if receipt is not None
-        else ("execution.settlement_status", "execution.upstream_http_status")
-    )
+    failed_service = not 200 <= execution.upstream_http_status < 300
     if settlement_status is SettlementStatus.SETTLED and failed_service:
         return _finding(
             "paid_failure",

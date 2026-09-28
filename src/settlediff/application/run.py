@@ -39,6 +39,7 @@ from settlediff.application.budget import (
 from settlediff.application.payment_rails import (
     AdapterEvidence,
     ContractReinspectionPort,
+    IndependentSettlementPort,
     PaymentRailAdapter,
     SchemaEvidencePort,
     SubmissionUncertainError,
@@ -57,17 +58,20 @@ from settlediff.contextdev.client import (
 )
 from settlediff.domain.checks import run_checks
 from settlediff.domain.delivery import assess_delivery
+from settlediff.domain.integrity import sha256_digest
 from settlediff.domain.matching import MatchResult, MatchStatus, match_activity
 from settlediff.domain.models import (
     ArtifactType,
     DeliveryObservation,
     EvidenceArtifact,
+    EvidenceClass,
     ExecutionRecord,
     ExpectedContract,
     ExplanationRecord,
     ExplanationSource,
     MachineReport,
     PurchaseIntent,
+    SettlementProfile,
 )
 from settlediff.domain.money import Money
 from settlediff.domain.normalize import (
@@ -78,7 +82,9 @@ from settlediff.domain.normalize import (
 )
 from settlediff.domain.redaction import redact_artifact, redact_embedded_identifiers
 from settlediff.domain.retry import RetryRunStateSnapshot, analyze_retry
+from settlediff.domain.settlement import compare_settlement, provider_settlement_status
 from settlediff.domain.verdict import derive_verdict
+from settlediff.observers.evm_transfer import unavailable_settlement
 
 
 class RecoveryState(StrEnum):
@@ -239,10 +245,12 @@ class LiveEvidenceCollector:
         self._contract_reinspection: EvidenceArtifact | None = None
         self._quote: Money | None = None
         self._payment_terms: PaymentTerms | None = None
+        self._settlement_profile: SettlementProfile | None = None
         self._schema: EvidenceArtifact | None = None
         self._execution: EvidenceArtifact | None = None
         self._receipt: EvidenceArtifact | None = None
         self._activity: EvidenceArtifact | None = None
+        self._activity_evidence_class = EvidenceClass.PROVIDER_ASSERTION
         self._context: EvidenceArtifact | None = None
         self._recovery: EvidenceArtifact | None = None
         self._delivery_observation: DeliveryObservation | None = None
@@ -308,30 +316,38 @@ class LiveEvidenceCollector:
                 f"authorized budget {request.budget.amount} {request.budget.unit}"
             )
         self._quote = contract.price
+        self._settlement_profile = contract_evidence.settlement_profile
         if isinstance(request.resource, HttpResourceReference):
             if contract.url is None:
                 raise RunTransitionError("HTTP payment terms require a contract resource URL")
-            self._payment_terms = PaymentTerms(
-                schema_version=2,
-                adapter_id=self._adapter.adapter_id,
-                protocol_version=contract_evidence.protocol_version,
-                scheme=contract.scheme,
-                network=contract.network,
-                chain=contract.chain,
-                asset=contract.asset_identity,
-                asset_symbol=contract.asset,
-                recipient=contract.recipient,
-                quoted_price=contract.price,
-                max_timeout_seconds=contract.max_timeout_seconds,
-                resource_url=contract.url,
-                method=request.method,
-                body_digest=PaidExecutionCapability.body_digest_for(request.body),
-                response_contract_digest=(
+            profile = contract_evidence.settlement_profile
+            terms_payload: dict[str, object] = {
+                "schema_version": 4 if profile is not None else 2,
+                "adapter_id": self._adapter.adapter_id,
+                "protocol_version": contract_evidence.protocol_version,
+                "scheme": contract.scheme,
+                "network": contract.network,
+                "chain": contract.chain,
+                "asset": contract.asset_identity,
+                "asset_symbol": contract.asset,
+                "recipient": contract.recipient,
+                "quoted_price": contract.price,
+                "max_timeout_seconds": contract.max_timeout_seconds,
+                "resource_url": contract.url,
+                "method": request.method,
+                "body_digest": PaidExecutionCapability.body_digest_for(request.body),
+                "response_contract_digest": (
                     contract.response_contract.digest
                     if contract.response_contract is not None
                     else None
                 ),
-            )
+            }
+            if profile is not None:
+                terms_payload["payer"] = profile.payer
+                terms_payload["settlement_profile_digest"] = sha256_digest(
+                    profile.model_dump(mode="json")
+                )
+            self._payment_terms = PaymentTerms.model_validate(terms_payload)
         else:
             _validate_catalog_contract(contract, request)
             assert contract.price is not None
@@ -519,6 +535,7 @@ class LiveEvidenceCollector:
         )
         self._recovery = artifact
         self._activity = artifact
+        self._activity_evidence_class = activity_evidence.evidence_class
         return RecoveryState.UNRESOLVED, (artifact,)
 
     async def verify(self, request: PaidExecutionRequest) -> MachineReport:
@@ -541,6 +558,7 @@ class LiveEvidenceCollector:
                 expected_operation="activity",
                 adapter_id=self._adapter.adapter_id,
             )
+            self._activity_evidence_class = activity_evidence.evidence_class
         contract = normalize_contract(self._contract)
         execution = normalize_execution(self._execution) if self._execution is not None else None
         receipt = normalize_receipt(self._receipt) if self._receipt is not None else None
@@ -565,21 +583,71 @@ class LiveEvidenceCollector:
             self._delivery_observation,
             contract_evidence_id=self._contract.artifact_id,
         )
+        observation = (
+            self._adapter.independent_settlement()
+            if isinstance(self._adapter, IndependentSettlementPort)
+            else None
+        )
+        if observation is None:
+            observation = unavailable_settlement(
+                (
+                    "SETTLEMENT_PROFILE_UNAVAILABLE"
+                    if self._settlement_profile is None
+                    else "NO_TRANSACTION_REFERENCE"
+                ),
+                source="settlediff.independent_settlement",
+                observed_at=datetime.now(UTC),
+                profile=self._settlement_profile,
+                transaction_reference=self._transaction_reference,
+            )
+        provider_activity = (
+            matched.matched
+            if self._activity_evidence_class is EvidenceClass.PROVIDER_ASSERTION
+            else None
+        )
+        provider_evidence_ids = (
+            (self._receipt.artifact_id,)
+            if self._receipt is not None
+            else (self._execution.artifact_id,)
+            if self._execution is not None
+            else ()
+        )
+        observer_evidence_ids = (
+            (self._activity.artifact_id,)
+            if observation.ledger is not None
+            and self._activity_evidence_class is EvidenceClass.INDEPENDENT_OBSERVATION
+            else ()
+        )
+        settlement_comparison = compare_settlement(
+            provider_settlement_status(execution, receipt),
+            observation,
+            provider_evidence_ids=provider_evidence_ids,
+            observer_evidence_ids=observer_evidence_ids,
+        )
         findings = run_checks(
-            intent, contract, execution, matched, receipt=receipt, delivery=delivery
+            intent,
+            contract,
+            execution,
+            matched,
+            receipt=receipt,
+            delivery=delivery,
+            independent=observation,
         )
         report = MachineReport(
-            schema_version=3,
+            schema_version=4,
             run_id=request.run_id,
             intent=intent,
             contract=contract,
             execution=execution,
-            ledger=matched.matched,
+            ledger=observation.ledger,
             findings=findings,
             verdict=derive_verdict(findings, delivery=delivery),
             receipt=receipt,
             adapter_id=self._adapter.adapter_id,
             delivery=delivery,
+            provider_activity=provider_activity,
+            independent_settlement=observation,
+            settlement_comparison=settlement_comparison,
         )
         if execution is not None:
             await self._collect_context(request, execution)

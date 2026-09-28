@@ -1,0 +1,1 @@
+{"schema_version":1,"scenario":"x402-independent-confirmed","synthetic":true,"expected_verdict":"VERIFIED","artifacts":["contract.json","execution.json","receipt.json","activity.json","independent_settlement.json"],"activity_evidence_class":"independent_observation"}

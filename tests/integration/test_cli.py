@@ -40,9 +40,11 @@ from settlediff.config import Settings
 from settlediff.contextdev.client import ContextDevClient
 from settlediff.domain.models import (
     ArtifactType,
+    AssetIdentity,
     EvidenceArtifact,
     ExplanationRecord,
     ExplanationSource,
+    SettlementProfile,
 )
 from settlediff.domain.money import Money
 from settlediff.perflo.adapter import PerfloAdapter, PerfloClientPort
@@ -50,6 +52,7 @@ from settlediff.perflo.client import PerfloCliVersion, PerfloVersionError
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 from settlediff.storage.sqlite import SQLiteReportRepository
 from settlediff.x402.adapter import X402Adapter
+from settlediff.x402.client import X402ClientError, X402SignerMetadata
 
 runner = CliRunner()
 
@@ -78,6 +81,16 @@ def x402_live_settings(*, enabled: bool = True) -> Settings:
         x402_rpc_url="https://rpc.example.invalid",
         x402_testnet_enabled=enabled,
     )
+
+
+EXPECTED_PAYER = "0x3333333333333333333333333333333333333333"
+
+
+async def fake_signer_probe(
+    _command: tuple[str, ...], *, timeout_seconds: float = 5
+) -> X402SignerMetadata:
+    assert timeout_seconds > 0
+    return X402SignerMetadata(schema_version=3, payer=EXPECTED_PAYER)
 
 
 class DeclineX402Adapter:
@@ -330,7 +343,11 @@ def test_live_run_rejects_invalid_json_before_any_adapter_call() -> None:
 
 
 def test_x402_composition_builds_adapter_without_contacting_external_systems() -> None:
-    adapter, close = _build_payment_adapter(PaymentRail.X402, x402_live_settings())
+    adapter, close = _build_payment_adapter(
+        PaymentRail.X402,
+        x402_live_settings(),
+        x402_payer="0x3333333333333333333333333333333333333333",
+    )
 
     assert isinstance(adapter, X402Adapter)
     assert close is not None
@@ -417,8 +434,11 @@ def test_x402_get_decline_preserves_method_and_absent_body_without_execution(
     requests: list[PaidExecutionRequest] = []
     adapter = DeclineX402Adapter(requests)
     monkeypatch.setattr("settlediff.cli.Settings", x402_live_settings)
+    monkeypatch.setattr("settlediff.cli.probe_x402_signer", fake_signer_probe)
 
-    def build_adapter(_rail: PaymentRail, _settings: Settings) -> tuple[DeclineX402Adapter, None]:
+    def build_adapter(
+        _rail: PaymentRail, _settings: Settings, _x402_payer: str | None
+    ) -> tuple[DeclineX402Adapter, None]:
         return adapter, None
 
     monkeypatch.setattr("settlediff.cli._build_payment_adapter", build_adapter)
@@ -697,8 +717,11 @@ def test_live_signer_launch_failure_remains_visible_without_traceback(
 
     adapter = BrokenSignerAdapter(requests)
     monkeypatch.setattr("settlediff.cli.Settings", x402_live_settings)
+    monkeypatch.setattr("settlediff.cli.probe_x402_signer", fake_signer_probe)
 
-    def build_adapter(_rail: PaymentRail, _settings: Settings) -> tuple[BrokenSignerAdapter, None]:
+    def build_adapter(
+        _rail: PaymentRail, _settings: Settings, _x402_payer: str | None
+    ) -> tuple[BrokenSignerAdapter, None]:
         return adapter, None
 
     monkeypatch.setattr("settlediff.cli._build_payment_adapter", build_adapter)
@@ -2267,3 +2290,192 @@ def test_live_run_reports_reinspection_persistence_failure(
     )
     assert "Payment terms revalidation failed" in result.stderr
     assert "syn-sensitive-storage-detail" not in result.stderr
+
+
+def _synthetic_settlement_profile() -> SettlementProfile:
+    return SettlementProfile(
+        network="eip155:84532",
+        chain_id=84532,
+        asset_identity=AssetIdentity(
+            symbol="USDC",
+            network="eip155:84532",
+            reference="0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            decimals=6,
+        ),
+        atomic_amount=1000,
+        recipient="0x1111111111111111111111111111111111111111",
+        payer=EXPECTED_PAYER,
+    )
+
+
+def test_x402_run_probes_signer_before_authorization_and_binds_payer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class ProfileX402Adapter(DeclineX402Adapter):
+        async def inspect(self, request: PaidExecutionRequest) -> AdapterEvidence:
+            calls.append("inspect")
+            evidence = await super().inspect(request)
+            return evidence.model_copy(
+                update={"settlement_profile": _synthetic_settlement_profile()}
+            )
+
+    async def probe(command: tuple[str, ...], *, timeout_seconds: float = 5) -> X402SignerMetadata:
+        calls.append("probe")
+        return await fake_signer_probe(command, timeout_seconds=timeout_seconds)
+
+    captured: list[str | None] = []
+
+    def build_adapter(
+        _rail: PaymentRail, _settings: Settings, x402_payer: str | None
+    ) -> tuple[ProfileX402Adapter, None]:
+        calls.append("build_adapter")
+        captured.append(x402_payer)
+        return adapter, None
+
+    adapter = ProfileX402Adapter([])
+    monkeypatch.setattr("settlediff.cli.Settings", x402_live_settings)
+    monkeypatch.setattr("settlediff.cli.probe_x402_signer", probe)
+    monkeypatch.setattr("settlediff.cli._build_payment_adapter", build_adapter)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--rail",
+            "x402",
+            "--allow-testnet",
+            "--method",
+            "GET",
+            "--url",
+            "http://127.0.0.1:4021/weather",
+            "--budget",
+            "0.01",
+        ],
+        input="n\n",
+    )
+
+    assert result.exit_code == 1
+    assert calls == ["probe", "build_adapter", "inspect"]
+    assert captured == [EXPECTED_PAYER]
+    assert "Settlement payer: 0x3333…3333" in result.stdout
+    assert EXPECTED_PAYER not in result.stdout
+    assert "Settlement profile digest:" in result.stdout
+    assert "Authorization declined" in result.stdout
+
+
+def test_x402_run_failed_signer_probe_exits_before_adapter_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def failing_probe(
+        _command: tuple[str, ...], *, timeout_seconds: float = 5
+    ) -> X402SignerMetadata:
+        raise X402ClientError("x402 signer metadata is invalid")
+
+    def forbidden_build(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("adapter must not be built after a failed probe")
+
+    monkeypatch.setattr("settlediff.cli.Settings", x402_live_settings)
+    monkeypatch.setattr("settlediff.cli.probe_x402_signer", failing_probe)
+    monkeypatch.setattr("settlediff.cli._build_payment_adapter", forbidden_build)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--rail",
+            "x402",
+            "--allow-testnet",
+            "--url",
+            "https://example.invalid/paid",
+            "--body",
+            "{}",
+            "--budget",
+            "0.01",
+        ],
+        input="y\n",
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid live preflight" in result.stderr
+    assert "Authorize" not in result.stdout
+
+
+def test_x402_adapter_build_requires_probed_payer() -> None:
+    with pytest.raises(ValueError, match="probed signer payer"):
+        _build_payment_adapter(PaymentRail.X402, x402_live_settings())
+
+
+def test_perflo_run_never_probes_the_x402_signer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def forbidden_probe(
+        _command: tuple[str, ...], *, timeout_seconds: float = 5
+    ) -> X402SignerMetadata:
+        raise AssertionError("Perflo runs must not probe the x402 signer")
+
+    class FakePerflo:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def probe_version(self) -> PerfloCliVersion:
+            return PerfloCliVersion(major=8, minor=1, patch=0)
+
+        async def inspect_service(self, _target: str) -> PerfloSuccessEnvelope:
+            return _vendor_envelope(
+                {
+                    "slug": "synthetic-search",
+                    "price": {"amount": "0.01", "currency": "USD"},
+                    "maxChargePerCall": {"amount": "0.05", "currency": "USD"},
+                    "payable": True,
+                    "input": {"fields": []},
+                }
+            )
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", FakePerflo)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+    monkeypatch.setattr("settlediff.cli.probe_x402_signer", forbidden_probe)
+
+    result = runner.invoke(
+        app,
+        ["run", "--slug", "synthetic-search", "--budget", "0.05"],
+        input="n\n",
+    )
+
+    assert result.exit_code == 1
+    assert "Authorization declined" in result.stdout
+
+
+def test_show_renders_schema4_settlement_provenance(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/perflo-v8-provider-only-success"))
+    repository = SQLiteReportRepository(database)
+    repository.save(report)
+    repository.close()
+
+    result = runner.invoke(app, ["show", report.run_id, "--database", str(database)])
+
+    assert result.exit_code == 0
+    assert "Independent settlement: UNAVAILABLE (SETTLEMENT_PROFILE_UNAVAILABLE)" in result.stdout
+    assert (
+        "Provider comparison: NOT_COMPARABLE "
+        "(NO_INDEPENDENT_SETTLEMENT_OBSERVATION)" in result.stdout
+    )
+    assert "Provider Activity: confirmed (provider assertion)" in result.stdout
+
+
+def test_show_legacy_report_omits_settlement_provenance(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(database)
+    repository.save(report)
+    repository.close()
+
+    result = runner.invoke(app, ["show", report.run_id, "--database", str(database)])
+
+    assert result.exit_code == 0
+    assert "Independent settlement:" not in result.stdout
+    assert "Provider comparison:" not in result.stdout
+    assert "Provider Activity:" not in result.stdout

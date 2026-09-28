@@ -1,0 +1,1 @@
+{"schema_version":4,"vendor_slug":"synthetic-weather","url":null,"price":{"amount":"0.01","unit":"USD"},"asset":"USD","protocol":"perflo","chain":null,"request_schema":{"type":"object"},"required_max_charge":{"amount":"0.05","unit":"USD"},"payable":true,"scheme":null,"network":null,"asset_identity":null,"recipient":null,"max_timeout_seconds":null,"normalization_notes":[]}

@@ -56,3 +56,39 @@ async def test_live_dependencies_use_canonical_summaries_and_artifact_handles() 
     assert activity.artifact_id == "artifact:perflo.activity.agent"
     assert "confirmed" in activity.summary
     assert "syn_recipient" not in activity.summary
+
+
+@pytest.mark.asyncio
+async def test_schema4_activity_summary_labels_provider_assertion() -> None:
+    report = replay_fixture(Path("fixtures/perflo-v8-provider-only-success"))
+
+    activity = await build_investigation_dependencies(report, ()).get_activity()
+
+    assert activity.summary.startswith("provider assertion: status=confirmed")
+    assert (
+        "; independent settlement=UNAVAILABLE (SETTLEMENT_PROFILE_UNAVAILABLE); "
+        "comparison=NOT_COMPARABLE" in activity.summary
+    )
+
+
+@pytest.mark.asyncio
+async def test_schema4_activity_summary_without_provider_activity() -> None:
+    report = replay_fixture(Path("fixtures/x402-independent-confirmed"))
+
+    activity = await build_investigation_dependencies(report, ()).get_activity()
+
+    assert activity.summary == (
+        "No provider Activity record is available; independent settlement=CONFIRMED "
+        "(EXACT_TRANSFER_CONFIRMED); comparison=MATCH"
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_activity_summary_is_unchanged() -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+
+    activity = await build_investigation_dependencies(report, ()).get_activity()
+
+    assert activity.summary.startswith("status=confirmed")
+    assert "provider assertion" not in activity.summary
+    assert "independent settlement" not in activity.summary
