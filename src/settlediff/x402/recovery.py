@@ -12,6 +12,7 @@ from settlediff.application.payment_rails import AdapterEvidence
 from settlediff.application.run import RecoveryState
 from settlediff.domain.models import (
     ArtifactType,
+    EvidenceClass,
     IndependentSettlementObservation,
     IndependentSettlementStatus,
     LedgerRecord,
@@ -162,6 +163,11 @@ def x402_recovery_evidence(
         operation="transaction_status",
         source=source,
         artifact_type=ArtifactType.PAYMENT_RECEIPT,
+        evidence_class=(
+            EvidenceClass.INDEPENDENT_OBSERVATION
+            if source == "x402.base_sepolia.transaction_receipt"
+            else EvidenceClass.PROVIDER_ASSERTION
+        ),
         data=data,
         observed_at=observed_at,
         transaction_reference=recovery.transaction_reference,

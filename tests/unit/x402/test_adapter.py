@@ -25,6 +25,7 @@ from settlediff.domain.integrity import sha256_digest
 from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
+    EvidenceClass,
     ExpectedContract,
     IndependentSettlementStatus,
     LedgerStatus,
@@ -273,6 +274,7 @@ async def test_adapter_revalidates_terms_and_keeps_provider_and_independent_evid
     assert executed.transaction_reference == TX_HASH
     assert executed.submission_uncertain is False
     assert activity.artifact_type is ArtifactType.ACTIVITY
+    assert activity.evidence_class is EvidenceClass.INDEPENDENT_OBSERVATION
     records = cast(list[JsonValue], activity.data)
     assert len(records) == 1
     assert cast(dict[str, JsonValue], records[0])["status"] == "confirmed"

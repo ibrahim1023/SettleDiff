@@ -16,11 +16,15 @@ from settlediff.domain.models import (
     ExecutionRecord,
     ExpectedContract,
     Finding,
+    IndependentSettlementObservation,
+    IndependentSettlementStatus,
     LedgerRecord,
     LedgerStatus,
     PaymentReceipt,
     PurchaseIntent,
+    SettlementProfile,
     SettlementStatus,
+    SettlementVerificationDimensions,
     Severity,
     Verdict,
 )
@@ -688,3 +692,285 @@ def test_not_assessed_delivery_adds_no_finding_and_preserves_verdict() -> None:
     assert assessed == baseline
     assert all(finding.check_id != "delivery" for finding in assessed)
     assert derive_verdict(assessed).value == "VERIFIED"
+
+
+def _settlement_check_inputs(
+    provider_status: SettlementStatus,
+    *,
+    upstream_status: int = 200,
+) -> tuple[
+    PurchaseIntent,
+    ExpectedContract,
+    ExecutionRecord,
+    PaymentReceipt,
+    MatchResult,
+]:
+    identity = AssetIdentity(
+        symbol="USDC",
+        network="eip155:84532",
+        reference="syn_asset",
+        decimals=6,
+    )
+    amount = Money(amount=Decimal("0.001"), unit="USDC")
+    intent = PurchaseIntent(
+        run_id="syn_settlement",
+        task="synthetic",
+        max_budget=amount,
+        requested_service=None,
+        created_at=NOW,
+    )
+    contract = ExpectedContract(
+        schema_version=2,
+        vendor_slug=None,
+        url="https://example.invalid/paid",
+        price=amount,
+        asset="USDC",
+        protocol="x402",
+        chain=None,
+        request_schema={"type": "object"},
+        scheme="exact",
+        network="eip155:84532",
+        asset_identity=identity,
+        recipient="syn_recipient",
+    )
+    execution = ExecutionRecord(
+        vendor_slug=None,
+        upstream_http_status=upstream_status,
+        charge=amount,
+        asset="USDC",
+        protocol="x402",
+        chain=None,
+        recipient="syn_recipient",
+        scheme="exact",
+        network="eip155:84532",
+        asset_identity=identity,
+        settlement_status=provider_status,
+        transaction_id=None,
+        session_id=None,
+        transaction_hash="syn_transaction",
+        response_body={"result": "synthetic"},
+        executed_at=NOW,
+    )
+    receipt = PaymentReceipt(
+        amount=amount if provider_status is SettlementStatus.SETTLED else None,
+        asset="USDC",
+        protocol="x402",
+        chain=None,
+        recipient="syn_recipient",
+        scheme="exact",
+        network="eip155:84532",
+        asset_identity=identity,
+        settlement_status=provider_status,
+        transaction_id=None,
+        session_id=None,
+        transaction_hash="syn_transaction",
+        issued_at=NOW,
+    )
+    activity = LedgerRecord(
+        ledger_id="syn_provider_activity",
+        vendor_slug=None,
+        amount=amount,
+        asset="USDC",
+        protocol="x402",
+        chain=None,
+        recipient="syn_recipient",
+        scheme="exact",
+        network="eip155:84532",
+        asset_identity=identity,
+        status=LedgerStatus.CONFIRMED,
+        error_reason=None,
+        transaction_id=None,
+        session_id=None,
+        transaction_hash="syn_transaction",
+        occurred_at=NOW,
+    )
+    match = MatchResult(
+        MatchStatus.MATCHED,
+        MatchStrategy.TRANSACTION_HASH,
+        MatchConfidence.HIGH,
+        activity,
+        (activity.ledger_id,),
+    )
+    return intent, contract, execution, receipt, match
+
+
+def _independent_observation(
+    status: IndependentSettlementStatus,
+) -> IndependentSettlementObservation:
+    identity = AssetIdentity(
+        symbol="USDC",
+        network="eip155:84532",
+        reference="syn_asset",
+        decimals=6,
+    )
+    profile = SettlementProfile(
+        network="eip155:84532",
+        chain_id=84532,
+        asset_identity=identity,
+        atomic_amount=1000,
+        recipient="syn_recipient",
+        payer="syn_payer",
+    )
+    conclusive = status in {
+        IndependentSettlementStatus.CONFIRMED,
+        IndependentSettlementStatus.FAILED,
+    }
+    ledger = None
+    if conclusive:
+        ledger = LedgerRecord(
+            ledger_id="syn_independent",
+            vendor_slug=None,
+            amount=(
+                Money(amount=Decimal("1000"), unit="USDC", minor_units=6)
+                if status is IndependentSettlementStatus.CONFIRMED
+                else None
+            ),
+            asset="USDC" if status is IndependentSettlementStatus.CONFIRMED else None,
+            protocol="x402",
+            chain=None,
+            recipient=(
+                "syn_recipient" if status is IndependentSettlementStatus.CONFIRMED else None
+            ),
+            scheme="exact",
+            network="eip155:84532",
+            asset_identity=(identity if status is IndependentSettlementStatus.CONFIRMED else None),
+            status=(
+                LedgerStatus.CONFIRMED
+                if status is IndependentSettlementStatus.CONFIRMED
+                else LedgerStatus.FAILED
+            ),
+            error_reason=(
+                None if status is IndependentSettlementStatus.CONFIRMED else "transaction reverted"
+            ),
+            transaction_id=None,
+            session_id=None,
+            transaction_hash="syn_transaction",
+            occurred_at=NOW,
+        )
+    return IndependentSettlementObservation(
+        status=status,
+        diagnostic={
+            IndependentSettlementStatus.CONFIRMED: "EXACT_TRANSFER_CONFIRMED",
+            IndependentSettlementStatus.FAILED: "RECEIPT_REVERTED",
+            IndependentSettlementStatus.INDETERMINATE: "RECEIPT_PENDING",
+            IndependentSettlementStatus.UNAVAILABLE: "SETTLEMENT_PROFILE_UNAVAILABLE",
+        }[status],
+        source="synthetic.observer",
+        observed_at=NOW,
+        transaction_reference="syn_transaction",
+        profile=profile,
+        dimensions=SettlementVerificationDimensions(
+            chain_verified=conclusive,
+            asset_verified=status is IndependentSettlementStatus.CONFIRMED,
+            amount_verified=status is IndependentSettlementStatus.CONFIRMED,
+            recipient_verified=status is IndependentSettlementStatus.CONFIRMED,
+            payer_verified=status is IndependentSettlementStatus.CONFIRMED,
+        ),
+        ledger=ledger,
+    )
+
+
+@pytest.mark.parametrize("upstream_status", [200, 500])
+def test_provider_only_perflo_activity_cannot_prove_settlement(
+    upstream_status: int,
+) -> None:
+    intent, contract, execution, receipt, match = _settlement_check_inputs(
+        SettlementStatus.SETTLED,
+        upstream_status=upstream_status,
+    )
+    observation = _independent_observation(IndependentSettlementStatus.UNAVAILABLE)
+
+    findings = run_checks(
+        intent,
+        contract,
+        execution,
+        match,
+        receipt=receipt,
+        independent=observation,
+    )
+    by_id = {finding.check_id: finding for finding in findings}
+
+    assert by_id["settlement"].status is CheckStatus.UNKNOWN
+    assert by_id["settlement"].artifact_ids == ("receipt", "independent_settlement")
+    assert by_id["paid_failure"].status is CheckStatus.UNKNOWN
+    assert derive_verdict(findings) is Verdict.UNVERIFIABLE
+
+
+@pytest.mark.parametrize(
+    (
+        "observer_status",
+        "provider_status",
+        "upstream_status",
+        "settlement_check",
+        "paid_failure_check",
+        "verdict",
+    ),
+    [
+        (
+            IndependentSettlementStatus.CONFIRMED,
+            SettlementStatus.SETTLED,
+            200,
+            CheckStatus.PASS,
+            CheckStatus.PASS,
+            Verdict.VERIFIED,
+        ),
+        (
+            IndependentSettlementStatus.CONFIRMED,
+            SettlementStatus.FAILED,
+            200,
+            CheckStatus.UNKNOWN,
+            CheckStatus.UNKNOWN,
+            Verdict.UNVERIFIABLE,
+        ),
+        (
+            IndependentSettlementStatus.FAILED,
+            SettlementStatus.FAILED,
+            200,
+            CheckStatus.FAIL,
+            CheckStatus.PASS,
+            Verdict.PAYMENT_FAILURE,
+        ),
+        (
+            IndependentSettlementStatus.FAILED,
+            SettlementStatus.SETTLED,
+            200,
+            CheckStatus.UNKNOWN,
+            CheckStatus.UNKNOWN,
+            Verdict.UNVERIFIABLE,
+        ),
+        (
+            IndependentSettlementStatus.CONFIRMED,
+            SettlementStatus.SETTLED,
+            500,
+            CheckStatus.PASS,
+            CheckStatus.FAIL,
+            Verdict.PAID_FAILURE,
+        ),
+    ],
+)
+def test_independent_settlement_controls_financial_findings(
+    observer_status: IndependentSettlementStatus,
+    provider_status: SettlementStatus,
+    upstream_status: int,
+    settlement_check: CheckStatus,
+    paid_failure_check: CheckStatus,
+    verdict: Verdict,
+) -> None:
+    intent, contract, execution, receipt, match = _settlement_check_inputs(
+        provider_status,
+        upstream_status=upstream_status,
+    )
+
+    findings = run_checks(
+        intent,
+        contract,
+        execution,
+        match,
+        receipt=receipt,
+        independent=_independent_observation(observer_status),
+    )
+    by_id = {finding.check_id: finding for finding in findings}
+
+    assert by_id["settlement"].status is settlement_check
+    assert by_id["paid_failure"].status is paid_failure_check
+    assert derive_verdict(findings) is verdict

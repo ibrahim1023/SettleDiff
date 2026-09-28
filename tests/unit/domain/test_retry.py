@@ -395,3 +395,16 @@ def test_adding_evidence_is_monotone_in_safety_rank() -> None:
         combined = assess(safe + additions)
         assert rank[combined.safety] >= rank[assess(safe).safety]
         assert combined.safety is not RetrySafety.SAFE_TO_RETRY
+
+
+def test_schema4_provider_activity_without_independent_ledger_is_attempt_signal() -> None:
+    report = replay_fixture(Path("fixtures/perflo-v8-provider-only-success"))
+    assert report.schema_version == 4
+    assert report.ledger is None
+    assert report.provider_activity is not None
+
+    result = assess(report=report)
+
+    assert result.safety is RetrySafety.REQUIRES_HUMAN_DECISION
+    assert result.reason_codes == (PROVIDER_PAYMENT_ATTEMPT,)
+    assert result.evidence_ids == (f"{RUN_ID}:report",)

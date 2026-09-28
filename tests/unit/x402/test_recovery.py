@@ -13,6 +13,7 @@ from settlediff.application.run import RecoveryState
 from settlediff.domain.models import (
     AssetIdentity,
     EvidenceArtifact,
+    EvidenceClass,
     IndependentSettlementStatus,
     LedgerStatus,
     RetrySafety,
@@ -183,6 +184,7 @@ async def test_pre_submission_result_proves_no_submission_without_rpc(
     evidence = x402_recovery_evidence(recovered, observed_at=NOW)
     assert evidence.operation == "transaction_status"
     assert evidence.source == "x402.external_signer.recovery"
+    assert evidence.evidence_class is EvidenceClass.PROVIDER_ASSERTION
     assert cast(dict[str, JsonValue], evidence.data) == {
         "status": "not_submitted",
         "proof_of_non_submission": True,
@@ -238,6 +240,7 @@ async def test_conclusive_receipt_proves_submission(
     assert recovered.diagnostic is None
     evidence = x402_recovery_evidence(recovered, observed_at=NOW)
     assert evidence.source == "x402.base_sepolia.transaction_receipt"
+    assert evidence.evidence_class is EvidenceClass.INDEPENDENT_OBSERVATION
     assert evidence.transaction_reference == TX_HASH
     assert cast(dict[str, JsonValue], evidence.data)["status"] == ledger_status.value
 

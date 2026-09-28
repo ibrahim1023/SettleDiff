@@ -71,6 +71,7 @@ def test_adapter_evidence_is_strict_and_preserves_operation_identity() -> None:
         "operation": "inspect",
         "source": "synthetic.contract",
         "artifact_type": "service_contract",
+        "evidence_class": "provider_assertion",
         "data": {"raw": "evidence"},
         "observed_at": None,
         "submission_uncertain": False,

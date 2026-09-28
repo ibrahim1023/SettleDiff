@@ -21,6 +21,7 @@ from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
     DeliveryObservation,
+    EvidenceClass,
     ExecutionRecord,
     ExpectedContract,
     IndependentSettlementObservation,
@@ -223,6 +224,7 @@ class X402Adapter:
             operation="activity",
             source="x402.base_sepolia.transaction_receipt",
             artifact_type=ArtifactType.ACTIVITY,
+            evidence_class=EvidenceClass.INDEPENDENT_OBSERVATION,
             data=records,
             observed_at=datetime.now(UTC),
         )

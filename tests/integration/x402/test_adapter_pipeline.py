@@ -139,7 +139,7 @@ async def test_offline_pipeline_composes_http_signer_rpc_and_canonical_verifier(
     assert count_path.read_text() == "1"
     assert rpc_methods == ["eth_chainId", "eth_getTransactionReceipt"]
     assert report.adapter_id == "x402"
-    assert report.schema_version == 3
+    assert report.schema_version == 4
     assert report.verdict is Verdict.VERIFIED
     assert report.delivery is not None
     assert report.delivery.status.value == "SATISFIED"

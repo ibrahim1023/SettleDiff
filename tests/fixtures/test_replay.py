@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 from settlediff.application.replay import replay_fixture
-from settlediff.domain.models import Verdict
+from settlediff.domain.models import (
+    IndependentSettlementStatus,
+    SettlementComparisonStatus,
+    Verdict,
+)
 
 FIXTURES = Path(__file__).parents[2] / "fixtures"
 
@@ -224,3 +228,44 @@ def test_replay_includes_provider_receipt_when_declared(
     assert report.receipt is not None
     assert report.receipt.settlement_status.value == "settled"
     assert report.verdict is Verdict.VERIFIED
+
+
+def test_perflo_provider_only_schema4_replay_is_unverifiable() -> None:
+    report = replay_fixture(FIXTURES / "perflo-v8-provider-only-success")
+
+    assert report.schema_version == 4
+    assert report.verdict is Verdict.UNVERIFIABLE
+    assert report.ledger is None
+    assert report.provider_activity is not None
+    assert report.independent_settlement is not None
+    assert report.independent_settlement.status is IndependentSettlementStatus.UNAVAILABLE
+    assert report.independent_settlement.diagnostic == "SETTLEMENT_PROFILE_UNAVAILABLE"
+    assert report.settlement_comparison is not None
+    assert report.settlement_comparison.status is SettlementComparisonStatus.NOT_COMPARABLE
+    assert report.settlement_comparison.observer_evidence_ids == ()
+
+
+def test_x402_independent_schema4_replay_is_verified() -> None:
+    report = replay_fixture(FIXTURES / "x402-independent-confirmed")
+
+    assert report.schema_version == 4
+    assert report.verdict is Verdict.VERIFIED
+    assert report.independent_settlement is not None
+    assert report.independent_settlement.status is IndependentSettlementStatus.CONFIRMED
+    assert report.ledger == report.independent_settlement.ledger
+    assert report.provider_activity is None
+    assert report.settlement_comparison is not None
+    assert report.settlement_comparison.status is SettlementComparisonStatus.MATCH
+    assert report.settlement_comparison.observer_evidence_ids == (
+        "x402-independent-confirmed:activity.json",
+    )
+
+
+def test_historical_fixture_replay_remains_schema2_without_provenance_fields() -> None:
+    report = replay_fixture(FIXTURES / "clean-success")
+    payload = report.model_dump(mode="json")
+
+    assert report.schema_version == 2
+    assert "provider_activity" not in payload
+    assert "independent_settlement" not in payload
+    assert "settlement_comparison" not in payload

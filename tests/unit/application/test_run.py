@@ -46,12 +46,19 @@ from settlediff.domain.models import (
     ArtifactType,
     AssetIdentity,
     EvidenceArtifact,
+    EvidenceClass,
     ExplanationRecord,
     ExplanationSource,
+    IndependentSettlementObservation,
+    IndependentSettlementStatus,
     InvestigationExplanation,
+    LedgerRecord,
+    LedgerStatus,
     MachineReport,
     RetrySafety,
+    SettlementComparisonStatus,
     SettlementProfile,
+    SettlementVerificationDimensions,
     Verdict,
 )
 from settlediff.domain.money import Money
@@ -718,8 +725,15 @@ async def test_live_evidence_collector_builds_a_deterministic_report() -> None:
     await collector.execute(authorization, request)
     collected = await collector.verify(request)
 
-    assert collected.verdict == report.verdict
-    assert collected.ledger == report.ledger
+    assert collected.schema_version == 4
+    assert collected.verdict is Verdict.UNVERIFIABLE
+    assert collected.ledger is None
+    assert collected.provider_activity == report.ledger
+    assert collected.independent_settlement is not None
+    assert collected.independent_settlement.status is IndependentSettlementStatus.UNAVAILABLE
+    assert collected.independent_settlement.diagnostic == "SETTLEMENT_PROFILE_UNAVAILABLE"
+    assert collected.settlement_comparison is not None
+    assert collected.settlement_comparison.status is SettlementComparisonStatus.NOT_COMPARABLE
     assert collected.retry is not None
     assert collected.retry.safety is RetrySafety.REQUIRES_HUMAN_DECISION
     assert PROVIDER_PAYMENT_ATTEMPT in collected.retry.reason_codes
@@ -803,7 +817,12 @@ async def test_live_evidence_collector_accepts_a_non_perflo_adapter() -> None:
     await collector.execute(authorization, request)
     collected = await collector.verify(request)
 
-    assert collected.verdict == report.verdict
+    assert collected.schema_version == 4
+    assert collected.verdict is Verdict.UNVERIFIABLE
+    assert collected.ledger is None
+    assert collected.provider_activity == report.ledger
+    assert collected.independent_settlement is not None
+    assert collected.independent_settlement.diagnostic == "SETTLEMENT_PROFILE_UNAVAILABLE"
     assert collector.transaction_reference == "syn_hash_clean"
     assert [artifact.source for artifact in collector.artifacts] == [
         "synthetic.contract",
@@ -1028,7 +1047,7 @@ async def test_collector_records_contextdev_evidence_for_a_failed_service() -> N
 
     report = await run_failing_collector(collector)
 
-    assert report.verdict is Verdict.PAID_FAILURE
+    assert report.verdict is Verdict.UNVERIFIABLE
     assert [request.claim for request in contextdev.requests] == ["HTTP 503"]
     artifact = next(a for a in collector.artifacts if a.source == "contextdev")
     assert artifact.artifact_type is ArtifactType.CONTEXT_EVIDENCE
@@ -1047,7 +1066,7 @@ async def test_collector_records_provider_unavailable_without_exception_details(
 
     report = await run_failing_collector(collector)
 
-    assert report.verdict is Verdict.PAID_FAILURE
+    assert report.verdict is Verdict.UNVERIFIABLE
     assert contextdev.requests
     artifact = next(a for a in collector.artifacts if a.source == "contextdev")
     assert isinstance(artifact.data, dict)
@@ -1408,7 +1427,7 @@ async def test_context_budget_exhaustion_records_an_explicit_evidence_state() ->
 
     report = await run_failing_collector(collector)
 
-    assert report.verdict is Verdict.PAID_FAILURE
+    assert report.verdict is Verdict.UNVERIFIABLE
     assert contextdev.requests == []
     artifact = next(a for a in collector.artifacts if a.source == "contextdev")
     assert isinstance(artifact.data, dict)
@@ -1979,6 +1998,7 @@ class FakeRail:
 
 
 EXPECTED_PAYER = "0x3333333333333333333333333333333333333333"
+PROFILE_NOW = datetime(2026, 9, 25, tzinfo=UTC)
 
 
 def _http_profile() -> SettlementProfile:
@@ -2035,7 +2055,13 @@ class HttpProfileRail:
             settlement_profile=self._profile,
         )
 
-    async def execute_once(self, *_args: object) -> AdapterEvidence:
+    async def execute_once(
+        self,
+        authorization: ConsumedPaidAuthorization,
+        request: PaidExecutionRequest,
+        quoted_price: Money,
+    ) -> AdapterEvidence:
+        del authorization, request, quoted_price
         raise AssertionError("preflight tests must not execute")
 
     async def collect_activity(self) -> AdapterEvidence:
@@ -2083,3 +2109,166 @@ async def test_preflight_without_profile_stays_schema2() -> None:
     assert terms.schema_version == 2
     assert terms.payer is None
     assert terms.settlement_profile_digest is None
+
+
+def _independent_profile_observation() -> IndependentSettlementObservation:
+    profile = _http_profile()
+    ledger = LedgerRecord(
+        ledger_id="syn_independent_ledger",
+        vendor_slug=None,
+        amount=Money(amount=Decimal("10000"), unit="USDC", minor_units=6),
+        asset="USDC",
+        protocol="x402",
+        chain=None,
+        recipient=profile.recipient,
+        scheme="exact",
+        network=profile.network,
+        asset_identity=profile.asset_identity,
+        status=LedgerStatus.CONFIRMED,
+        error_reason=None,
+        transaction_id=None,
+        session_id=None,
+        transaction_hash="syn_profile_transaction",
+        occurred_at=PROFILE_NOW,
+    )
+    return IndependentSettlementObservation(
+        status=IndependentSettlementStatus.CONFIRMED,
+        diagnostic="EXACT_TRANSFER_CONFIRMED",
+        source="synthetic.independent",
+        observed_at=PROFILE_NOW,
+        transaction_reference="syn_profile_transaction",
+        profile=profile,
+        dimensions=SettlementVerificationDimensions(
+            chain_verified=True,
+            asset_verified=True,
+            amount_verified=True,
+            recipient_verified=True,
+            payer_verified=True,
+        ),
+        ledger=ledger,
+    )
+
+
+class CompleteHttpProfileRail(HttpProfileRail):
+    def __init__(
+        self,
+        profile: SettlementProfile,
+        *,
+        observation: IndependentSettlementObservation | None,
+        evidence_class: EvidenceClass,
+    ) -> None:
+        super().__init__(profile)
+        self._paid_profile = profile
+        self._observation = observation
+        self._evidence_class = evidence_class
+
+    async def execute_once(
+        self,
+        authorization: ConsumedPaidAuthorization,
+        request: PaidExecutionRequest,
+        quoted_price: Money,
+    ) -> AdapterEvidence:
+        authorization.require_exact_request(request)
+        assert quoted_price == Money(amount=Decimal("0.001"), unit="USDC")
+        return AdapterEvidence(
+            adapter_id="x402",
+            protocol_version="2",
+            operation="execute",
+            source="x402.synthetic.execution",
+            artifact_type=ArtifactType.EXECUTION,
+            data={
+                "schema_version": 2,
+                "vendor_slug": None,
+                "upstream_http_status": 200,
+                "charge": {"amount": "0.001", "unit": "USDC"},
+                "asset": "USDC",
+                "protocol": "x402",
+                "chain": None,
+                "recipient": self._paid_profile.recipient,
+                "scheme": "exact",
+                "network": self._paid_profile.network,
+                "asset_identity": self._paid_profile.asset_identity.model_dump(mode="json"),
+                "settlement_status": "settled",
+                "transaction_id": None,
+                "session_id": None,
+                "transaction_hash": "syn_profile_transaction",
+                "response_body": {"result": "synthetic"},
+                "executed_at": PROFILE_NOW.isoformat(),
+                "normalization_notes": [],
+            },
+            transaction_reference="syn_profile_transaction",
+        )
+
+    async def collect_activity(self) -> AdapterEvidence:
+        ledger = _independent_profile_observation().ledger
+        assert ledger is not None
+        return AdapterEvidence(
+            adapter_id="x402",
+            protocol_version="2",
+            operation="activity",
+            source="synthetic.activity",
+            artifact_type=ArtifactType.ACTIVITY,
+            evidence_class=self._evidence_class,
+            data=[ledger.model_dump(mode="json")],
+        )
+
+    def independent_settlement(self) -> IndependentSettlementObservation | None:
+        return self._observation
+
+
+@pytest.mark.asyncio
+async def test_collector_builds_schema4_report_from_independent_port() -> None:
+    observation = _independent_profile_observation()
+    rail = CompleteHttpProfileRail(
+        _http_profile(),
+        observation=observation,
+        evidence_class=EvidenceClass.INDEPENDENT_OBSERVATION,
+    )
+    collector = LiveEvidenceCollector(
+        rail,
+        StubContextDev(evidence=CONTEXT_EVIDENCE),
+    )
+    request = _http_request()
+    await collector.preflight(request)
+    authorization = await authorize_collector(collector, request)
+    await collector.execute(authorization, request)
+
+    report = await collector.verify(request)
+
+    assert report.schema_version == 4
+    assert report.verdict is Verdict.VERIFIED
+    assert report.ledger == observation.ledger
+    assert report.provider_activity is None
+    assert report.independent_settlement == observation
+    assert report.settlement_comparison is not None
+    assert report.settlement_comparison.status is SettlementComparisonStatus.MATCH
+    assert report.settlement_comparison.provider_evidence_ids == ("syn_profile_run:execution",)
+    assert report.settlement_comparison.observer_evidence_ids == ("syn_profile_run:activity",)
+
+
+@pytest.mark.asyncio
+async def test_collector_profile_without_observation_uses_no_transaction_reference() -> None:
+    rail = CompleteHttpProfileRail(
+        _http_profile(),
+        observation=None,
+        evidence_class=EvidenceClass.PROVIDER_ASSERTION,
+    )
+    collector = LiveEvidenceCollector(
+        rail,
+        StubContextDev(evidence=CONTEXT_EVIDENCE),
+    )
+    request = _http_request()
+    await collector.preflight(request)
+    authorization = await authorize_collector(collector, request)
+    await collector.execute(authorization, request)
+
+    report = await collector.verify(request)
+
+    assert report.schema_version == 4
+    assert report.ledger is None
+    assert report.provider_activity is not None
+    assert report.independent_settlement is not None
+    assert report.independent_settlement.status is IndependentSettlementStatus.UNAVAILABLE
+    assert report.independent_settlement.diagnostic == "NO_TRANSACTION_REFERENCE"
+    assert report.settlement_comparison is not None
+    assert report.settlement_comparison.status is SettlementComparisonStatus.NOT_COMPARABLE
