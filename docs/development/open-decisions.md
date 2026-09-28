@@ -14,7 +14,7 @@ Resolved choices are recorded alongside the remaining gates so implemented testn
 | Release channel | Build and install local artifacts only. Choose package registry, signing, checksums/SBOM publication, and release ownership together. | First public release |
 | Hosted deployment target | Keep the MVP loopback-only. Choose hosting, authentication, retention, and secret management together in a new threat model and ADR. | Post-MVP deployment |
 | ElevenLabs voice demo | Keep it outside the financial core; add only for a concrete interface use case over the same persisted report. | Post-core demo |
-| Perflo external settlement observer | ADR 0010 defines and activates the rail-neutral observer for x402. Keep Perflo `pay`, agent Activity, and `tx status` as one provider trust domain and record `SETTLEMENT_PROFILE_UNAVAILABLE` until Perflo exposes the exact versioned pre-payment network, asset reference/decimals, atomic amount, recipient, mandatory payer, and scheme/correlation needed to build the accepted profile. | Perflo pre-payment settlement profile contract |
+| Perflo external settlement observer | ADR 0010 defines and activates the rail-neutral observer for x402. Keep Perflo `pay`, agent Activity, and `tx status` as one provider trust domain and record `SETTLEMENT_PROFILE_UNAVAILABLE` until Perflo exposes the exact versioned pre-payment network, asset reference/decimals, atomic amount, recipient, mandatory payer, and scheme/correlation needed to build the accepted profile. The opt-in Base RPC receipt check in ADR 0011 is provider-referenced corroboration only; it never upgrades the independent settlement verdict. | Perflo pre-payment settlement profile contract |
 
 ## Resolved choices
 

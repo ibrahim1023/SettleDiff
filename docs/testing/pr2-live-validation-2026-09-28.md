@@ -66,6 +66,20 @@ A read-only Base mainnet lookup of provider `settlement.txHash` `0xa5bb…bbad` 
 
 The bounded conclusion is that this hash refers to Perflo's vendor settlement from a Perflo-operated wallet. It is useful provider-side evidence for execution-to-Activity correlation, but it is not the customer's transfer and cannot establish independent settlement. The customer debit remains provider-ledger evidence.
 
+## Controlled failed-delivery follow-up
+
+The owner separately approved one more 0.001 test USDC x402 request to the loopback
+`GET /failure` route (terms digest `5769ddaa…6cdc`; the same profile digest as the
+clean cycle). A read-only preflight was declined first. Exactly one signed request
+was then made, with no retry. The resource returned HTTP 500. The signer/provider
+response did not include a transaction reference, so independent settlement was
+`UNAVAILABLE / NO_TRANSACTION_REFERENCE`, provider comparison `NOT_COMPARABLE`,
+delivery `FAILED / HTTP_STATUS_NOT_SUCCESS`, and retry
+`REQUIRES_HUMAN_DECISION` (`EVIDENCE_MISSING`). The final verdict was
+`UNVERIFIABLE`, **not** `PAID_FAILURE`: payment settlement could not be established.
+The submitted request may still have moved funds; no second attempt is authorized.
+Evidence remains local in `.local/x402-pr2-live.sqlite3` (run `live_a063f1e…`).
+
 ## Defects exposed and fixed
 
 The pre-fix report preserved uncertainty correctly but lost useful provider correlation evidence:
