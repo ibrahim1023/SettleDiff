@@ -98,6 +98,7 @@ from settlediff.domain.normalize import normalize_contract
 from settlediff.domain.redaction import mask_identifier
 from settlediff.domain.retry import RetryRunStateSnapshot, analyze_retry
 from settlediff.observers.evm_rpc import EvmRpcClient
+from settlediff.observers.perflo_chain import PerfloChainCorroboration
 from settlediff.perflo.adapter import PerfloAdapter
 from settlediff.perflo.client import (
     PerfloClient,
@@ -179,6 +180,7 @@ def _render(
     json_mode: bool,
     explanation: ExplanationRecord | None = None,
     recovery: SubmissionRecovery | None = None,
+    provider_chain: PerfloChainCorroboration | None = None,
 ) -> None:
     if json_mode:
         if explanation is None:
@@ -205,6 +207,12 @@ def _render(
             typer.echo(
                 f"Provider Activity: {report.provider_activity.status.value} (provider assertion)"
             )
+    if provider_chain is not None:
+        typer.echo(
+            "Perflo vendor transaction (not customer settlement): "
+            f"{provider_chain.status.value} ({provider_chain.diagnostic}); "
+            f"comparison={provider_chain.comparison.value}"
+        )
     if explanation is not None:
         typer.echo(f"Explanation ({explanation.source.value}): {explanation.explanation.summary}")
         typer.echo(
@@ -482,7 +490,16 @@ def _build_payment_adapter(
     rail: PaymentRail, settings: Settings, x402_payer: str | None = None
 ) -> tuple[PaymentRailAdapter, AdapterCloser | None]:
     if rail is PaymentRail.PERFLO:
-        return PerfloAdapter(PerfloClient()), None
+        if settings.perflo_rpc_url is None:
+            return PerfloAdapter(PerfloClient()), None
+        rpc_http = httpx.AsyncClient(
+            base_url=settings.perflo_rpc_url.get_secret_value(), follow_redirects=False
+        )
+
+        async def close_perflo_rpc() -> None:
+            await rpc_http.aclose()
+
+        return PerfloAdapter(PerfloClient(), rpc=EvmRpcClient(rpc_http)), close_perflo_rpc
     if x402_payer is None:
         raise ValueError("x402 paid execution requires a probed signer payer")
     config = settings.require_x402()
@@ -786,6 +803,7 @@ def run(
                 json_mode=json_mode,
                 explanation=outcome.explanation,
                 recovery=outcome.recovery,
+                provider_chain=_provider_chain_observation(collector.artifacts),
             )
         if persistence_failed:
             raise typer.Exit(code=2)
@@ -793,6 +811,15 @@ def run(
         if repository is not None:
             repository.close()
         telemetry.shutdown()
+
+
+def _provider_chain_observation(
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> PerfloChainCorroboration | None:
+    for artifact in artifacts:
+        if artifact.source == "evm_rpc.provider_transaction":
+            return PerfloChainCorroboration.model_validate_json(json.dumps(artifact.data))
+    return None
 
 
 @app.command()
@@ -806,12 +833,17 @@ def show(
     try:
         report = repository.get(run_id)
         explanation = repository.explanation(run_id) if report is not None else None
+        provider_chain = (
+            _provider_chain_observation(repository.artifacts(run_id))
+            if report is not None
+            else None
+        )
     finally:
         repository.close()
     if report is None:
         typer.echo(f"Run {run_id} was not found.", err=True)
         raise typer.Exit(code=1)
-    _render(report, json_mode, explanation)
+    _render(report, json_mode, explanation, provider_chain=provider_chain)
 
 
 @app.command("inspect")

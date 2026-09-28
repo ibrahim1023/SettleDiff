@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from typing import Protocol, cast
 
 from pydantic import JsonValue
@@ -15,6 +16,8 @@ from settlediff.application.auth import (
 from settlediff.application.payment_rails import AdapterEvidence, AdapterProtocolError
 from settlediff.domain.models import ArtifactType
 from settlediff.domain.money import Money
+from settlediff.observers.evm_transfer import ReadOnlyRpcPort
+from settlediff.observers.perflo_chain import corroborate_perflo_transaction
 from settlediff.perflo.parser import PerfloEnvelope, PerfloSuccessEnvelope
 
 _TX_HASH_PATTERN = re.compile(r"^0x[0-9a-fA-F]{64}$")
@@ -42,8 +45,9 @@ class PerfloClientPort(Protocol):
 class PerfloAdapter:
     adapter_id = "perflo"
 
-    def __init__(self, client: PerfloClientPort) -> None:
+    def __init__(self, client: PerfloClientPort, *, rpc: ReadOnlyRpcPort | None = None) -> None:
         self._client = client
+        self._rpc = rpc
 
     async def inspect(self, request: PaidExecutionRequest) -> AdapterEvidence:
         if not isinstance(request.resource, CatalogResourceReference):
@@ -80,6 +84,17 @@ class PerfloAdapter:
         status = data.get("status")
         if not isinstance(status, str) or status not in _PAY_STATUSES:
             raise AdapterProtocolError("Perflo pay result did not include a declared status")
+        settlement = data.get("settlement")
+        terms = cast(dict[str, JsonValue], settlement) if isinstance(settlement, dict) else {}
+        chain = terms.get("chain")
+        provider_status = terms.get("status")
+        observation = await corroborate_perflo_transaction(
+            self._rpc,
+            _settlement_reference(data),
+            chain if isinstance(chain, str) else None,
+            provider_status if isinstance(provider_status, str) else None,
+            observed_at=datetime.now(UTC),
+        )
         return _evidence(
             "execute",
             "perflo.pay",
@@ -87,7 +102,7 @@ class PerfloAdapter:
             data,
             payment_reference=_string_field(data, "transactionId"),
             transaction_reference=_settlement_reference(data),
-        )
+        ).model_copy(update={"provider_chain_observation": observation})
 
     async def collect_activity(self) -> AdapterEvidence:
         envelope = await self._client.get_activity()

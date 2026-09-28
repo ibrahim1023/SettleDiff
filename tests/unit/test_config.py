@@ -57,6 +57,28 @@ def test_otlp_endpoint_rejects_insecure_or_credentialed_urls(endpoint: str) -> N
         offline_settings(otlp_endpoint=endpoint)
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://rpc.example.invalid/path",
+        "https://user:secret@rpc.example.invalid",
+        "https://rpc.example.invalid/path?token=secret",
+    ],
+)
+def test_perflo_rpc_requires_safe_opt_in_url_without_leaking_it(url: str) -> None:
+    with pytest.raises(ValueError) as error:
+        offline_settings(perflo_rpc_url=url)
+    assert "secret" not in str(error.value)
+    assert "token=secret" not in str(error.value)
+
+
+def test_perflo_rpc_is_optional_and_hidden_in_settings() -> None:
+    assert offline_settings().perflo_rpc_url is None
+    settings = offline_settings(perflo_rpc_url="https://rpc.example.invalid/syn-key")
+    assert settings.perflo_rpc_url is not None
+    assert "syn-key" not in repr(settings)
+
+
 def test_x402_configuration_is_required_only_for_selected_live_rail() -> None:
     settings = offline_settings()
 
