@@ -101,6 +101,28 @@ class LedgerStatus(StrEnum):
     UNKNOWN = "unknown"
 
 
+class EvidenceClass(StrEnum):
+    PROVIDER_ASSERTION = "provider_assertion"
+    INDEPENDENT_OBSERVATION = "independent_observation"
+
+
+class IndependentSettlementStatus(StrEnum):
+    CONFIRMED = "CONFIRMED"
+    FAILED = "FAILED"
+    INDETERMINATE = "INDETERMINATE"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class SettlementComparisonStatus(StrEnum):
+    MATCH = "MATCH"
+    CONTRADICTED = "CONTRADICTED"
+    NOT_COMPARABLE = "NOT_COMPARABLE"
+
+
+class PayerValidationPolicy(StrEnum):
+    REQUIRED = "REQUIRED"
+
+
 class CanonicalModel(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
@@ -377,8 +399,85 @@ class Finding(CanonicalModel):
         return self
 
 
+class SettlementProfile(CanonicalModel):
+    schema_version: int = Field(default=1, ge=1, le=1)
+    network: Caip2Network
+    chain_id: int = Field(gt=0)
+    asset_identity: AssetIdentity
+    atomic_amount: int = Field(gt=0)
+    recipient: NonEmptyStr
+    payer: NonEmptyStr
+    payer_policy: PayerValidationPolicy = PayerValidationPolicy.REQUIRED
+
+    @model_validator(mode="after")
+    def require_matching_asset_network(self) -> Self:
+        if self.asset_identity.network != self.network:
+            raise ValueError("settlement profile asset network must match the observed network")
+        return self
+
+
+class SettlementVerificationDimensions(CanonicalModel):
+    schema_version: int = Field(default=1, ge=1, le=1)
+    chain_verified: bool
+    asset_verified: bool
+    amount_verified: bool
+    recipient_verified: bool
+    payer_verified: bool
+    payer_policy: PayerValidationPolicy = PayerValidationPolicy.REQUIRED
+
+
+class IndependentSettlementObservation(CanonicalModel):
+    schema_version: int = Field(default=1, ge=1, le=1)
+    status: IndependentSettlementStatus
+    diagnostic: NonEmptyStr
+    source: NonEmptyStr
+    observed_at: UtcDatetime
+    transaction_reference: NonEmptyStr | None
+    profile: SettlementProfile | None
+    dimensions: SettlementVerificationDimensions
+    ledger: LedgerRecord | None
+
+    @model_validator(mode="after")
+    def require_coherent_observation(self) -> Self:
+        verified = (
+            self.dimensions.chain_verified,
+            self.dimensions.asset_verified,
+            self.dimensions.amount_verified,
+            self.dimensions.recipient_verified,
+            self.dimensions.payer_verified,
+        )
+        if self.dimensions.payer_policy is not PayerValidationPolicy.REQUIRED:
+            raise ValueError("independent settlement requires payer validation")
+        if self.status is IndependentSettlementStatus.CONFIRMED:
+            if (
+                self.profile is None
+                or self.ledger is None
+                or self.ledger.status is not LedgerStatus.CONFIRMED
+                or not all(verified)
+            ):
+                raise ValueError("confirmed settlement requires an exact verified transfer")
+        elif self.status is IndependentSettlementStatus.FAILED:
+            if (
+                self.profile is None
+                or self.ledger is None
+                or self.ledger.status is not LedgerStatus.FAILED
+            ):
+                raise ValueError("failed settlement requires failed external ledger evidence")
+        elif self.ledger is not None:
+            raise ValueError("non-conclusive settlement cannot contain ledger evidence")
+        return self
+
+
+class SettlementComparison(CanonicalModel):
+    schema_version: int = Field(default=1, ge=1, le=1)
+    status: SettlementComparisonStatus
+    diagnostic: NonEmptyStr
+    provider_evidence_ids: tuple[NonEmptyStr, ...] = Field(max_length=16)
+    observer_evidence_ids: tuple[NonEmptyStr, ...] = Field(max_length=16)
+
+
 class MachineReport(CanonicalModel):
-    schema_version: int = Field(default=2, ge=1, le=3)
+    schema_version: int = Field(default=2, ge=1, le=4)
     run_id: NonEmptyStr
     intent: PurchaseIntent
     contract: ExpectedContract | None
@@ -392,6 +491,15 @@ class MachineReport(CanonicalModel):
         default=None, exclude_if=lambda value: value is None
     )
     retry: RetryAssessment | None = Field(default=None, exclude_if=lambda value: value is None)
+    provider_activity: LedgerRecord | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    independent_settlement: IndependentSettlementObservation | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    settlement_comparison: SettlementComparison | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def require_compatible_schema(self) -> Self:
@@ -403,6 +511,27 @@ class MachineReport(CanonicalModel):
             raise ValueError(
                 f"schema version {self.schema_version} cannot contain {', '.join(future_fields)}"
             )
+        settlement_fields = tuple(
+            field
+            for field in (
+                "provider_activity",
+                "independent_settlement",
+                "settlement_comparison",
+            )
+            if field in self.model_fields_set
+        )
+        if self.schema_version < 4 and settlement_fields:
+            joined = ", ".join(settlement_fields)
+            raise ValueError(f"schema version {self.schema_version} cannot contain {joined}")
+        if self.schema_version == 4:
+            if self.independent_settlement is None or self.settlement_comparison is None:
+                raise ValueError(
+                    "schema version 4 requires independent_settlement and settlement_comparison"
+                )
+            if self.ledger != self.independent_settlement.ledger:
+                raise ValueError(
+                    "schema version 4 ledger must match the independent settlement observation"
+                )
         return self
 
 

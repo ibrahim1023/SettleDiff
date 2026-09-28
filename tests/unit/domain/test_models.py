@@ -18,13 +18,20 @@ from settlediff.domain.models import (
     ExplanationRecord,
     ExplanationSource,
     Finding,
+    IndependentSettlementObservation,
+    IndependentSettlementStatus,
     InvestigationExplanation,
     LedgerRecord,
     LedgerStatus,
     MachineReport,
+    PayerValidationPolicy,
     PaymentReceipt,
     PurchaseIntent,
+    SettlementComparison,
+    SettlementComparisonStatus,
+    SettlementProfile,
     SettlementStatus,
+    SettlementVerificationDimensions,
     Severity,
     Verdict,
 )
@@ -528,3 +535,306 @@ def test_contract_schema_4_url_without_vendor_slug_is_valid() -> None:
 
     assert contract.url is not None
     assert contract.vendor_slug is None
+
+
+def settlement_profile_payload(**updates: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "network": "eip155:84532",
+        "chain_id": 84532,
+        "asset_identity": AssetIdentity(
+            symbol="USDC",
+            network="eip155:84532",
+            reference="0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            decimals=6,
+        ).model_dump(mode="json"),
+        "atomic_amount": 10000,
+        "recipient": "0x1111111111111111111111111111111111111111",
+        "payer": "0x2222222222222222222222222222222222222222",
+        "payer_policy": "REQUIRED",
+    }
+    return values | updates
+
+
+def settlement_dimensions_payload(**updates: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "chain_verified": True,
+        "asset_verified": True,
+        "amount_verified": True,
+        "recipient_verified": True,
+        "payer_verified": True,
+        "payer_policy": "REQUIRED",
+    }
+    return values | updates
+
+
+def settlement_observation_payload(**updates: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "status": "CONFIRMED",
+        "diagnostic": "EXACT_TRANSFER_CONFIRMED",
+        "source": "rpc:base-sepolia",
+        "observed_at": NOW.isoformat(),
+        "transaction_reference": "0x" + "2" * 64,
+        "profile": settlement_profile_payload(),
+        "dimensions": settlement_dimensions_payload(),
+        "ledger": ledger_fixture().model_dump(mode="json"),
+    }
+    return values | updates
+
+
+def settlement_comparison_payload(**updates: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "status": "MATCH",
+        "diagnostic": "INDEPENDENT_OBSERVATION_MATCHES_PROVIDER",
+        "provider_evidence_ids": ("artifact:provider-activity",),
+        "observer_evidence_ids": ("artifact:independent-settlement",),
+    }
+    return values | updates
+
+
+def schema4_report_payload(**updates: object) -> dict[str, object]:
+    ledger = ledger_fixture().model_dump(mode="json")
+    provider_activity = LedgerRecord(
+        ledger_id="syn_activity_001",
+        vendor_slug="synthetic-search",
+        amount=Money(amount=Decimal("-0.01"), unit="USDC"),
+        asset="USDC",
+        protocol="mpp",
+        chain="tempo",
+        recipient="syn_recipient_001",
+        status=LedgerStatus.CONFIRMED,
+        error_reason=None,
+        transaction_id="syn_tx_001",
+        session_id="syn_session_001",
+        transaction_hash="syn_hash_001",
+        occurred_at=NOW,
+    ).model_dump(mode="json")
+    payload = machine_report_fixture().model_dump(mode="json")
+    payload["schema_version"] = 4
+    payload["ledger"] = ledger
+    payload["provider_activity"] = provider_activity
+    payload["independent_settlement"] = settlement_observation_payload(ledger=ledger)
+    payload["settlement_comparison"] = settlement_comparison_payload()
+    return payload | updates
+
+
+def test_schema_v4_report_carries_settlement_provenance() -> None:
+    payload = schema4_report_payload()
+
+    report = MachineReport.model_validate_json(json.dumps(payload))
+
+    assert report.schema_version == 4
+    assert report.provider_activity is not None
+    assert report.provider_activity.ledger_id == "syn_activity_001"
+    observation = report.independent_settlement
+    assert observation is not None
+    assert observation.status is IndependentSettlementStatus.CONFIRMED
+    assert observation.profile is not None
+    assert observation.profile.payer_policy is PayerValidationPolicy.REQUIRED
+    assert observation.dimensions == SettlementVerificationDimensions(
+        chain_verified=True,
+        asset_verified=True,
+        amount_verified=True,
+        recipient_verified=True,
+        payer_verified=True,
+    )
+    assert report.settlement_comparison is not None
+    assert report.settlement_comparison.status is SettlementComparisonStatus.MATCH
+    assert report.ledger is not None and report.ledger == observation.ledger
+
+    restored = MachineReport.model_validate_json(report.model_dump_json())
+    assert restored == report
+    dumped = report.model_dump(mode="json")
+    assert dumped["provider_activity"]["ledger_id"] == "syn_activity_001"
+    assert dumped["independent_settlement"]["status"] == "CONFIRMED"
+    assert dumped["settlement_comparison"]["status"] == "MATCH"
+
+
+def test_schema_v4_report_with_unavailable_observation_is_not_comparable() -> None:
+    payload = schema4_report_payload(
+        ledger=None,
+        provider_activity=None,
+        independent_settlement=settlement_observation_payload(
+            status="UNAVAILABLE",
+            diagnostic="SETTLEMENT_PROFILE_UNAVAILABLE",
+            transaction_reference=None,
+            profile=None,
+            dimensions=settlement_dimensions_payload(
+                chain_verified=False,
+                asset_verified=False,
+                amount_verified=False,
+                recipient_verified=False,
+                payer_verified=False,
+            ),
+            ledger=None,
+        ),
+        settlement_comparison=settlement_comparison_payload(
+            status="NOT_COMPARABLE",
+            diagnostic="NO_INDEPENDENT_SETTLEMENT_OBSERVATION",
+            observer_evidence_ids=(),
+        ),
+    )
+
+    report = MachineReport.model_validate_json(json.dumps(payload))
+
+    assert report.schema_version == 4
+    assert report.provider_activity is None
+    assert "provider_activity" not in report.model_dump(mode="json")
+    observation = report.independent_settlement
+    assert observation is not None
+    assert observation.status is IndependentSettlementStatus.UNAVAILABLE
+    assert observation.profile is None
+    assert observation.ledger is None
+    assert report.settlement_comparison is not None
+    assert report.settlement_comparison.status is SettlementComparisonStatus.NOT_COMPARABLE
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3])
+@pytest.mark.parametrize(
+    "field",
+    ["provider_activity", "independent_settlement", "settlement_comparison"],
+)
+def test_schemas_below_4_reject_settlement_fields_even_when_null(
+    schema_version: int, field: str
+) -> None:
+    payload = machine_report_fixture().model_dump(mode="json")
+    payload["schema_version"] = schema_version
+    payload[field] = None
+
+    with pytest.raises(ValidationError, match=f"schema version {schema_version}"):
+        MachineReport.model_validate_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize("field", ["independent_settlement", "settlement_comparison"])
+def test_schema_v4_requires_settlement_fields(field: str) -> None:
+    for removal in ("missing", "null"):
+        payload = schema4_report_payload()
+        if removal == "missing":
+            payload.pop(field)
+        else:
+            payload[field] = None
+        with pytest.raises(ValidationError, match="schema version 4"):
+            MachineReport.model_validate_json(json.dumps(payload))
+
+
+def test_schema_v4_report_ledger_must_match_independent_observation() -> None:
+    payload = schema4_report_payload(
+        ledger=ledger_fixture().model_dump(mode="json") | {"ledger_id": "syn_ledger_other"},
+    )
+
+    with pytest.raises(ValidationError, match="ledger"):
+        MachineReport.model_validate_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize(
+    "dimension",
+    [
+        "chain_verified",
+        "asset_verified",
+        "amount_verified",
+        "recipient_verified",
+        "payer_verified",
+    ],
+)
+def test_confirmed_observation_rejects_any_unverified_dimension(dimension: str) -> None:
+    payload = settlement_observation_payload(
+        dimensions=settlement_dimensions_payload(**{dimension: False})
+    )
+
+    with pytest.raises(ValidationError, match="confirmed"):
+        IndependentSettlementObservation.model_validate_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize("missing", ["profile", "ledger"])
+def test_confirmed_observation_requires_profile_and_ledger(missing: str) -> None:
+    payload = settlement_observation_payload(**{missing: None})
+
+    with pytest.raises(ValidationError, match="confirmed"):
+        IndependentSettlementObservation.model_validate_json(json.dumps(payload))
+
+
+def test_confirmed_observation_rejects_non_confirmed_ledger() -> None:
+    payload = settlement_observation_payload(
+        ledger=ledger_fixture().model_dump(mode="json") | {"status": "pending"}
+    )
+
+    with pytest.raises(ValidationError, match="confirmed"):
+        IndependentSettlementObservation.model_validate_json(json.dumps(payload))
+
+
+def test_failed_observation_accepts_failed_ledger() -> None:
+    payload = settlement_observation_payload(
+        status="FAILED",
+        diagnostic="EXTERNAL_LEDGER_FAILED",
+        ledger=ledger_fixture().model_dump(mode="json") | {"status": "failed"},
+    )
+
+    observation = IndependentSettlementObservation.model_validate_json(json.dumps(payload))
+
+    assert observation.status is IndependentSettlementStatus.FAILED
+    assert observation.ledger is not None
+    assert observation.ledger.status is LedgerStatus.FAILED
+
+
+@pytest.mark.parametrize("ledger_update", [None, {"status": "confirmed"}, {"status": "pending"}])
+def test_failed_observation_requires_failed_ledger(
+    ledger_update: dict[str, str] | None,
+) -> None:
+    ledger: dict[str, object] | None = None
+    if ledger_update is not None:
+        ledger = ledger_fixture().model_dump(mode="json") | ledger_update
+    payload = settlement_observation_payload(status="FAILED", ledger=ledger)
+
+    with pytest.raises(ValidationError, match="failed"):
+        IndependentSettlementObservation.model_validate_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize("status", ["INDETERMINATE", "UNAVAILABLE"])
+def test_non_conclusive_observation_rejects_ledger_evidence(status: str) -> None:
+    payload = settlement_observation_payload(status=status)
+
+    with pytest.raises(ValidationError, match="non-conclusive"):
+        IndependentSettlementObservation.model_validate_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "asset_identity": AssetIdentity(
+                symbol="USDC",
+                network="eip155:1",
+                reference="0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                decimals=6,
+            ).model_dump(mode="json")
+        },
+        {"atomic_amount": 0},
+        {"atomic_amount": -5},
+        {"chain_id": 0},
+    ],
+)
+def test_settlement_profile_rejects_incoherent_identity(
+    updates: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        SettlementProfile.model_validate_json(json.dumps(settlement_profile_payload(**updates)))
+
+
+def test_settlement_provenance_rejects_unknown_fields_and_payer_relaxation() -> None:
+    with pytest.raises(ValidationError):
+        SettlementProfile.model_validate_json(json.dumps(settlement_profile_payload(invented=True)))
+    with pytest.raises(ValidationError):
+        IndependentSettlementObservation.model_validate_json(
+            json.dumps(settlement_observation_payload(invented=True))
+        )
+    with pytest.raises(ValidationError):
+        SettlementComparison.model_validate_json(
+            json.dumps(settlement_comparison_payload(invented=True))
+        )
+    with pytest.raises(ValidationError):
+        SettlementProfile.model_validate_json(
+            json.dumps(settlement_profile_payload(payer_policy="OPTIONAL"))
+        )
+    with pytest.raises(ValidationError):
+        SettlementVerificationDimensions.model_validate_json(
+            json.dumps(settlement_dimensions_payload(payer_policy="OPTIONAL"))
+        )
