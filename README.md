@@ -52,7 +52,7 @@ PASS: Asset values agree across available evidence.
 PASS: Protocol values agree across available evidence.
 DIFF: Chain values differ across available evidence.
 PASS: Recipient values match.
-UNKNOWN: Financial settlement evidence is unavailable.
+UNKNOWN: Financial settlement evidence is unavailable or conflicts.
 FAIL: Purchased service returned a non-success HTTP response.
 UNKNOWN: Settlement or service outcome is unavailable.
 PASS: Persisted Activity and service outcome require no additional consistency warning.
@@ -95,6 +95,11 @@ The remaining warning was a recipient representation difference. No chain, price
 disagreement, settlement uncertainty, or Activity-correlation failure remained. The original
 incident remains historical evidence; its root cause is not assigned to Perflo, the vendor,
 MPP routing, metadata, or another boundary.
+
+The 2026-09-08 `VERIFIED_WITH_WARNINGS` verdict is a historical schema-2 result in which
+provider Activity filled the settlement role. Under report schema 4 ([ADR 0010](docs/decisions/0010-independent-settlement-observation.md)),
+the same provider-only evidence is `UNVERIFIABLE` because no independent settlement
+observation is available for current Perflo payments.
 
 ## Why this matters
 
@@ -187,7 +192,9 @@ payment rails remain architectural extension points.
 
 ## Offline demo scenarios
 
-Every scenario replays deterministically with no credentials, external requests, or spending:
+Every scenario replays deterministically with no credentials, external requests, or spending.
+All fixtures except the final two are historical schema-2 scenarios; in the Perflo-shaped
+ones, provider Activity still fills the settlement role:
 
 | Fixture | Key condition | Expected verdict |
 |---|---|---|
