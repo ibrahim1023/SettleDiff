@@ -269,3 +269,24 @@ def test_historical_fixture_replay_remains_schema2_without_provenance_fields() -
     assert "provider_activity" not in payload
     assert "independent_settlement" not in payload
     assert "settlement_comparison" not in payload
+
+
+def test_perflo_credit_authorization_replay_retains_provider_reference() -> None:
+    report = replay_fixture(FIXTURES / "perflo-v8-credit-authorization")
+    findings = {finding.check_id: finding for finding in report.findings}
+
+    assert report.schema_version == 4
+    assert report.verdict is Verdict.UNVERIFIABLE
+    assert report.execution is not None
+    assert report.execution.settlement_status.value == "settled"
+    assert report.execution.transaction_hash == "syn_perflo_vendor_settlement_001"
+    assert findings["activity_persistence"].status.value == "PASS"
+    assert report.provider_activity is not None
+    assert report.provider_activity.ledger_id == "syn_activity_posted_001"
+    assert report.provider_activity.transaction_id is None
+    assert report.provider_activity.transaction_hash == report.execution.transaction_hash
+    assert report.independent_settlement is not None
+    assert report.independent_settlement.status is IndependentSettlementStatus.UNAVAILABLE
+    assert report.independent_settlement.diagnostic == "SETTLEMENT_PROFILE_UNAVAILABLE"
+    assert report.settlement_comparison is not None
+    assert report.settlement_comparison.status is SettlementComparisonStatus.NOT_COMPARABLE

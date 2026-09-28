@@ -150,8 +150,10 @@ Agent Activity rows (`agent.rows` with `agent.meta`) carry signed major-unit amo
 `ledgerState` `posted|pending|voided` maps to `CONFIRMED|PENDING|FAILED` as provider
 accounting state, and a non-positive signed Activity amount never supplies actual charge
 evidence. Perflo Activity and `tx status` are provider assertions in the same trust
-domain as `pay`, not independent ledger observations; credit-funded results expose no
-canonical on-chain transaction reference. Perflo v8 does not expose the exact pre-payment
+domain as `pay`, not independent ledger observations. Credit-funded results may carry a
+Base `settlement.txHash` for Perflo's own vendor settlement when
+`flow: "authorization"`; the hash is retained for provider Activity correlation, not
+interpreted as the customer's transfer. Perflo v8 does not expose the exact pre-payment
 network, asset reference/decimals, atomic amount, recipient, and mandatory payer needed for
 a `SettlementProfile`. Current Perflo reports therefore record
 `SETTLEMENT_PROFILE_UNAVAILABLE`; provider-only success remains `UNVERIFIABLE`.

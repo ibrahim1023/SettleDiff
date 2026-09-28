@@ -73,6 +73,7 @@ async def test_inspect_extracts_only_top_level_vendor() -> None:
 
     assert evidence.data == vendor
     assert evidence.source == "perflo.vendor"
+    assert evidence.protocol_version == "8"
     assert evidence.source_contract == vendor
     assert cast(dict[str, JsonValue], evidence.data)["futureField"] == {"preserved": True}
 
@@ -114,6 +115,7 @@ async def test_execute_extracts_result_and_separates_payment_and_transaction_ref
 
     assert evidence.data == result
     assert evidence.source == "perflo.pay"
+    assert evidence.protocol_version == "8"
     assert evidence.payment_reference == "syn_tx_wallet_001"
     assert evidence.transaction_reference == TX_HASH
     assert cast(dict[str, JsonValue], evidence.data)["additiveField"] == {"preserved": True}
@@ -140,7 +142,7 @@ async def test_execute_credit_charge_never_creates_chain_or_hash_facts() -> None
 
 
 @pytest.mark.asyncio
-async def test_execute_credit_suppresses_hash_even_in_additive_evidence() -> None:
+async def test_execute_credit_retains_provider_settlement_hash() -> None:
     payload = _payload("pay_credit_success.json")
     result = cast(dict[str, JsonValue], payload["result"])
     result["settlement"] = cast(dict[str, JsonValue], result["settlement"]) | {"txHash": TX_HASH}
@@ -154,7 +156,7 @@ async def test_execute_credit_suppresses_hash_even_in_additive_evidence() -> Non
         await _authorization(request), request, Money(amount=Decimal("0.01"), unit="USD")
     )
 
-    assert evidence.transaction_reference is None
+    assert evidence.transaction_reference == TX_HASH
     assert (
         cast(dict[str, JsonValue], cast(dict[str, JsonValue], evidence.data)["settlement"])[
             "txHash"
@@ -280,6 +282,7 @@ async def test_activity_preserves_whole_agent_object_and_excludes_money_feed() -
     evidence = await _adapter(FakePerflo()).collect_activity()
 
     assert evidence.source == "perflo.activity.agent"
+    assert evidence.protocol_version == "8"
     assert evidence.data == agent
     assert cast(dict[str, JsonValue], evidence.data)["meta"] == {
         "requestId": "syn_req_001",
@@ -335,6 +338,7 @@ async def test_transaction_status_spreads_top_level_object(name: str) -> None:
     evidence = await _adapter(FakePerflo()).collect_transaction(TX_HASH)
 
     assert evidence.source == "perflo.tx_status"
+    assert evidence.protocol_version == "8"
     assert evidence.data == {key: value for key, value in payload.items() if key != "ok"}
     assert cast(dict[str, JsonValue], evidence.data)["status"] == payload["status"]
     assert evidence.transaction_reference == TX_HASH
@@ -400,3 +404,31 @@ async def test_http_resource_fails_before_any_client_call() -> None:
     with pytest.raises(AdapterProtocolError, match="requires a catalog resource reference"):
         await adapter.reinspect(request)
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_execute_credit_authorization_finalized_retains_provider_reference() -> None:
+    payload = _payload("pay_credit_authorization_finalized.json")
+
+    class FakePerflo:
+        async def execute(self, *_args: object) -> PerfloSuccessEnvelope:
+            return _envelope(payload)
+
+    request = _request()
+    evidence = await _adapter(FakePerflo()).execute_once(
+        await _authorization(request), request, Money(amount=Decimal("0.001"), unit="USD")
+    )
+
+    assert evidence.protocol_version == "8"
+    assert evidence.payment_reference == "syn_payment_transaction_001"
+    assert evidence.transaction_reference == TX_HASH
+    result = cast(dict[str, JsonValue], evidence.data)
+    settlement = cast(dict[str, JsonValue], result["settlement"])
+    assert result["chargedTo"] == "credit"
+    assert settlement == {
+        "status": "finalized",
+        "flow": "authorization",
+        "chain": "base",
+        "txHash": TX_HASH,
+        "explorer": f"https://synthetic.invalid/tx/{TX_HASH}",
+    }

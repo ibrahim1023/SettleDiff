@@ -276,3 +276,52 @@ def test_matcher_accepts_no_caller_confidence_parameter() -> None:
 
     with pytest.raises(TypeError):
         match_activity(execution(), (), confidence="high")  # type: ignore[call-arg]
+
+
+def test_canonical_transaction_hash_matches_case_insensitively_without_ids() -> None:
+    transaction_hash = "0x" + "a1" * 32
+    result = match_activity(
+        execution(
+            transaction_id="syn_payment_transaction",
+            session_id=None,
+            transaction_hash=transaction_hash,
+        ),
+        (
+            record(
+                "syn_activity_pending",
+                transaction_id=None,
+                session_id=None,
+                transaction_hash=transaction_hash.upper().replace("0X", "0x"),
+                status=LedgerStatus.PENDING,
+            ),
+        ),
+    )
+
+    assert result.status is MatchStatus.MATCHED
+    assert result.strategy is MatchStrategy.TRANSACTION_HASH
+    assert result.confidence is MatchConfidence.HIGH
+    assert result.matched_id == "syn_activity_pending"
+    assert result.matched is not None
+    assert result.matched.status is LedgerStatus.PENDING
+
+
+def test_noncanonical_transaction_hash_matching_remains_exact() -> None:
+    result = match_activity(
+        execution(
+            transaction_id=None,
+            session_id=None,
+            transaction_hash="syn_hash_mixed",
+            charge=None,
+            executed_at=None,
+        ),
+        (
+            record(
+                "syn_activity",
+                transaction_id=None,
+                session_id=None,
+                transaction_hash="SYN_HASH_MIXED",
+            ),
+        ),
+    )
+
+    assert result.status is MatchStatus.MISSING

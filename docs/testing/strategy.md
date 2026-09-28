@@ -86,8 +86,10 @@ confirmed settlement with service failure, uncertain submission, both directions
 provider/independent settlement contradiction, and recipient/amount/asset/network
 differences. Schema-4 fixtures add the current boundary: `perflo-v8-provider-only-success`
 records unavailable independent settlement and is `UNVERIFIABLE`, while
-`x402-independent-confirmed` records a matching exact transfer and is `VERIFIED`. These
-are explicitly synthetic reports modeled from accepted contracts and controlled local
+`x402-independent-confirmed` records a matching exact transfer and is `VERIFIED`.
+`perflo-v8-credit-authorization` records a retained provider-side settlement reference,
+hash-correlated provider Activity, and unavailable independent settlement. These are
+explicitly synthetic reports modeled from accepted contracts and controlled local
 outcomes; challenge-only wire payloads remain contract-test fixtures and are never padded
 with fabricated execution or ledger evidence.
 
@@ -185,9 +187,11 @@ been validated. The corpus covers exactly the surfaces the adapter exercises:
   provider evidence with local paths redacted;
 - signed Activity `ledgerState` rows where a non-positive amount never supplies charge
   evidence;
-- credit-funded results exposing no canonical on-chain transaction reference;
-- transaction-hash identity matching (case-insensitive only for exact 32-byte `0x`
-  hashes);
+- credit-funded authorization results retaining Perflo's provider-side Base
+  `settlement.txHash` for Activity correlation without treating it as the customer's
+  transfer or independent settlement;
+- transaction-hash identity matching across execution and Activity, case-insensitive only
+  for exact 32-byte `0x` hashes;
 - vendor reinspection drift stopping before capability consumption and before `pay`;
 - one-shot mutation semantics: no second paid call after timeout or uncertain
   submission.
@@ -205,7 +209,7 @@ Live tests are opt-in, and money-moving operations never run automatically in CI
 The first live paid cycle is recorded in
 [live-run-report-2026-08-21](live-run-report-2026-08-21.md); the [durable controlled live cycle](durable-live-cycle-2026-09-03.md) verifies schema-4 persistence and restart-free UI observation. Every materially new
 failure mode it exposed was distilled into a sanitized offline fixture (for example
-`fixtures/failed-broadcast/`). Raw live evidence bundles remain local and untracked. The first controlled x402 Base Sepolia cycle is recorded in [x402-live-cycle](x402-live-cycle.md); its provider-amount omission and unrelated receipt log were reduced to offline regressions. The separately authorized [public endpoint validation](x402-public-endpoint-validation.md) records GoPlausible compatibility and the mixed-network alternatives regression. The [2026-09-22 assurance validation](assurance-real-world-validation-2026-09-22.md) records schema-3 database migration, response-bound signer correction, clean delivery, conservative unresolved HTTP-500 handling, bundle/publication checks, and UI restart behavior without retaining raw payment material. The opt-in [Context.dev compatibility record](contextdev-live-compatibility.md) establishes the strict positive Markdown scrape shape for one owner-approved public IANA claim; it made no payment or model call.
+`fixtures/failed-broadcast/`). Raw live evidence bundles remain local and untracked. The current schema-4 x402 and Perflo v8 validation is recorded in [PR 2 live validation](pr2-live-validation-2026-09-28.md). The first controlled x402 Base Sepolia cycle is recorded in [x402-live-cycle](x402-live-cycle.md); its provider-amount omission and unrelated receipt log were reduced to offline regressions. The separately authorized [public endpoint validation](x402-public-endpoint-validation.md) records GoPlausible compatibility and the mixed-network alternatives regression. The [2026-09-22 assurance validation](assurance-real-world-validation-2026-09-22.md) records schema-3 database migration, response-bound signer correction, clean delivery, conservative unresolved HTTP-500 handling, bundle/publication checks, and UI restart behavior without retaining raw payment material. The opt-in [Context.dev compatibility record](contextdev-live-compatibility.md) establishes the strict positive Markdown scrape shape for one owner-approved public IANA claim; it made no payment or model call.
 
 ## Lessons from the first live cycle
 

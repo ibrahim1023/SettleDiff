@@ -816,3 +816,62 @@ def test_contract_digest_ignores_unnormalized_vendor_source_fields() -> None:
         artifact("artifact_digest_drifted", ArtifactType.SERVICE_CONTRACT, drifted)
     )
     assert drifted_contract.digest != first.digest
+
+
+def test_normalize_credit_authorization_finalized_retains_provider_settlement_reference() -> None:
+    raw = artifact(
+        "artifact_credit_authorization",
+        ArtifactType.EXECUTION,
+        perflo_fixture("pay_credit_authorization_finalized.json")["result"],
+    )
+
+    execution = normalize_execution(raw)
+
+    assert execution.settlement_status is SettlementStatus.SETTLED
+    assert execution.chain == "base"
+    assert execution.transaction_hash == TX_HASH
+    assert execution.transaction_id == "syn_payment_transaction_001"
+    assert execution.charge == Money(amount=Decimal("0.001"), unit="USD")
+    assert "unknown settlement status" not in " ".join(execution.normalization_notes)
+
+
+def test_normalize_credit_authorization_activity_uses_ledger_state_and_hash() -> None:
+    raw = artifact(
+        "artifact_credit_activity",
+        ArtifactType.ACTIVITY,
+        perflo_fixture("activity_credit_authorization.json")["agent"],
+    )
+
+    pending, posted = normalize_activity(raw)
+
+    assert pending.status is LedgerStatus.PENDING
+    assert posted.status is LedgerStatus.CONFIRMED
+    assert pending.transaction_id is None
+    assert posted.transaction_id is None
+    assert pending.transaction_hash == posted.transaction_hash == TX_HASH
+    assert pending.ledger_id == "syn_activity_pending_001"
+    assert posted.ledger_id == "syn_activity_posted_001"
+
+
+@pytest.mark.parametrize(
+    ("provider_status", "expected"),
+    [
+        ("finalized", SettlementStatus.SETTLED),
+        ("FINALIZED", SettlementStatus.SETTLED),
+        ("submitted", SettlementStatus.PENDING),
+        ("SUBMITTED", SettlementStatus.PENDING),
+    ],
+)
+def test_normalize_provider_settlement_status_aliases(
+    provider_status: str, expected: SettlementStatus
+) -> None:
+    execution = normalize_execution(
+        artifact(
+            "artifact_provider_status",
+            ArtifactType.EXECUTION,
+            {"settlement": {"status": provider_status}},
+        )
+    )
+
+    assert execution.settlement_status is expected
+    assert "unknown settlement status" not in " ".join(execution.normalization_notes)
