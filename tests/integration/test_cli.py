@@ -2446,3 +2446,36 @@ def test_perflo_run_never_probes_the_x402_signer(
 
     assert result.exit_code == 1
     assert "Authorization declined" in result.stdout
+
+
+def test_show_renders_schema4_settlement_provenance(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/perflo-v8-provider-only-success"))
+    repository = SQLiteReportRepository(database)
+    repository.save(report)
+    repository.close()
+
+    result = runner.invoke(app, ["show", report.run_id, "--database", str(database)])
+
+    assert result.exit_code == 0
+    assert "Independent settlement: UNAVAILABLE (SETTLEMENT_PROFILE_UNAVAILABLE)" in result.stdout
+    assert (
+        "Provider comparison: NOT_COMPARABLE "
+        "(NO_INDEPENDENT_SETTLEMENT_OBSERVATION)" in result.stdout
+    )
+    assert "Provider Activity: confirmed (provider assertion)" in result.stdout
+
+
+def test_show_legacy_report_omits_settlement_provenance(tmp_path: Path) -> None:
+    database = tmp_path / "reports.sqlite3"
+    report = replay_fixture(Path("fixtures/clean-success"))
+    repository = SQLiteReportRepository(database)
+    repository.save(report)
+    repository.close()
+
+    result = runner.invoke(app, ["show", report.run_id, "--database", str(database)])
+
+    assert result.exit_code == 0
+    assert "Independent settlement:" not in result.stdout
+    assert "Provider comparison:" not in result.stdout
+    assert "Provider Activity:" not in result.stdout

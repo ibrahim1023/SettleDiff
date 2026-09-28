@@ -876,3 +876,25 @@ def test_perflo_bundle_includes_snapshot_by_vendor_slug(tmp_path: Path) -> None:
 
     assert f"snapshots/{snapshot.snapshot_digest}.json" in bundle.objects
     repository.close()
+
+
+def test_schema4_bundle_round_trip_and_provenance_tamper_detection(
+    tmp_path: Path,
+) -> None:
+    repository, report = _persist(tmp_path, "x402-independent-confirmed")
+
+    bundle = export_bundle(repository, report.run_id)
+    loaded = load_bundle(serialize_bundle(bundle))
+    verified = verify_bundle(loaded)
+
+    assert isinstance(loaded, EvidenceBundleV3)
+    assert loaded.compatibility.report_schema_version == 4
+    assert verified == redact_report(report)
+    report_object = cast(dict[str, Any], json.loads(json.dumps(bundle.objects["report.json"])))
+    for field in ("independent_settlement", "settlement_comparison"):
+        tampered_report = json.loads(json.dumps(report_object))
+        cast(dict[str, Any], tampered_report[field])["diagnostic"] = "TAMPERED"
+        objects = dict(bundle.objects) | {"report.json": tampered_report}
+        with pytest.raises(BundleError):
+            verify_bundle(bundle.model_copy(update={"objects": objects}))
+    repository.close()

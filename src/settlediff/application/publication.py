@@ -30,9 +30,12 @@ from settlediff.domain.models import (
     DeliveryAssessment,
     DeliveryObservation,
     DeliveryStatus,
+    IndependentSettlementStatus,
     MachineReport,
     NonEmptyStr,
+    PayerValidationPolicy,
     RetrySafety,
+    SettlementComparisonStatus,
     Severity,
     UtcDatetime,
     Verdict,
@@ -82,6 +85,22 @@ class PublicRetry(BaseModel):
     reason_codes: tuple[PublicCode, ...] = Field(min_length=1, max_length=16)
 
 
+class PublicSettlement(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    independent_status: IndependentSettlementStatus
+    independent_diagnostic: PublicCode
+    comparison_status: SettlementComparisonStatus
+    comparison_diagnostic: PublicCode
+    chain_verified: bool
+    asset_verified: bool
+    amount_verified: bool
+    recipient_verified: bool
+    payer_verified: bool
+    payer_policy: PayerValidationPolicy
+
+
 class PublicTimelineEvent(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
@@ -96,7 +115,7 @@ class PublicTimelineEvent(BaseModel):
 class PublicReport(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     source_report_schema_version: int = Field(ge=1)
     public_run_id: NonEmptyStr
     evidence_through: UtcDatetime
@@ -105,6 +124,17 @@ class PublicReport(BaseModel):
     delivery: PublicDelivery | None
     retry: PublicRetry | None
     timeline: tuple[PublicTimelineEvent, ...]
+    settlement: PublicSettlement | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def require_compatible_schema(self) -> PublicReport:
+        if self.schema_version == 1 and "settlement" in self.model_fields_set:
+            raise ValueError("public report version 1 cannot contain settlement")
+        if self.schema_version == 2 and self.settlement is None:
+            raise ValueError("public report version 2 requires settlement")
+        return self
 
 
 class PublicManifestEntry(BaseModel):
@@ -293,12 +323,12 @@ def _build_report(
     observation: DeliveryObservation | None,
     evidence_through: UtcDatetime,
 ) -> PublicReport:
-    return PublicReport(
-        source_report_schema_version=report.schema_version,
-        public_run_id=mask_identifier(report.run_id),
-        evidence_through=evidence_through,
-        verdict=report.verdict,
-        findings=tuple(
+    values: dict[str, object] = {
+        "source_report_schema_version": report.schema_version,
+        "public_run_id": mask_identifier(report.run_id),
+        "evidence_through": evidence_through,
+        "verdict": report.verdict,
+        "findings": tuple(
             PublicFinding(
                 finding_id=finding.finding_id,
                 check_id=finding.check_id,
@@ -310,7 +340,7 @@ def _build_report(
             )
             for finding in sorted(report.findings, key=lambda item: item.finding_id)
         ),
-        delivery=(
+        "delivery": (
             PublicDelivery(
                 status=delivery.status,
                 reason_code=delivery.reason_code,
@@ -322,7 +352,7 @@ def _build_report(
             if delivery is not None
             else None
         ),
-        retry=(
+        "retry": (
             PublicRetry(
                 safety=report.retry.safety,
                 reason_codes=report.retry.reason_codes,
@@ -330,8 +360,26 @@ def _build_report(
             if report.retry is not None
             else None
         ),
-        timeline=tuple(events),
-    )
+        "timeline": tuple(events),
+    }
+    independent = report.independent_settlement
+    comparison = report.settlement_comparison
+    if independent is not None and comparison is not None:
+        dimensions = independent.dimensions
+        values["schema_version"] = 2
+        values["settlement"] = PublicSettlement(
+            independent_status=independent.status,
+            independent_diagnostic=independent.diagnostic,
+            comparison_status=comparison.status,
+            comparison_diagnostic=comparison.diagnostic,
+            chain_verified=dimensions.chain_verified,
+            asset_verified=dimensions.asset_verified,
+            amount_verified=dimensions.amount_verified,
+            recipient_verified=dimensions.recipient_verified,
+            payer_verified=dimensions.payer_verified,
+            payer_policy=dimensions.payer_policy,
+        )
+    return PublicReport.model_validate(values)
 
 
 def _templates() -> Environment:

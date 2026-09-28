@@ -195,6 +195,16 @@ def _render(
     typer.echo(report.verdict.value)
     for finding in report.findings:
         typer.echo(f"{finding.status}: {finding.message}")
+    if report.independent_settlement is not None:
+        independent = report.independent_settlement
+        typer.echo(f"Independent settlement: {independent.status.value} ({independent.diagnostic})")
+        comparison = report.settlement_comparison
+        if comparison is not None:
+            typer.echo(f"Provider comparison: {comparison.status.value} ({comparison.diagnostic})")
+        if report.provider_activity is not None:
+            typer.echo(
+                f"Provider Activity: {report.provider_activity.status.value} (provider assertion)"
+            )
     if explanation is not None:
         typer.echo(f"Explanation ({explanation.source.value}): {explanation.explanation.summary}")
         typer.echo(

@@ -66,7 +66,7 @@ def test_diagnostics_show_safe_contract_versions(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert "SettleDiff 0.1.0" in response.text
-    assert "Report schema" in response.text and ">2<" in response.text
+    assert "Report schema" in response.text and ">4<" in response.text
     assert "Database schema" in response.text and ">6<" in response.text
     assert "Bundle schema" in response.text and ">3<" in response.text
     assert "/web/scrape/markdown" in response.text
@@ -150,7 +150,8 @@ def test_all_fixture_reports_render_without_recomputing(tmp_path: Path) -> None:
         detail = client.get(f"/runs/{report.run_id}")
         assert detail.status_code == 200
         assert report.verdict.value in detail.text
-        for heading in ("Expected", "Executed", "Recorded"):
+        recorded_heading = "Independently observed" if report.schema_version >= 4 else "Recorded"
+        for heading in ("Expected", "Executed", recorded_heading):
             assert f"<th>{heading}</th>" in detail.text
 
 
@@ -860,4 +861,78 @@ def test_pending_run_detail_has_no_assurance_panel(tmp_path: Path) -> None:
 
     assert detail.status_code == 200
     assert "Purchase assurance" not in detail.text
+    repository.close()
+
+
+def test_schema4_perflo_detail_separates_provider_and_independent_evidence(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/perflo-v8-provider-only-success"))
+    repository.save(report)
+
+    detail = TestClient(create_app(repository)).get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert "Expected · Executed · Independently observed" in detail.text
+    assert "<th>Independently observed</th>" in detail.text
+    assert "Provider claim: settled" in detail.text
+    assert "Independent settlement: UNAVAILABLE (SETTLEMENT_PROFILE_UNAVAILABLE)" in detail.text
+    assert (
+        "Provider/observer comparison: NOT_COMPARABLE "
+        "(NO_INDEPENDENT_SETTLEMENT_OBSERVATION)" in detail.text
+    )
+    assert "Provider Activity: confirmed" in detail.text
+    assert 'data-label="Independently observed">—</td>' in detail.text
+    assert (
+        "Provider Activity and transaction status are provider assertions; only the " in detail.text
+    )
+    repository.close()
+
+
+def test_schema4_x402_detail_shows_verified_dimensions_without_raw_identifiers(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/x402-independent-confirmed"))
+    observation = report.independent_settlement
+    assert observation is not None
+    report = report.model_copy(
+        update={
+            "independent_settlement": observation.model_copy(
+                update={"source": "https://rpc.private.invalid/key"}
+            )
+        }
+    )
+    repository.save(report)
+
+    detail = TestClient(create_app(repository)).get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert "Provider claim: settled" in detail.text
+    assert "Independent settlement: CONFIRMED (EXACT_TRANSFER_CONFIRMED)" in detail.text
+    assert "Provider/observer comparison: MATCH (PROVIDER_SETTLEMENT_CONFIRMED)" in detail.text
+    for label in ("Chain", "Asset", "Amount", "Recipient", "Payer"):
+        assert f"<dt>{label}</dt><dd>Verified</dd>" in detail.text
+    assert "<dt>Payer policy</dt><dd>REQUIRED</dd>" in detail.text
+    assert "http://" not in detail.text
+    assert "https://" not in detail.text
+    assert "rpc.private.invalid" not in detail.text
+    assert "0x" not in detail.text
+    repository.close()
+
+
+def test_legacy_detail_keeps_recorded_column_and_outcome_copy(tmp_path: Path) -> None:
+    repository = SQLiteReportRepository(tmp_path / "reports.sqlite3")
+    report = replay_fixture(Path("fixtures/x402-clean-success"))
+    repository.save(report)
+
+    detail = TestClient(create_app(repository)).get(f"/runs/{report.run_id}")
+
+    assert detail.status_code == 200
+    assert "Expected · Executed · Recorded" in detail.text
+    assert "<th>Recorded</th>" in detail.text
+    assert "Provider receipt: settled" in detail.text
+    assert "Independent record: confirmed" in detail.text
+    assert "Settlement provenance" not in detail.text
     repository.close()

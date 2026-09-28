@@ -105,7 +105,12 @@ def test_complete_fixture_path_remains_offline(
         detail = client.get(f"/runs/{report.run_id}")
         assert detail.status_code == 200
         assert report.verdict.value in detail.text
-        assert "Expected · Executed · Recorded" in detail.text
+        heading = (
+            "Expected · Executed · Independently observed"
+            if report.schema_version >= 4
+            else "Expected · Executed · Recorded"
+        )
+        assert heading in detail.text
         assert "Purchase assurance" in detail.text
         assert "Evidence timeline" in detail.text
         investigation = investigate_purchase(repository, report.run_id)

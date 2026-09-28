@@ -101,7 +101,7 @@
     <div class="section-heading">
       <div>
         <p class="eyebrow">Evidence comparison</p>
-        <h2>Expected · Executed · Recorded</h2>
+        <h2>Expected · Executed · {% if report.schema_version >= 4 %}Independently observed{% else %}Recorded{% endif %}</h2>
       </div>
       <div class="section-actions">
         {% if differences %}
@@ -115,14 +115,14 @@
     {% if rows %}
       <div class="evidence-table">
         <table>
-          <thead><tr><th>Field</th><th>Expected</th><th>Executed</th><th>Recorded</th><th>Finding</th></tr></thead>
+          <thead><tr><th>Field</th><th>Expected</th><th>Executed</th><th>{% if report.schema_version >= 4 %}Independently observed{% else %}Recorded{% endif %}</th><th>Finding</th></tr></thead>
           <tbody>
             {% for row in rows %}
               <tr id="evidence-{{ row.check_id }}" data-status="{{ row.status.value }}">
                 <th>{{ row.label }}</th>
                 <td data-label="Expected">{{ row.expected or "—" }}</td>
                 <td data-label="Executed">{{ row.executed or "—" }}</td>
-                <td data-label="Recorded">{{ row.recorded or "—" }}</td>
+                <td data-label="{% if report.schema_version >= 4 %}Independently observed{% else %}Recorded{% endif %}">{{ row.recorded or "—" }}</td>
                 <td data-label="Finding"><span class="finding-status finding-{{ row.status.value|lower }}">{{ row.status.value }}</span></td>
               </tr>
             {% endfor %}
@@ -136,7 +136,12 @@
   <section class="panel outcome-panel">
     <div class="section-heading">
       <div><p class="eyebrow">Service outcome</p><h2>{% if report.execution %}HTTP {{ report.execution.upstream_http_status or "unknown" }}{% else %}No execution evidence{% endif %}</h2></div>
-      {% if report.receipt %}
+      {% if report.schema_version >= 4 %}
+        <p>Provider claim: {% if report.receipt %}{{ report.receipt.settlement_status.value }}{% elif report.execution %}{{ report.execution.settlement_status.value }}{% else %}unknown{% endif %}</p>
+        <p>Independent settlement: {{ report.independent_settlement.status.value }} ({{ report.independent_settlement.diagnostic }})</p>
+        <p>Provider/observer comparison: {{ report.settlement_comparison.status.value }} ({{ report.settlement_comparison.diagnostic }})</p>
+        {% if report.provider_activity %}<p>Provider Activity: {{ report.provider_activity.status.value }}</p>{% endif %}
+      {% elif report.receipt %}
         <p>Provider receipt: {{ report.receipt.settlement_status.value }}</p>
         <p>Independent record: {% if report.ledger %}{{ report.ledger.status.value }}{% else %}unknown{% endif %}</p>
       {% else %}
@@ -147,6 +152,22 @@
       <p class="paid-failure-copy"><strong>Paid failure.</strong> Payment settled successfully, but the purchased operation failed.</p>
     {% endif %}
   </section>
+  {% if report.schema_version >= 4 %}
+  <section class="panel settlement-provenance" aria-labelledby="settlement-provenance-heading">
+    <div class="section-heading"><div><p class="eyebrow">Trust domains</p><h2 id="settlement-provenance-heading">Settlement provenance</h2></div></div>
+    {% set dimensions = report.independent_settlement.dimensions %}
+    <dl class="context-metadata">
+      <div><dt>Observer source</dt><dd>{{ settlement_observer_source }}</dd></div>
+      <div><dt>Chain</dt><dd>{% if dimensions.chain_verified %}Verified{% else %}Not verified{% endif %}</dd></div>
+      <div><dt>Asset</dt><dd>{% if dimensions.asset_verified %}Verified{% else %}Not verified{% endif %}</dd></div>
+      <div><dt>Amount</dt><dd>{% if dimensions.amount_verified %}Verified{% else %}Not verified{% endif %}</dd></div>
+      <div><dt>Recipient</dt><dd>{% if dimensions.recipient_verified %}Verified{% else %}Not verified{% endif %}</dd></div>
+      <div><dt>Payer</dt><dd>{% if dimensions.payer_verified %}Verified{% else %}Not verified{% endif %}</dd></div>
+      <div><dt>Payer policy</dt><dd>{{ dimensions.payer_policy.value }}</dd></div>
+    </dl>
+    <p>Provider Activity and transaction status are provider assertions; only the independent observation can confirm settlement.</p>
+  </section>
+  {% endif %}
   <section class="panel">
     <div class="section-heading"><div><p class="eyebrow">Deterministic checks</p><h2>Findings</h2></div><p>{{ report.findings|length }} persisted checks</p></div>
     <ol class="finding-list">

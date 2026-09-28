@@ -477,6 +477,8 @@ def _verify_v3(bundle: EvidenceBundleV3) -> MachineReport:
             f"{report.run_id}:run_state",
         )
     )
+    if report.independent_settlement is not None:
+        citations.add("independent_settlement")
     finding_ids = {finding.finding_id for finding in report.findings}
 
     def require_citations(kind: str, ids: tuple[str, ...]) -> None:

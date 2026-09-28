@@ -900,3 +900,21 @@ def test_database_schema_four_copy_migrates_through_every_new_migration(
     assert reopened_rows == len(timeline)
     assert reopened.timeline(report.run_id) == timeline
     reopened.close()
+
+
+def test_schema4_settlement_provenance_round_trips_through_sqlite(
+    tmp_path: Path,
+) -> None:
+    report = replay_fixture(Path("fixtures/x402-independent-confirmed"))
+    repository = SQLiteReportRepository(tmp_path / "schema4.sqlite3")
+
+    repository.save(report)
+    loaded = repository.get(report.run_id)
+
+    assert loaded is not None
+    assert loaded.schema_version == 4
+    assert loaded == redact_report(report)
+    assert loaded.independent_settlement is not None
+    assert loaded.settlement_comparison is not None
+    assert loaded.ledger == loaded.independent_settlement.ledger
+    repository.close()
