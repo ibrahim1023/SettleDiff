@@ -17,7 +17,11 @@ from settlediff.application.auth import (
     PaidExecutionRequest,
 )
 from settlediff.application.budget import InvestigationBudgetState
-from settlediff.application.payment_rails import AdapterEvidence, SubmissionUncertainError
+from settlediff.application.payment_rails import (
+    AdapterEvidence,
+    PaymentRailAdapter,
+    SubmissionUncertainError,
+)
 from settlediff.application.replay import replay_fixture
 from settlediff.application.run import (
     LiveEvidenceCollector,
@@ -37,14 +41,17 @@ from settlediff.contextdev.client import (
     ContextEvidenceRequest,
     ContextEvidenceState,
 )
+from settlediff.domain.integrity import sha256_digest
 from settlediff.domain.models import (
     ArtifactType,
+    AssetIdentity,
     EvidenceArtifact,
     ExplanationRecord,
     ExplanationSource,
     InvestigationExplanation,
     MachineReport,
     RetrySafety,
+    SettlementProfile,
     Verdict,
 )
 from settlediff.domain.money import Money
@@ -1969,3 +1976,110 @@ class FakeRail:
             data={key: value for key, value in envelope.payload.items() if key != "ok"},
             transaction_reference=transaction_reference,
         )
+
+
+EXPECTED_PAYER = "0x3333333333333333333333333333333333333333"
+
+
+def _http_profile() -> SettlementProfile:
+    return SettlementProfile(
+        network="eip155:84532",
+        chain_id=84532,
+        asset_identity=AssetIdentity(
+            symbol="USDC",
+            network="eip155:84532",
+            reference="0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            decimals=6,
+        ),
+        atomic_amount=10000,
+        recipient="0x1111111111111111111111111111111111111111",
+        payer=EXPECTED_PAYER,
+    )
+
+
+class HttpProfileRail:
+    adapter_id = "x402"
+
+    def __init__(self, profile: SettlementProfile | None) -> None:
+        self._profile = profile
+
+    async def inspect(self, request: PaidExecutionRequest) -> AdapterEvidence:
+        return AdapterEvidence(
+            adapter_id="x402",
+            protocol_version="2",
+            operation="inspect",
+            source="x402.synthetic.challenge",
+            artifact_type=ArtifactType.SERVICE_CONTRACT,
+            data={
+                "schema_version": 2,
+                "vendor_slug": None,
+                "url": request.target,
+                "price": {"amount": "0.001", "unit": "USDC"},
+                "asset": "USDC",
+                "protocol": "x402",
+                "chain": None,
+                "request_schema": {"type": "object"},
+                "scheme": "exact",
+                "network": "eip155:84532",
+                "asset_identity": {
+                    "schema_version": 1,
+                    "symbol": "USDC",
+                    "network": "eip155:84532",
+                    "reference": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                    "decimals": 6,
+                },
+                "recipient": "0x1111111111111111111111111111111111111111",
+                "max_timeout_seconds": 300,
+                "normalization_notes": [],
+            },
+            settlement_profile=self._profile,
+        )
+
+    async def execute_once(self, *_args: object) -> AdapterEvidence:
+        raise AssertionError("preflight tests must not execute")
+
+    async def collect_activity(self) -> AdapterEvidence:
+        raise AssertionError("preflight tests must not collect activity")
+
+
+def _http_request() -> PaidExecutionRequest:
+    return PaidExecutionRequest(
+        run_id="syn_profile_run",
+        resource=HttpResourceReference(
+            url="https://example.invalid/paid", method="POST", body={"q": "x"}
+        ),
+        budget=Money(amount=Decimal("0.01"), unit="USDC"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_preflight_settlement_profile_produces_schema4_terms() -> None:
+    profile = _http_profile()
+    collector = LiveEvidenceCollector(
+        cast(PaymentRailAdapter, HttpProfileRail(profile)),
+        StubContextDev(evidence=CONTEXT_EVIDENCE),
+    )
+
+    await collector.preflight(_http_request())
+
+    terms = collector.payment_terms
+    assert terms.schema_version == 4
+    assert terms.payer == EXPECTED_PAYER
+    assert terms.settlement_profile_digest == sha256_digest(profile.model_dump(mode="json"))
+    assert terms.resource_url == "https://example.invalid/paid"
+    assert terms.payer in terms.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_preflight_without_profile_stays_schema2() -> None:
+    collector = LiveEvidenceCollector(
+        cast(PaymentRailAdapter, HttpProfileRail(None)),
+        StubContextDev(evidence=CONTEXT_EVIDENCE),
+    )
+
+    await collector.preflight(_http_request())
+
+    terms = collector.payment_terms
+    assert terms.schema_version == 2
+    assert terms.payer is None
+    assert terms.settlement_profile_digest is None

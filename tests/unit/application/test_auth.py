@@ -546,3 +546,118 @@ def test_schema3_capability_rejects_budget_change() -> None:
         PaidExecutionCapability.issue(
             drifted, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
         )
+
+
+EXPECTED_PAYER = "0x3333333333333333333333333333333333333333"
+PROFILE_DIGEST = "c" * 64
+
+
+def http4_terms(**overrides: object) -> PaymentTerms:
+    base: dict[str, object] = {
+        "schema_version": 4,
+        "payer": EXPECTED_PAYER,
+        "settlement_profile_digest": PROFILE_DIGEST,
+    }
+    return payment_terms(**(base | overrides))
+
+
+def test_schema4_terms_roundtrip_and_digest() -> None:
+    terms = http4_terms()
+
+    assert terms.schema_version == 4
+    assert terms.payer == EXPECTED_PAYER
+    assert terms.settlement_profile_digest == PROFILE_DIGEST
+    assert terms.resource_url == "https://example.invalid/search"
+    restored = PaymentTerms.model_validate_json(terms.model_dump_json())
+    assert restored == terms
+    assert restored.digest == terms.digest
+
+
+@pytest.mark.parametrize("schema_version", [1, 2])
+@pytest.mark.parametrize("field", ["payer", "settlement_profile_digest"])
+def test_schemas_1_and_2_reject_payer_fields_even_when_null(
+    schema_version: int, field: str
+) -> None:
+    with pytest.raises(ValueError, match="schema version 4"):
+        payment_terms(schema_version=schema_version, **{field: None})
+
+
+@pytest.mark.parametrize("field", ["payer", "settlement_profile_digest"])
+def test_schema3_rejects_payer_fields_even_when_null(field: str) -> None:
+    with pytest.raises(ValueError, match="settlement payer"):
+        catalog_terms(catalog_request(), **{field: None})
+
+
+@pytest.mark.parametrize("field", ["payer", "settlement_profile_digest"])
+@pytest.mark.parametrize("mode", ["absent", "null"])
+def test_schema4_requires_payer_and_profile_digest(field: str, mode: str) -> None:
+    values: dict[str, object] = {
+        "schema_version": 4,
+        "payer": EXPECTED_PAYER,
+        "settlement_profile_digest": PROFILE_DIGEST,
+    }
+    if mode == "absent":
+        values.pop(field)
+    else:
+        values[field] = None
+    with pytest.raises(ValueError, match="schema version 4"):
+        payment_terms(**values)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"resource_digest": "b" * 64},
+        {"contract_digest": "b" * 64},
+        {"maximum_charge": Money(amount=Decimal("0.05"), unit="USDC")},
+        {"required_max_charge": Money(amount=Decimal("0.05"), unit="USDC")},
+        {"resource_digest": None},
+    ],
+    ids=[
+        "resource_digest",
+        "contract_digest",
+        "maximum_charge",
+        "required_max_charge",
+        "resource_digest_null",
+    ],
+)
+def test_schema4_rejects_catalog_fields(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="catalog"):
+        http4_terms(**overrides)
+
+
+@pytest.mark.asyncio
+async def test_schema4_capability_accepts_exact_http_request() -> None:
+    req = request()
+    terms = http4_terms()
+    capability = PaidExecutionCapability.issue(
+        req, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+    )
+
+    token = await capability.consume(req, payment_terms=terms, now=NOW)
+
+    assert token.run_id == req.run_id
+    token.require_exact_payment_terms(terms)
+
+
+@pytest.mark.asyncio
+async def test_schema4_capability_rejects_request_or_terms_drift() -> None:
+    req = request()
+    terms = http4_terms()
+    changed = request(
+        resource=HttpResourceReference(
+            url="https://example.invalid/search",
+            method="POST",
+            body={"query": "other"},
+        )
+    )
+    with pytest.raises(AuthorizationError, match="payment terms do not match"):
+        PaidExecutionCapability.issue(
+            changed, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+        )
+    capability = PaidExecutionCapability.issue(
+        req, payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+    )
+    other_terms = http4_terms(payer="0x4444444444444444444444444444444444444444")
+    with pytest.raises(AuthorizationError, match="exact payment terms"):
+        await capability.consume(req, payment_terms=other_terms, now=NOW)

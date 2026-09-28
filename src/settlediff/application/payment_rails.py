@@ -11,6 +11,7 @@ from settlediff.domain.models import (
     ArtifactType,
     DeliveryObservation,
     NonEmptyStr,
+    SettlementProfile,
     UtcDatetime,
 )
 from settlediff.domain.money import Money
@@ -41,6 +42,7 @@ class AdapterEvidence(BaseModel):
     provider_receipt: JsonValue | None = None
     delivery_observation: DeliveryObservation | None = None
     source_contract: JsonValue | None = None
+    settlement_profile: SettlementProfile | None = None
 
 
 @runtime_checkable

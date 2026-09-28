@@ -781,7 +781,7 @@ def test_failed_observation_requires_failed_ledger(
 ) -> None:
     ledger: dict[str, object] | None = None
     if ledger_update is not None:
-        ledger = ledger_fixture().model_dump(mode="json") | ledger_update
+        ledger = cast(dict[str, object], ledger_fixture().model_dump(mode="json") | ledger_update)
     payload = settlement_observation_payload(status="FAILED", ledger=ledger)
 
     with pytest.raises(ValidationError, match="failed"):

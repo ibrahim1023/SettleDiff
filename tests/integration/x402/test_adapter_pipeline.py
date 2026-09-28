@@ -117,6 +117,7 @@ async def test_offline_pipeline_composes_http_signer_rpc_and_canonical_verifier(
                 )
             ),
             X402RpcClient(rpc_http),
+            expected_payer=PAYER,
         )
         collector = LiveEvidenceCollector(adapter, cast(ContextEvidencePort, object()))
         request = PaidExecutionRequest(

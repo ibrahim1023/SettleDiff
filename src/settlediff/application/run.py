@@ -57,6 +57,7 @@ from settlediff.contextdev.client import (
 )
 from settlediff.domain.checks import run_checks
 from settlediff.domain.delivery import assess_delivery
+from settlediff.domain.integrity import sha256_digest
 from settlediff.domain.matching import MatchResult, MatchStatus, match_activity
 from settlediff.domain.models import (
     ArtifactType,
@@ -68,6 +69,7 @@ from settlediff.domain.models import (
     ExplanationSource,
     MachineReport,
     PurchaseIntent,
+    SettlementProfile,
 )
 from settlediff.domain.money import Money
 from settlediff.domain.normalize import (
@@ -239,6 +241,7 @@ class LiveEvidenceCollector:
         self._contract_reinspection: EvidenceArtifact | None = None
         self._quote: Money | None = None
         self._payment_terms: PaymentTerms | None = None
+        self._settlement_profile: SettlementProfile | None = None
         self._schema: EvidenceArtifact | None = None
         self._execution: EvidenceArtifact | None = None
         self._receipt: EvidenceArtifact | None = None
@@ -308,30 +311,38 @@ class LiveEvidenceCollector:
                 f"authorized budget {request.budget.amount} {request.budget.unit}"
             )
         self._quote = contract.price
+        self._settlement_profile = contract_evidence.settlement_profile
         if isinstance(request.resource, HttpResourceReference):
             if contract.url is None:
                 raise RunTransitionError("HTTP payment terms require a contract resource URL")
-            self._payment_terms = PaymentTerms(
-                schema_version=2,
-                adapter_id=self._adapter.adapter_id,
-                protocol_version=contract_evidence.protocol_version,
-                scheme=contract.scheme,
-                network=contract.network,
-                chain=contract.chain,
-                asset=contract.asset_identity,
-                asset_symbol=contract.asset,
-                recipient=contract.recipient,
-                quoted_price=contract.price,
-                max_timeout_seconds=contract.max_timeout_seconds,
-                resource_url=contract.url,
-                method=request.method,
-                body_digest=PaidExecutionCapability.body_digest_for(request.body),
-                response_contract_digest=(
+            profile = contract_evidence.settlement_profile
+            terms_payload: dict[str, object] = {
+                "schema_version": 4 if profile is not None else 2,
+                "adapter_id": self._adapter.adapter_id,
+                "protocol_version": contract_evidence.protocol_version,
+                "scheme": contract.scheme,
+                "network": contract.network,
+                "chain": contract.chain,
+                "asset": contract.asset_identity,
+                "asset_symbol": contract.asset,
+                "recipient": contract.recipient,
+                "quoted_price": contract.price,
+                "max_timeout_seconds": contract.max_timeout_seconds,
+                "resource_url": contract.url,
+                "method": request.method,
+                "body_digest": PaidExecutionCapability.body_digest_for(request.body),
+                "response_contract_digest": (
                     contract.response_contract.digest
                     if contract.response_contract is not None
                     else None
                 ),
-            )
+            }
+            if profile is not None:
+                terms_payload["payer"] = profile.payer
+                terms_payload["settlement_profile_digest"] = sha256_digest(
+                    profile.model_dump(mode="json")
+                )
+            self._payment_terms = PaymentTerms.model_validate(terms_payload)
         else:
             _validate_catalog_contract(contract, request)
             assert contract.price is not None
