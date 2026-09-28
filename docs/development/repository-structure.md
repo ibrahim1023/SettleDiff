@@ -29,9 +29,10 @@ The repository keeps architecture, source, tests, and sanitized fixtures togethe
 │   ├── api/                        # FastAPI routes and dependencies
 │   ├── application/                # run/replay use cases and rail-neutral adapter contracts
 │   ├── contextdev/                 # required live independent evidence adapter
-│   ├── domain/                     # pure models, normalization, checks
+│   ├── domain/                     # pure models, normalization, checks, settlement comparison
+│   ├── observers/                  # rail-neutral read-only EVM RPC and exact-transfer observer
 │   ├── perflo/                     # neutral adapter, subprocess client, envelope parsers
-│   ├── x402/                       # v2 adapter, unsigned HTTP, signer contract, RPC/recovery
+│   ├── x402/                       # v2 adapter, unsigned HTTP, signer contract, recovery
 │   ├── storage/                    # repositories and SQLite implementation
 │   ├── telemetry/                  # structured logging and OTel wiring
 │   └── ui/                         # Jinja templates and static assets
