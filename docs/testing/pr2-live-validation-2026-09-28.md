@@ -77,8 +77,31 @@ response did not include a transaction reference, so independent settlement was
 delivery `FAILED / HTTP_STATUS_NOT_SUCCESS`, and retry
 `REQUIRES_HUMAN_DECISION` (`EVIDENCE_MISSING`). The final verdict was
 `UNVERIFIABLE`, **not** `PAID_FAILURE`: payment settlement could not be established.
-The submitted request may still have moved funds; no second attempt is authorized.
-Evidence remains local in `.local/x402-pr2-live.sqlite3` (run `live_a063f1e…`).
+The submitted request may still have moved funds; no repeat of that request was
+authorized or attempted. Evidence remains local in `.local/x402-pr2-live.sqlite3`
+(run `live_a063f1e…`).
+
+## Controlled response-contract failure with confirmed settlement
+
+The owner separately approved exactly one new 0.001 test USDC x402 request to the
+loopback `GET /wrong-content` route. Unlike `/failure`, this route returns HTTP 200,
+but advertises `application/json` before payment and delivers `text/plain` after
+payment. An unsigned preflight was declined first. The live authorization bound
+terms digest `1112772a…58af` and the same payer/profile digest `ae22c88f…e0c7`.
+The two routes are different requests with distinct authorization; `/failure` was
+not retried.
+
+The paid response included a transaction reference. Read-only Base Sepolia receipt
+and Transfer-log checks confirmed the exact 1000-atomic test USDC transfer with
+chain, asset, amount, recipient, and pre-authorized payer all verified. The provider
+claim matched that observation. Deterministic delivery assessment returned
+`FAILED / MEDIA_TYPE_MISMATCH` for HTTP 200 `text/plain` against the advertised
+`application/json` promise. The resulting schema-4 report was `PAID_FAILURE`, with
+independent settlement `CONFIRMED / EXACT_TRANSFER_CONFIRMED`, retry
+`DO_NOT_RETRY`, and no automatic retry. The local record is
+`.local/x402-pr2-live.sqlite3` (run `live_5891f22…`, masked transaction
+`0xaa7a…5a2b`). This proves a settled payment with an objectively invalid
+service response; it does **not** prove the earlier HTTP-500 payment settled.
 
 ## Defects exposed and fixed
 
