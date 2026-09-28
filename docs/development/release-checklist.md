@@ -17,17 +17,18 @@ SettleDiff is MIT-licensed and versioned (`0.1.0`). No public distribution chann
 
 - [ ] Every original Perflo fixture retains its accepted verdict.
 - [ ] Every x402 fixture replays with its expected findings and verdict.
-- [ ] Cross-rail semantic-equivalence and adapter anti-coupling tests pass.
-- [ ] Schema-v1 reports remain readable; schema-2 bundles verify unchanged while exports emit schema 3.
+- [ ] Cross-rail provenance and adapter anti-coupling tests pass: provider-only Perflo success is `UNVERIFIABLE`, while an exact independently confirmed x402 transfer may be `VERIFIED`.
+- [ ] Report schemas 1–3 retain their historical meaning; new live and provenance fixtures use report schema 4. Schema-2 bundles verify unchanged while exports emit bundle schema 3 with report compatibility metadata.
 - [ ] A schema-4 database migrates forward through migrations 5 (evidence timeline) and 6 (immutable contract snapshots and observations), preserving report, events, artifacts, and explanation with idempotent timeline backfill on open.
 - [ ] The cohesive offline release tests cover delivery, timeline, retry, persisted drift, embedded Bazaar comparison, purchase investigation, and public publication without external calls.
 - [ ] Bundle checksum changes and internal inconsistencies are rejected; authenticated provenance is not claimed.
-- [ ] Public reports contain only the masked allowlist and publish exactly three static files.
+- [ ] Public schema-1 reports remain unchanged; public schema 2 exposes only settlement statuses/diagnostics, verification dimensions, and `REQUIRED` payer policy. Publication still emits exactly three static files.
 - [ ] Facilitator comparison remains deferred under ADR 0009 (per-run provenance is absent); it is not claimed.
 - [ ] The synthetic Perflo v8 corpus under `tests/contract/perflo/` matches the locally inspected `@perflo/cli@8.0.0` package declarations whose npm integrity is recorded in the testing strategy; no fixture is represented as captured live evidence.
 - [ ] Catalog authorization binds the exact resource digest, canonical vendor contract digest, advertised price, required `maxChargePerCall`, and authorized maximum; the second vendor observation runs after confirmation and before `pay`.
-- [ ] Perflo `pay`, agent Activity, and `tx status` are described as one provider trust domain wherever claims are made; no live Perflo v8 payment validation is claimed.
+- [ ] Perflo `pay`, agent Activity, and `tx status` are described as one provider trust domain; current Perflo schema-4 reports use `SETTLEMENT_PROFILE_UNAVAILABLE`, and no live Perflo v8 payment validation is claimed.
 - [ ] Legacy Perflo fixtures and schema-1/2 HTTP payment terms retain their accepted behavior.
+- [ ] x402 signer metadata is probed before authorization; payer policy is `REQUIRED`; profile drift before signer launch fails closed; observer tests under `tests/unit/observers/` and `tests/integration/observers/` pass.
 - [ ] Provider `savedTo` local paths are redacted before persistence.
 
 Run the cohesive release-hardening test directly:
@@ -39,10 +40,8 @@ uv run pytest tests/integration/test_offline_release.py tests/integration/storag
 Run the demonstrated cross-rail pairs directly:
 
 ```bash
-uv run settlediff verify-fixture fixtures/clean-success --json
-uv run settlediff verify-fixture fixtures/x402-clean-success --json
-uv run settlediff verify-fixture fixtures/paid-failure --json
-uv run settlediff verify-fixture fixtures/x402-paid-failure --json
+uv run settlediff verify-fixture fixtures/perflo-v8-provider-only-success --json
+uv run settlediff verify-fixture fixtures/x402-independent-confirmed --json
 ```
 
 The focused release-hardening test persists complete cited artifacts before exercising byte-stable bundle export, verification, and deliberate tamper rejection.

@@ -65,12 +65,15 @@ MPP clients and other rails remain architectural extension points:
 
 The unsigned x402 reference capture led to a versioned rail-neutral evidence model
 and application port. `PaymentRailAdapter` requires contract inspection, one exact
-execution, and independent activity collection. Schema and transaction lookup are
-separate runtime-checkable capabilities, so an adapter is not forced to implement
-provider operations it does not support. Every operation returns strict
-`AdapterEvidence` carrying adapter, operation, source, artifact type, data,
+execution, and activity collection. Schema, transaction lookup, contract reinspection,
+and independent settlement are separate runtime-checkable capabilities, so an adapter
+is not forced to implement operations it does not support. Every operation returns
+strict `AdapterEvidence` carrying adapter, operation, source, artifact type, data,
 provider observation time when supplied, submission certainty, available
-payment/transaction references, and optional provider-receipt evidence.
+payment/transaction references, optional provider-receipt evidence, and an evidence
+class: `provider_assertion` or `independent_observation`. Perflo evidence is always a
+provider assertion. The x402 receipt/transfer observation is independent evidence;
+checks and verdicts do not branch on adapter identity.
 
 A `PaidExecutionRequest` carries a discriminated resource reference: an
 `HttpResourceReference` (URL, method, optional body) or a `CatalogResourceReference`
@@ -81,48 +84,53 @@ field can change after authorization.
 
 Perflo implements this boundary through `perflo/adapter.py`; its command envelopes
 and aliases no longer cross into application services. The verdict, check, and
-matching layers contain no adapter-specific branching. The x402 package now provides
-bounded offline v2 challenge/settlement-response parsing and explicit Base Sepolia test
-USDC normalization. It also defines the versioned request/result contract for an
-independently owned signer (request schema 2, result and metadata schema 3) and a
-shell-free, one-shot, bounded subprocess client. Before signing, the signer
-reconstructs schema-2 `PaymentTerms`, including the advertised response-contract
-digest when `resource.mimeType` exists. The client launches with a controlled environment that does not inherit wallet keys; the
-external signer is responsible for acquiring signing authority without returning secret
-material. Offline independent settlement verification uses a bounded read-only JSON-RPC
-port and requires the Base Sepolia chain ID plus exactly one matching USDC transfer event
-for the expected token, payer, recipient, and amount; the facilitator transaction sender
-is not treated as payer evidence. The x402 recovery classifier preserves the signer
-submission state and transaction reference, performs only bounded read-only verification,
-and emits canonical adapter evidence. Confirmed and reverted receipts prove submission;
-missing/pending evidence or validation/RPC failure remains unresolved, and only explicit
-pre-transmission proof establishes non-submission. The production x402 adapter composes
-an unsigned bounded resource client, the independently owned one-shot signer process, and
-the read-only RPC verifier. It re-fetches the challenge immediately before signer launch,
-pins requirement index zero in the signer contract, checks returned challenge terms after launch, and preserves structured uncertainty and
-transaction references. CLI composition requires explicit `--rail x402`, an environment
-testnet gate, a command-line testnet gate, and the ordinary interactive exact-request
-authorization. The adapter and composition are offline-tested and completed one controlled
-authorized Base Sepolia cycle and one independently operated GoPlausible test endpoint
-cycle. The public challenge demonstrated that bounded unsupported alternatives may follow
-a strict supported primary requirement; selection remains pinned to index zero, and an
-unsupported primary still fails closed. The signer implementation remains independently
-owned and outside the tracked application. The 2026-09-22 controlled cycle
-validated response-bound clean delivery, while an HTTP-500 signed submission
-without a provider transaction reference remained `UNVERIFIABLE` and was not
-retried.
+matching layers contain no adapter-specific branching. The x402 package provides
+bounded offline v2 challenge/settlement-response parsing, explicit Base Sepolia test
+USDC normalization, and the versioned request/result contract for an independently
+owned signer (request schema 2, result and metadata schema 3). Before authorization,
+the CLI invokes the signer's read-only metadata probe and captures the public payer.
+The selected payment requirement and that mandatory payer form a `SettlementProfile`:
+CAIP-2 network, numeric chain ID, asset identity and decimals, exact atomic amount,
+recipient, and payer. `PaymentTerms` schema 4 binds the payer and canonical profile
+digest alongside the HTTP resource terms and optional response-contract digest.
+
+Immediately before signer launch, the adapter re-fetches the challenge, rebuilds the
+profile with the pre-authorized payer, and refuses any drift. A signer-returned payer
+mismatch becomes submission uncertainty; it never replaces the expected payer. The
+shell-free one-shot client launches with a controlled environment that does not inherit
+wallet keys, and the external signer acquires signing authority without returning secret
+material.
+
+Rail-neutral settlement observation lives in `observers/evm_rpc.py` and
+`observers/evm_transfer.py`. The bounded `EvmRpcClient` allowlists only read-only chain-ID
+and receipt calls. The transfer observer validates the chain, receipt, and exactly one
+matching ERC-20 `Transfer` against the pre-authorized profile; the facilitator transaction
+sender is not payer evidence. It returns `CONFIRMED`, `FAILED`, `INDETERMINATE`, or
+`UNAVAILABLE`, with separate verification dimensions for chain, asset, amount, recipient,
+and payer. Provider/observer comparison is a different deterministic record:
+`MATCH`, `CONTRADICTED`, or `NOT_COMPARABLE`.
+
+The x402 recovery classifier preserves signer submission state and transaction reference,
+uses the same pre-authorized profile, and performs only bounded read-only observation.
+Confirmed and reverted receipts prove submission; missing, pending, malformed, or
+unavailable evidence remains unresolved, and only explicit pre-transmission proof
+establishes non-submission. CLI composition still requires explicit `--rail x402`, both
+testnet gates, and interactive exact-request authorization. The signer implementation
+remains independently owned and outside the tracked application. Historical controlled
+and public endpoint cycles remain bounded compatibility evidence, not substitutes for the
+current profile and observer contract.
 
 ## Components
 
 ### Domain core
 
-Owns strict canonical models, normalization, activity matching, independent checks, verdict precedence, and redaction. It accepts data and returns data; it performs no I/O and contains no model calls.
+Owns strict canonical models, normalization, activity matching, independent checks, settlement comparison, verdict precedence, and redaction. It accepts data and returns data; it performs no I/O and contains no model calls. New live reports use `MachineReport` schema 4: `provider_activity` retains optional provider accounting evidence, `independent_settlement` is mandatory, `settlement_comparison` is mandatory, and `ledger` equals only the independent observation's ledger. Schemas 1–3 retain their historical meaning.
 
 ### Application services
 
 The domain accepts canonical protocol identifiers without a provider registry and imports neither payment adapter. Provider-specific envelopes, versions, facilitator behavior, and transport branches remain inside adapter packages; the application core depends only on rail-neutral ports and canonical evidence.
 
-Coordinate live investigations and fixture replay. They create run IDs, authorization capabilities, evidence timelines, and invoke ports in a fixed safety order. After preflight they create a versioned canonical payment-terms descriptor. HTTP terms (schemas 1 and 2) cover adapter/version, scheme, network/legacy chain, asset identity, recipient, quote, timeout, resource URL, method, body digest, and the advertised response-contract digest when present. Catalog terms (schema 3) bind the resource digest, the canonical vendor-contract digest, the advertised quote, the vendor's required maximum charge, and the user-authorized maximum charge, with no HTTP fields. The descriptor's SHA-256 digest is bound into the one-use capability and revalidated immediately before adapter execution and signer launch. For catalog resources the vendor declaration is re-read after interactive confirmation and before capability consumption; contract drift or malformed evidence fails before `pay` launches. They do not duplicate verification rules.
+Coordinate live investigations and fixture replay. They create run IDs, authorization capabilities, evidence timelines, and invoke ports in a fixed safety order. After preflight they create a versioned canonical payment-terms descriptor. Legacy HTTP terms (schemas 1 and 2) cover adapter/version, scheme, network/legacy chain, asset identity, recipient, quote, timeout, resource URL, method, body digest, and the advertised response-contract digest when present. Catalog terms (schema 3) bind the resource digest, canonical vendor-contract digest, advertised quote, vendor-required maximum charge, and user-authorized maximum charge, with no HTTP fields. x402 HTTP terms use schema 4 and additionally require the pre-authorized payer and canonical `SettlementProfile` digest. The descriptor's SHA-256 digest is bound into the one-use capability and revalidated immediately before adapter execution and signer launch. For catalog resources the vendor declaration is re-read after interactive confirmation and before capability consumption; contract drift or malformed evidence fails before `pay` launches. They do not duplicate verification rules.
 
 ### Perflo adapter
 
@@ -143,12 +151,14 @@ Agent Activity rows (`agent.rows` with `agent.meta`) carry signed major-unit amo
 accounting state, and a non-positive signed Activity amount never supplies actual charge
 evidence. Perflo Activity and `tx status` are provider assertions in the same trust
 domain as `pay`, not independent ledger observations; credit-funded results expose no
-canonical on-chain transaction reference.
+canonical on-chain transaction reference. Perflo v8 does not expose the exact pre-payment
+network, asset reference/decimals, atomic amount, recipient, and mandatory payer needed for
+a `SettlementProfile`. Current Perflo reports therefore record
+`SETTLEMENT_PROFILE_UNAVAILABLE`; provider-only success remains `UNVERIFIABLE`.
 
 ### x402 adapter
 
-Issues bounded unsigned GET/POST challenge requests without redirects. Remote resources require HTTPS; HTTP is accepted only when URL parsing proves the host is loopback. It strictly parses x402 v2 exact/Base-Sepolia/test-USDC terms, revalidates them against the consumed capability, launches one independently owned signer process, preserves signer-owned bounded paid-response facts (status, media type, byte count, truncation, bounded parsed JSON) for deterministic delivery validation, normalizes provider settlement separately, and exposes bounded independent receipt/transfer evidence through the same application port;
-that read-only RPC evidence remains the independent observation under its exact terms.
+Issues bounded unsigned GET/POST challenge requests without redirects. Remote resources require HTTPS; HTTP is accepted only when URL parsing proves the host is loopback. It strictly parses x402 v2 exact/Base-Sepolia/test-USDC terms, binds the signer-probed payer and exact settlement profile before authorization, rebuilds the profile from the second challenge before signer launch, launches one independently owned signer process, preserves signer-owned bounded paid-response facts (status, media type, byte count, truncation, bounded parsed JSON) for deterministic delivery validation, and normalizes provider settlement separately. Its `IndependentSettlementPort` exposes the observer result without converting provider consistency into independent truth.
 
 ### Investigation Agent
 
@@ -184,7 +194,7 @@ SQLite schema 4 creates and backfills durable run records, events, artifacts, an
 
 ### Interfaces
 
-Typer provides automation and developer output, including non-paying readiness checks and persisted-evidence inspection/recovery. FastAPI renders active, failed, and completed run records plus Expected/Executed/Recorded diffs. The run list polls the same SQLite ledger, so a separate CLI writer becomes visible without restarting the server.
+Typer provides automation and developer output, including non-paying readiness checks and persisted-evidence inspection/recovery. FastAPI renders active, failed, and completed run records. Historical reports retain Expected/Executed/Recorded diffs; schema-4 reports label the final column Independently observed and display provider claims separately. The run list polls the same SQLite ledger, so a separate CLI writer becomes visible without restarting the server.
 
 ## Run state
 
@@ -211,7 +221,8 @@ Invalid transitions fail closed. Evidence recovery permits only status/activity 
 - Normalized enums retain an `unknown` state rather than guessing.
 - Findings cite artifact IDs and field paths.
 - Explanations cite existing finding and artifact IDs and are validated after generation.
-- Artifact schemas and report schemas carry explicit versions.
+- Artifact schemas and report schemas carry explicit versions; ADR 0010 defines current schema-4 settlement provenance.
+- Public report schema 2 allowlists only independent/comparison statuses and diagnostics, five verification dimensions, and mandatory payer policy; it excludes observer source, transaction reference, profile, ledgers, provider Activity, and evidence IDs.
 - Bundle compatibility metadata records the report/database versions, payment adapter identity, and x402 protocol/signer schema when applicable. Older bundles without the additive x402 fields retain their original integrity representation and remain readable.
 
 ## Context strategy

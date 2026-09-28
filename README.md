@@ -112,11 +112,11 @@ conflicting evidence into a guessed success/failure state.
 
 ### `VERIFIED`
 
-The contract, execution, settlement, service result, and activity record agree.
+The independent settlement observation confirms the authorized transfer, provider evidence does not contradict it, and the required service checks pass.
 
 ### `PAID_FAILURE`
 
-Settlement is proven, but the purchased operation failed.
+Independent evidence confirms settlement, but the purchased operation failed.
 
 ### `UNVERIFIABLE`
 
@@ -130,7 +130,7 @@ guess is the correct outcome when evidence cannot carry the conclusion.
 - asset, protocol, chain, and recipient inconsistencies;
 - missing or ambiguously matched activity records;
 - successful financial settlement paired with a failed paid service;
-- contradictory settlement outcomes between execution and the persisted activity record;
+- contradictions between provider settlement claims and the independent observation;
 - explanations that contradict deterministic findings;
 - insufficient evidence that makes a run unverifiable.
 
@@ -140,7 +140,8 @@ SettleDiff treats every external source as evidence, not truth.
 
 | Component | Allowed to do | Not allowed to do |
 |---|---|---|
-| Perflo adapter | capture contract, execution, Activity, transaction evidence | decide final truth |
+| Perflo adapter | capture contract, execution, Activity, transaction evidence as provider assertions | establish independent settlement or decide final truth |
+| EVM settlement observer | validate a pre-authorized exact transfer through bounded read-only RPC | infer missing profile fields or accept provider claims as ledger truth |
 | Context.dev | retrieve supporting public evidence | alter financial findings |
 | Investigation Agent | select evidence, request bounded tools, explain findings | change checks or verdict |
 | Deterministic verifier | compare canonical evidence and assign findings | perform paid actions |
@@ -159,31 +160,30 @@ evidence:
 - service outcome;
 - activity record.
 
-A payment integration is responsible for translating rail-specific evidence into those
-canonical forms. The application now exposes a rail-neutral adapter contract, and Perflo
-implements it as the first adapter. Canonical x402 v2 evidence fields are versioned and
-supported by the verifier, and the bounded offline parser/normalizer handles the captured
-v2 challenge and specified settlement-response shapes. A versioned external-signer
-contract and bounded one-shot subprocess client are implemented; the independently
-installed signer owns key loading. The x402 adapter and explicit CLI composition are
-implemented and tested offline: two unsigned challenges bracket authorization, the
-signer-returned challenge is checked against the selected terms, provider receipt stays
-separate from bounded read-only Base Sepolia verification, and the exact USDC transfer
-log—not receipt existence—establishes settlement. One authorized `0.001 USDC` controlled
-Base Sepolia cycle completed with 12 passing checks and verdict `VERIFIED`; see the
-[x402 live-cycle report](docs/testing/x402-live-cycle.md). A separately authorized
-GoPlausible public endpoint cycle also produced `VERIFIED` and established compatibility
-with a supported EVM primary requirement followed by bounded unsupported alternatives;
-see [public endpoint validation](docs/testing/x402-public-endpoint-validation.md). The later
-[assurance real-world validation](docs/testing/assurance-real-world-validation-2026-09-22.md)
-exercises response-bound signer compatibility, historical timeline migration, clean delivery,
-conservative unresolved HTTP-500 handling, bundles, publication, and UI restart behavior.
-The clean response-bound cycle passed 13 deterministic checks, while the signed
-HTTP-500 result remained `UNVERIFIABLE` because settlement evidence was absent.
-Submission recovery is read-only: confirmed and reverted receipts both prove transmission, while missing,
-pending, malformed, or unavailable evidence remains unresolved. Only explicit
-pre-transmission proof can establish non-submission. Direct MPP clients and other payment rails remain
-architectural extension points.
+A payment integration translates rail-specific evidence into canonical forms and labels it
+as a `provider_assertion` or `independent_observation`. Perflo `vendor`, `pay`, Activity,
+and `tx status` evidence all remain provider assertions. Perflo v8 does not expose the exact
+pre-payment settlement profile required by the independent observer, so current schema-4
+Perflo reports record `SETTLEMENT_PROFILE_UNAVAILABLE`; a provider-only Perflo success is
+`UNVERIFIABLE`.
+
+For x402, the CLI probes signer metadata before authorization and binds its mandatory payer
+with the selected requirement into a `SettlementProfile`: CAIP-2 network, chain ID, asset
+reference and decimals, atomic amount, recipient, and payer. `PaymentTerms` schema 4 binds
+the payer and canonical profile digest. The adapter rebuilds that profile from the second
+unsigned challenge before signer launch and refuses drift. The rail-neutral observer in
+`observers/evm_rpc.py` and `observers/evm_transfer.py` then validates the chain, receipt,
+and exact ERC-20 transfer through bounded read-only calls. It records `CONFIRMED`, `FAILED`,
+`INDETERMINATE`, or `UNAVAILABLE`; provider comparison is separately `MATCH`,
+`CONTRADICTED`, or `NOT_COMPARABLE`.
+
+Historical authorized x402 cycles remain bounded compatibility evidence; see the
+[x402 live-cycle report](docs/testing/x402-live-cycle.md), [public endpoint validation](docs/testing/x402-public-endpoint-validation.md),
+and [assurance real-world validation](docs/testing/assurance-real-world-validation-2026-09-22.md).
+Submission recovery remains read-only: confirmed and reverted receipts prove transmission,
+while missing, pending, malformed, or unavailable evidence remains unresolved. Only
+explicit pre-transmission proof can establish non-submission. Direct MPP clients and other
+payment rails remain architectural extension points.
 
 ## Offline demo scenarios
 
@@ -205,20 +205,24 @@ Every scenario replays deterministically with no credentials, external requests,
 | `x402-provider-success-independent-failure` | provider success contradicts reverted transaction | `UNVERIFIABLE` |
 | `x402-provider-failure-independent-confirmation` | provider failure contradicts confirmed transfer | `UNVERIFIABLE` |
 | `x402-wrong-{recipient,amount,asset,network}` | one canonical term differs | `VERIFIED_WITH_WARNINGS` |
+| `perflo-v8-provider-only-success` | provider reports settlement; independent settlement unavailable | `UNVERIFIABLE` |
+| `x402-independent-confirmed` | provider settlement matches an exact independent transfer | `VERIFIED` |
 
-The paired fixtures demonstrate that equivalent economic evidence produces the same canonical outcome without an adapter-specific verdict branch:
+The schema-4 pair makes the trust boundary explicit without an adapter-specific verdict branch:
 
-| Outcome | Perflo fixture | x402 fixture |
+| Evidence state | Fixture | Expected verdict |
 |---|---|---|
-| Clean settlement and service success | `clean-success` → `VERIFIED` | `x402-clean-success` → `VERIFIED` |
-| Settlement proven and service failure | `paid-failure` → `PAID_FAILURE` | `x402-paid-failure` → `PAID_FAILURE` |
+| Provider-only settlement claim | `perflo-v8-provider-only-success` | `UNVERIFIABLE` |
+| Matching provider claim and independent exact transfer | `x402-independent-confirmed` | `VERIFIED` |
 
 ```bash
-uv run settlediff verify-fixture fixtures/clean-success --json
-uv run settlediff verify-fixture fixtures/x402-clean-success --json
-uv run settlediff verify-fixture fixtures/paid-failure --json
-uv run settlediff verify-fixture fixtures/x402-paid-failure --json
+uv run settlediff verify-fixture fixtures/perflo-v8-provider-only-success --json
+uv run settlediff verify-fixture fixtures/x402-independent-confirmed --json
 ```
+
+Older fixtures intentionally replay with their historical schema-2 meaning. Their persisted
+`ledger` fields retain the semantics of that schema; replay does not silently reinterpret or
+upgrade them to schema 4.
 
 These commands are offline fixture replay. They do not configure or invoke Perflo, a signer, RPC, Context.dev, Hyperfusion, or a paid resource.
 
@@ -226,24 +230,29 @@ These commands are offline fixture replay. They do not configure or invoke Perfl
 
 ```bash
 uv sync --locked --all-groups
-uv run settlediff verify-fixture fixtures/x402-clean-success --database /tmp/settlediff-demo.sqlite3
-uv run settlediff verify-fixture fixtures/x402-paid-failure --database /tmp/settlediff-demo.sqlite3
-uv run settlediff retry-analysis syn_x402_paid_failure --database /tmp/settlediff-demo.sqlite3
-uv run settlediff investigate-purchase syn_x402_clean --database /tmp/settlediff-demo.sqlite3
-uv run settlediff publish syn_x402_clean --database /tmp/settlediff-demo.sqlite3 --output /tmp/settlediff-public
+uv run settlediff verify-fixture fixtures/x402-independent-confirmed --database /tmp/settlediff-demo.sqlite3
+uv run settlediff verify-fixture fixtures/perflo-v8-provider-only-success --database /tmp/settlediff-demo.sqlite3
+uv run settlediff retry-analysis syn_perflo_v8_provider_only --database /tmp/settlediff-demo.sqlite3
+uv run settlediff investigate-purchase syn_x402_independent_confirmed --database /tmp/settlediff-demo.sqlite3
+uv run settlediff publish syn_x402_independent_confirmed --database /tmp/settlediff-demo.sqlite3 --output /tmp/settlediff-public
 uv run settlediff serve --database /tmp/settlediff-demo.sqlite3
 ```
 
-The fixture commands print `VERIFIED` and `PAID_FAILURE` respectively — the latter records a
-settled payment whose purchased service failed. `retry-analysis` conservatively classifies
+The fixture commands print `VERIFIED` and `UNVERIFIABLE` respectively: the x402 report has
+a matching exact independent transfer, while the Perflo report has provider settlement only.
+`retry-analysis` conservatively classifies
 already-persisted evidence and never sends or retries a request. `investigate-purchase`
 reconstructs the purchase recap from persisted evidence only and explicitly reports
 unavailable sections or bundle when the database lacks full persisted evidence — the bare
 `verify-fixture` seed stores the report without every cited artifact. `publish` emits exactly
-three masked allowlisted files (`index.html`, `report.json`, `public-manifest.json`).
+three masked allowlisted files (`index.html`, `report.json`, `public-manifest.json`). Public
+schema 2 includes only settlement/comparison statuses and diagnostics, verification
+dimensions, and payer policy; it excludes the observer source, transaction reference,
+profile, ledgers, provider Activity, and evidence IDs.
 
-Then open `http://127.0.0.1:8765/runs` to inspect the persisted Expected, Executed, and
-Recorded evidence plus the Purchase assurance and Evidence timeline panels on each run. The
+Then open `http://127.0.0.1:8765/runs` to inspect persisted Expected, Executed, and
+Independently observed schema-4 evidence plus the Purchase assurance, settlement provenance,
+and Evidence timeline panels. Historical reports retain their Recorded column. The
 list refreshes from the shared SQLite ledger, distinguishes fixture, controlled-live, and
 external-live provenance, and retains active or failed runs before a final report exists.
 This demo never contacts a model, Perflo, or a paid service.
@@ -281,9 +290,10 @@ Remote targets require HTTPS; x402 alone permits HTTP on an IP/hostname proven t
 
 Both rails display the exact resource, adapter, protocol version, quote, payment-terms
 digest, and budget before mandatory interactive authorization: catalog terms show the slug,
-resource digest, vendor contract digest, and all three charge values; HTTP terms show the
-URL, method, canonical body digest, scheme, network, full public asset reference, recipient,
-and timeout. Perflo's `vendor`, `pay`, agent Activity, and `tx status` surfaces remain one
+resource digest, vendor contract digest, and all three charge values; x402 HTTP terms also
+show the signer-probed payer and settlement-profile digest alongside URL, method, canonical
+body digest, scheme, network, public asset reference, recipient, and timeout. Perflo's
+`vendor`, `pay`, agent Activity, and `tx status` surfaces remain one
 provider trust domain: agreement between them is consistency, not independent ledger
 verification, and credit-funded results expose no canonical on-chain transaction reference.
 Persisted and ordinary report views remain masked. Environment flags never
@@ -335,8 +345,9 @@ The current package version is **0.1.0** and the project is available under the
 
 The MVP and x402 second-rail milestone are implemented. They include strict versioned evidence models, exact money
 semantics, recursive redaction, bounded provider parsing, deterministic Activity matching,
-independent verification checks, verdict precedence, fully offline fixture replay, a safe
-Perflo subprocess boundary, an explicitly authorized live-run state machine, SQLite report
+independent settlement observation and provider comparison, schema-4 report provenance,
+verdict precedence, fully offline fixture replay, a safe Perflo subprocess boundary, an
+explicitly authorized live-run state machine, SQLite report
 storage, and a loopback-only debugger UI. Required live Context.dev evidence and
 private-by-default OpenTelemetry are also available. Hyperfusion's opt-in compatibility
 probe was revalidated on 2026-08-19 with `openai/gpt-oss-120b`: structured output, tool

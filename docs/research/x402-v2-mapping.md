@@ -26,8 +26,8 @@ The later GoPlausible public-endpoint cycle established one external compatibili
 |---|---|
 | `EXACT` | Copied without semantic transformation from validated evidence |
 | `TRANSFORMED` | Deterministically converted using identified metadata or a versioned registry |
-| `PROVIDER_ASSERTED` | Claimed by the resource server or facilitator but not independently established |
-| `INDEPENDENT` | Established by a separate read-only ledger or network source |
+| `provider_assertion` | Claimed by the resource server, facilitator, signer result, or provider Activity surface |
+| `independent_observation` | Established by the bounded read-only EVM observer against the pre-authorized profile |
 | `UNAVAILABLE` | Not present or not representable without guessing |
 
 ## Captured challenge mapping
@@ -44,7 +44,7 @@ The later GoPlausible public-endpoint cycle established one external compatibili
 | selected requirement | `payTo` | advertised recipient | `EXACT` | retained for expected/executed/recorded comparison |
 | selected requirement | timeout | payment-term timeout | `EXACT` | retained and bound into authorization |
 | requirement `extra` | transfer method | raw/normalized contract evidence | `TRANSFORMED` | absent means EIP-3009 only under the accepted exact-EVM contract |
-| requirement `extra` | token name/version | provider metadata | `PROVIDER_ASSERTED` | cannot establish asset identity by itself |
+| requirement `extra` | token name/version | provider metadata | `provider_assertion` | cannot establish asset identity by itself |
 | HTTP request | method and optional body | `PaidExecutionRequest` | `EXACT` | GET requires no body; POST retains the bounded JSON value |
 | initial challenge | payer/transaction/settlement absent | unavailable evidence | `UNAVAILABLE` | remains unavailable without guessing |
 
@@ -74,17 +74,18 @@ versioned representation.
 
 `payTo` is advertised contract evidence. It must be retained separately from the
 recipient later observed in a provider settlement response or independent token
-transfer. This enables deterministic advertised/executed/recorded comparison.
+transfer. This enables deterministic provider/observer comparison without merging the
+sources.
 
 ## Canonical model result
 
 Report schema 2 resolved the capture-established gaps without changing schema-v1 meaning. It added lossless network and asset identity, recipient and timeout fields, HTTP method and optional-body authorization, adapter provenance, and separate provider receipt versus independent ledger evidence.
 
-Report schema 3 adds response-bound delivery and conservative retry assessments without changing the meaning of older reports. `PaymentTerms` schema 2 includes the canonical response-contract digest when a response contract is explicitly advertised. The one-use capability and the independently owned signer both reconstruct and revalidate the same terms before signed submission.
+Report schema 3 added response-bound delivery and conservative retry assessments without changing older reports. Current report schema 4, accepted in ADR 0010, requires a single-source independent settlement observation and a separate provider comparison, keeps provider Activity in its own optional field, and reserves `ledger` for the observation's ledger. Schemas 1–3 retain their historical meaning.
 
-The signer boundary is request schema 2 with result and metadata schema 3; signer-owned response observation records bounded status, media type, byte count, truncation, and parsed JSON when available.
+For paid x402 execution, signer metadata schema 3 supplies the mandatory payer before authorization. The selected requirement and payer form the exact `SettlementProfile`; `PaymentTerms` schema 4 binds the payer, canonical profile digest, HTTP resource terms, and any advertised response-contract digest. The adapter rebuilds the profile from the second challenge before launching the request-schema-2 signer. Signer result schema 3 records bounded response facts but cannot choose the expected payer after payment.
 
-Unavailable fields remain `None`/unknown rather than being inferred. Compatibility readers continue to accept schema-v1 and schema-v2 reports plus schema-2 evidence bundles; exports emit bundle schema 3.
+Unavailable fields remain `None`/unknown rather than being inferred. Compatibility readers continue to accept historical reports and schema-2 evidence bundles; exports emit bundle schema 3 with the source report version recorded.
 
 ## Signed and settlement evidence
 
@@ -94,14 +95,18 @@ The controlled and public Base Sepolia cycles established these mappings:
 |---|---|---|---|
 | `PAYMENT-SIGNATURE` | accepted requirement and payer authorization | ephemeral transport only; never persisted | provider/client payload |
 | final HTTP response | service status/body | execution and service outcome | `EXACT` |
-| `PAYMENT-RESPONSE` | success, reason, transaction, network, payer, optional amount | provider receipt | `PROVIDER_ASSERTED` |
-| Base Sepolia RPC | receipt status and chain ID | independent transaction evidence | `INDEPENDENT` |
-| USDC transfer log | token, payer, recipient, atomic amount | independent settlement evidence | `INDEPENDENT` |
+| `PAYMENT-RESPONSE` | success, reason, transaction, network, payer, optional amount | provider receipt | `provider_assertion` |
+| Base Sepolia RPC | receipt status and chain ID | independent transaction evidence | `independent_observation` |
+| USDC transfer log | token, payer, recipient, atomic amount | independent settlement evidence | `independent_observation` |
 
-A successful transaction receipt alone is insufficient. Independent settlement
-requires validating the expected token transfer log, token contract, network,
-recipient, and amount. Because the facilitator may submit the transaction,
-`transaction.from` must not automatically be treated as the payer.
+A successful transaction receipt alone is insufficient. Independent settlement requires
+validating the transfer log, asset contract, network, mandatory pre-authorized payer,
+recipient, and atomic amount. Because the facilitator may submit the transaction,
+`transaction.from` is not payer evidence. The rail-neutral implementation is split between
+`observers/evm_rpc.py` (bounded JSON-RPC transport and protocol classification) and
+`observers/evm_transfer.py` (exact-transfer observation). It returns `CONFIRMED`, `FAILED`,
+`INDETERMINATE`, or `UNAVAILABLE`; the domain separately records provider comparison as
+`MATCH`, `CONTRADICTED`, or `NOT_COMPARABLE`.
 
 ## Embedded Bazaar metadata
 
@@ -172,4 +177,4 @@ source exists.
 
 ## Decision gate result
 
-The minimal rail-neutral schema was accepted in [ADR 0007](../decisions/0007-rail-neutral-canonical-payment-evidence.md) and implemented across reports, bundles, SQLite round trips, fixtures, CLI, and UI. Perflo and x402 now feed the same deterministic checks. Compatibility is bounded to the demonstrated x402 v2 exact/Base-Sepolia/test-USDC profile; other networks, assets, schemes, primary requirement shapes, and mainnet remain unsupported until a separate contract is accepted.
+The minimal rail-neutral payment schema was accepted in [ADR 0007](../decisions/0007-rail-neutral-canonical-payment-evidence.md). [ADR 0010](../decisions/0010-independent-settlement-observation.md) defines the current evidence classes, mandatory payer policy, settlement profile, observer, comparison, and report schema 4. Perflo and x402 feed the same deterministic checks, but provider-only Perflo evidence cannot confirm settlement. Compatibility remains bounded to x402 v2 exact/Base-Sepolia/test-USDC; other networks, assets, schemes, primary requirement shapes, and mainnet require a separate accepted contract.
