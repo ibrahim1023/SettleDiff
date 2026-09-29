@@ -46,6 +46,27 @@ offline corpus. It pins three behaviors:
 2. The failed record is not counted as a charge (`budget`/`price: UNKNOWN`).
 3. The run remains `UNVERIFIABLE` rather than guessing settlement.
 
+The current synthetic regression replay (`uv run settlediff verify-fixture
+fixtures/failed-broadcast`) prints:
+
+```text
+UNVERIFIABLE
+UNKNOWN: No execution or matched Activity charge is available.
+UNKNOWN: Quoted price or actual charge is unavailable.
+PASS: Asset values agree across available evidence.
+PASS: Protocol values agree across available evidence.
+DIFF: Chain values differ across available evidence.
+PASS: Recipient values match.
+UNKNOWN: Financial settlement evidence is unavailable or conflicts.
+FAIL: Purchased service returned a non-success HTTP response.
+UNKNOWN: Settlement or service outcome is unavailable.
+PASS: Persisted Activity and service outcome require no additional consistency warning.
+PASS: A deterministic Activity record match was found.
+```
+
+This is fixture output under its historical report semantics, not an updated
+assessment of that live payment under current schema-4 rules.
+
 ### 2026-09-07 reproduction — matcher defect exposed
 
 A later reproduction (`live_6369…2d3b`) reproduced the original failure: Base was
