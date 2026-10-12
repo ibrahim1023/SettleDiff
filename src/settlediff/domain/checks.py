@@ -15,11 +15,13 @@ from settlediff.domain.models import (
     IndependentSettlementStatus,
     LedgerStatus,
     PaymentReceipt,
+    ProviderSignatureEvidence,
     PurchaseIntent,
     SettlementStatus,
     Severity,
 )
 from settlediff.domain.money import Money
+from settlediff.domain.provider_signatures import signature_findings
 from settlediff.domain.settlement import provider_settlement_status
 
 
@@ -32,6 +34,7 @@ def run_checks(
     receipt: PaymentReceipt | None = None,
     delivery: DeliveryAssessment | None = None,
     independent: IndependentSettlementObservation | None = None,
+    provider_signatures: tuple[ProviderSignatureEvidence, ...] = (),
 ) -> tuple[Finding, ...]:
     """Run the fixed verification suite without I/O, model calls, or check dependencies."""
     network_present = any(
@@ -71,6 +74,7 @@ def run_checks(
         _ledger_outcome(execution, match, receipt),
         _activity_persistence(match),
         *(_delivery(delivery) if _assesses_delivery(delivery) else ()),
+        *signature_findings(provider_signatures),
     )
 
 

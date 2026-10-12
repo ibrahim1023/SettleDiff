@@ -52,7 +52,15 @@ IDENTIFIER_KEYS = {
     "wallet",
     "walletaddress",
 }
-_UNMASKED_DIGEST_KEYS = frozenset({"responsecontractdigest"})
+_UNMASKED_DIGEST_KEYS = frozenset(
+    {
+        "responsecontractdigest",
+        "signedofferdigest",
+        "signaturedigest",
+        "signeridentitydigest",
+        "payloaddigest",
+    }
+)
 _JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
@@ -120,7 +128,7 @@ def redact_value(
         items = cast(list[JsonValue], value)
         return [redact_value(item, mask_keyed_identifiers=mask_keyed_identifiers) for item in items]
     if isinstance(value, str):
-        if normalized_key in _UNMASKED_DIGEST_KEYS:
+        if normalized_key in _UNMASKED_DIGEST_KEYS and re.fullmatch(r"[0-9a-f]{64}", value):
             return value
         return redact_embedded_identifiers(value)
     return value

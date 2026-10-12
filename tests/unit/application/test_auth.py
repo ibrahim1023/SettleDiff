@@ -64,6 +64,25 @@ def capability() -> PaidExecutionCapability:
 
 
 @pytest.mark.asyncio
+async def test_signed_offer_digest_is_bound_and_mismatch_does_not_consume_authorization() -> None:
+    terms = payment_terms(
+        schema_version=4,
+        payer="syn_payer",
+        settlement_profile_digest="b" * 64,
+        signed_offer_digest="c" * 64,
+    )
+    authorized = PaidExecutionCapability.issue(
+        request(), payment_terms=terms, expires_at=NOW + timedelta(minutes=5)
+    )
+    changed = terms.model_copy(update={"signed_offer_digest": "d" * 64})
+    with pytest.raises(AuthorizationError, match="payment terms"):
+        await authorized.consume(request(), payment_terms=changed, now=NOW)
+    token = await authorized.consume(request(), payment_terms=terms, now=NOW)
+    with pytest.raises(AuthorizationError):
+        token.require_exact_payment_terms(changed)
+
+
+@pytest.mark.asyncio
 async def test_exact_authorization_consumes_once() -> None:
     authorized = capability()
 

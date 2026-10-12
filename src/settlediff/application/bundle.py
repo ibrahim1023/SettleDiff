@@ -30,6 +30,7 @@ from settlediff.domain.models import (
     MachineReport,
     NonEmptyStr,
 )
+from settlediff.domain.provider_signatures import signature_findings
 from settlediff.domain.redaction import (
     redact_artifact,
     redact_contract,
@@ -334,6 +335,22 @@ def _check_report_consistency(
         raise BundleError("bundle, report, and intent run IDs do not match")
     if derive_verdict(report.findings, delivery=report.delivery) is not report.verdict:
         raise BundleError("report verdict does not match its persisted findings")
+    signature_check_ids = {
+        "signed_offer",
+        "signed_receipt",
+        "signed_receipt_continuity",
+        "signed_receipt_transaction",
+    }
+    expected_signature_findings = {
+        finding.check_id: finding for finding in signature_findings(report.provider_signatures)
+    }
+    actual_signature_findings = {
+        finding.check_id: finding
+        for finding in report.findings
+        if finding.check_id in signature_check_ids
+    }
+    if actual_signature_findings != expected_signature_findings:
+        raise BundleError("report signature assessments do not match their persisted findings")
     finding_ids = tuple(finding.finding_id for finding in report.findings)
     if len(set(finding_ids)) != len(finding_ids):
         raise BundleError("report contains duplicate finding IDs")

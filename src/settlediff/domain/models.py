@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import (
     AfterValidator,
@@ -229,6 +229,9 @@ class ExpectedContract(CanonicalModel):
     protocol: NonEmptyStr | None
     chain: NonEmptyStr | None
     request_schema: dict[str, JsonValue] | None = None
+    signed_offer_digest: Sha256Digest | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     required_max_charge: Money | None = Field(default=None, exclude_if=lambda value: value is None)
     payable: bool | None = Field(default=None, exclude_if=lambda value: value is None)
     scheme: NonEmptyStr | None = None
@@ -243,6 +246,8 @@ class ExpectedContract(CanonicalModel):
 
     @model_validator(mode="after")
     def require_compatible_schema(self) -> Self:
+        if self.signed_offer_digest is not None and self.schema_version < 4:
+            raise ValueError("signed offer digest requires schema version 4")
         require_v2_fields(
             self.schema_version,
             (
@@ -476,6 +481,21 @@ class SettlementComparison(CanonicalModel):
     observer_evidence_ids: tuple[NonEmptyStr, ...] = Field(max_length=16)
 
 
+class ProviderSignatureEvidence(CanonicalModel):
+    kind: Literal["offer", "receipt"]
+    evidence_class: Literal[EvidenceClass.PROVIDER_ASSERTION] = EvidenceClass.PROVIDER_ASSERTION
+    signature_validity: Literal["VALID", "INVALID", "UNVERIFIABLE"]
+    seller_identity_binding: Literal["BOUND", "NOT_BOUND", "UNVERIFIABLE"]
+    signed_terms_match: bool | None
+    correlation: Literal["TRANSACTION_BOUND", "CONTRADICTED", "NOT_COMPARABLE"] | None = None
+    diagnostic: NonEmptyStr
+    signature_digest: Sha256Digest | None
+    signer_identity_digest: Sha256Digest | None
+    payload_digest: Sha256Digest | None
+    observed_at: UtcDatetime
+    evidence_ids: tuple[NonEmptyStr, ...] = Field(min_length=1, max_length=2)
+
+
 class MachineReport(CanonicalModel):
     schema_version: int = Field(default=2, ge=1, le=4)
     run_id: NonEmptyStr
@@ -485,6 +505,9 @@ class MachineReport(CanonicalModel):
     ledger: LedgerRecord | None
     findings: tuple[Finding, ...]
     verdict: Verdict
+    provider_signatures: tuple[ProviderSignatureEvidence, ...] = Field(
+        default=(), max_length=2, exclude_if=lambda value: not value
+    )
     receipt: PaymentReceipt | None = None
     adapter_id: NonEmptyStr | None = None
     delivery: DeliveryAssessment | None = Field(
@@ -503,6 +526,13 @@ class MachineReport(CanonicalModel):
 
     @model_validator(mode="after")
     def require_compatible_schema(self) -> Self:
+        if self.provider_signatures:
+            if self.schema_version < 4:
+                raise ValueError("provider signature evidence requires schema version 4")
+            if len({item.kind for item in self.provider_signatures}) != len(
+                self.provider_signatures
+            ):
+                raise ValueError("provider signature evidence contains duplicate artifact kinds")
         require_v2_fields(self.schema_version, (("receipt", self.receipt),))
         future_fields = tuple(
             field for field in ("delivery", "retry") if field in self.model_fields_set

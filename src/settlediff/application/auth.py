@@ -49,6 +49,9 @@ class PaymentTerms(BaseModel):
     settlement_profile_digest: Sha256Digest | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    signed_offer_digest: Sha256Digest | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @property
     def digest(self) -> Sha256Digest:
@@ -63,7 +66,7 @@ class PaymentTerms(BaseModel):
             "required_max_charge",
         }
         http_fields = {"resource_url", "method", "body_digest"}
-        payer_fields = {"payer", "settlement_profile_digest"}
+        payer_fields = {"payer", "settlement_profile_digest", "signed_offer_digest"}
         if self.schema_version in (1, 2):
             if catalog_fields & self.model_fields_set:
                 raise ValueError("catalog payment terms fields require schema version 3")

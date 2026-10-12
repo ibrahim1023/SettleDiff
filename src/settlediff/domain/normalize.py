@@ -76,6 +76,9 @@ def normalize_contract(raw: EvidenceArtifact) -> ExpectedContract:
     payable = _optional_bool(data, raw, "payable")
     if payable is not None:
         values["payable"] = payable
+    signed_offer_digest = _optional_string(data, raw, "signed_offer_digest")
+    if signed_offer_digest is not None:
+        values["signed_offer_digest"] = signed_offer_digest
     return ExpectedContract.model_validate(values)
 
 
