@@ -2,51 +2,29 @@
 
 **Independent assurance for purchases made by AI agents.**
 
-An agent purchase produces claims across several systems:
+SettleDiff investigates what an agent intended to buy, what a provider advertised,
+what was charged, whether payment settled, and what the service returned:
 
 ```text
-intent → advertised contract → payment execution → settlement → service delivery → activity history
+intent → advertised contract → execution → settlement → delivery → activity history
 ```
 
-Those claims can agree, disagree, or leave important facts unresolved. SettleDiff
-preserves each source separately, compares its claims deterministically, and reports
-only what the evidence supports. An LLM may select and explain evidence; it cannot
-create findings or decide financial truth.
+It keeps each source separate and produces deterministic findings and a verdict.
+An investigation agent may select and explain evidence; it cannot change findings
+or decide financial truth.
 
-- Provider records are not silently promoted into independent proof.
-- Every paid attempt needs exact, interactive, one-use authorization.
-- Uncertain money-moving operations are never retried automatically.
-- Missing settlement evidence produces `UNVERIFIABLE`, not a guessed success.
+- A paid attempt requires interactive, one-use authorization for the exact request,
+  terms, and budget. Changed terms block execution.
+- Uncertain payments are never retried automatically.
+- Missing or contradictory settlement evidence produces `UNVERIFIABLE`.
 
-[Run the offline demo](#60-second-offline-demo) to see the trust boundary without
-credentials, a signer, or a payment.
+SettleDiff is a local developer tool: a CLI, a loopback UI, and SQLite evidence
+records. Use it to investigate payment/delivery disagreements, inspect retry
+safety, and share masked reports with supporting private evidence bundles.
 
-Use SettleDiff to inspect a purchase's expected, executed, and recorded evidence,
-identify payment/delivery disagreements, assess whether another attempt needs human
-judgment, and share a masked report while retaining the local evidence bundle.
-The [eval workflow](#agent-evals-and-regression-tests) protects investigation behavior;
-[observability](#observability-and-logfire) makes its execution inspectable.
+## Try it offline
 
-## What SettleDiff establishes
-
-| Evidence available | Supported conclusion |
-|---|---|
-| Provider contract, execution, Activity, and transaction status agree | The provider's records are internally consistent; customer settlement is **not** independently verified |
-| An external observer validates the exact pre-authorized transfer | Settlement can be independently confirmed, subject to other findings |
-| Independently confirmed settlement and objectively failed delivery | `PAID_FAILURE` |
-| Provider and independent observations contradict each other | `UNVERIFIABLE`, with the disagreement preserved |
-| Submission may have occurred, but its outcome is unknown | `UNVERIFIABLE`; no automatic retry |
-
-SettleDiff does not replace a payment rail or its logs. For provider teams, it
-correlates those logs, makes disagreements inspectable, and adds a separate
-verification boundary when the rail exposes enough information before payment.
-
-## Install from source
-
-Python 3.12 or 3.13 and [uv](https://docs.astral.sh/uv/) are required. SettleDiff
-is not published to a package registry; the supported evaluation path is the
-repository source. Clone and install dependencies (these setup steps may use the
-network; the fixture commands below do not contact external services):
+Requires Python 3.12 or 3.13 and [uv](https://docs.astral.sh/uv/). Install from source:
 
 ```bash
 git clone https://github.com/ibrahim1023/SettleDiff.git
@@ -55,29 +33,37 @@ uv sync --locked --all-groups
 uv run settlediff --help
 ```
 
-## 60-second offline demo
-
-After setup, these synthetic fixtures need no credentials, signer, or payment:
+Installation may use the network. These synthetic demos make no provider, model,
+telemetry, or payment calls and need no credentials:
 
 ```bash
-uv run settlediff verify-fixture fixtures/perflo-v8-provider-only-success --json
 uv run settlediff verify-fixture fixtures/x402-independent-confirmed --json
+uv run settlediff verify-fixture fixtures/perflo-v8-provider-only-success --json
 ```
 
-| Scenario (synthetic fixture) | Verdict | Why |
-|---|---|---|
-| Perflo provider-only success (`perflo-v8-provider-only-success`) | `UNVERIFIABLE` | Provider claims agree, but no independent customer-settlement observation exists |
-| Matching x402 exact transfer (`x402-independent-confirmed`) | `VERIFIED` | The observer matches network, asset, amount, recipient, and payer |
-| Historical schema-2 x402 HTTP-500 case (`x402-paid-failure`) | `PAID_FAILURE` | The synthetic fixture includes independently settled evidence and failed service |
-| Uncertain submission (`x402-uncertain-submission`) | `UNVERIFIABLE` | No authoritative outcome |
-| Provider success versus reverted receipt (`x402-provider-success-independent-failure`) | `UNVERIFIABLE` | The contradiction is preserved |
+Selected fields from the first command's JSON output:
 
-In each JSON response, inspect `verdict`, `independent_settlement`, and
-`settlement_comparison`. `UNVERIFIABLE` does **not** mean Perflo failed to charge
-or deliver the service. It means the available evidence cannot independently
-establish the customer's settlement.
+```json
+{
+  "run_id": "syn_x402_independent_confirmed",
+  "execution": {
+    "upstream_http_status": 200,
+    "charge": {"amount": "0.001", "unit": "USDC", "minor_units": null}
+  },
+  "verdict": "VERIFIED",
+  "independent_settlement": {
+    "status": "CONFIRMED",
+    "diagnostic": "EXACT_TRANSFER_CONFIRMED"
+  },
+  "settlement_comparison": {"status": "MATCH"}
+}
+```
 
-To keep a replay and inspect it in the local UI:
+The second command returns `UNVERIFIABLE`: Perflo's records agree, but there is no
+independent customer-settlement observation. That verdict does not mean the
+provider failed to charge or deliver; it describes the evidence available.
+
+To save a replay and inspect it in the local UI:
 
 ```bash
 mkdir -p .local
@@ -86,161 +72,128 @@ uv run settlediff serve --database .local/settlediff.sqlite3
 ```
 
 Open the loopback URL printed by `serve`. The database stays local and ignored by
-Git. For retry analysis, evidence bundles, and masked publication, see the
-[testing strategy](docs/testing/strategy.md).
+Git. See the [fixture matrix and testing guide](docs/testing/strategy.md) for more
+scenarios, evidence bundles, retry analysis, and masked publication.
 
-## Verdicts
+## Read the verdict
 
 | Verdict | Meaning |
 |---|---|
-| `VERIFIED` | The authorized settlement is independently confirmed, provider evidence does not contradict it, and required checks pass |
-| `VERIFIED_WITH_WARNINGS` | The essential outcome is verified but non-fatal differences remain |
-| `PAID_FAILURE` | Independent evidence confirms settlement, but the purchased service fails (HTTP status or an advertised response promise) |
-| `PAYMENT_FAILURE` | The settlement finding establishes payment failure |
-| `UNVERIFIABLE` | Evidence is missing, unresolved, ambiguous, or contradictory; SettleDiff refuses to guess |
+| `VERIFIED` | Authorized settlement is independently confirmed, provider evidence does not contradict it, and required checks pass |
+| `VERIFIED_WITH_WARNINGS` | The essential outcome is verified with non-fatal differences |
+| `PAID_FAILURE` | Independent evidence confirms settlement, but the service fails its HTTP or advertised response checks |
+| `PAYMENT_FAILURE` | Settlement findings establish payment failure |
+| `UNVERIFIABLE` | Evidence is missing, unresolved, ambiguous, or contradictory |
 
-A successful HTTP response alone is not proof of delivery, and a transaction
-hash alone is not proof of the relevant transfer. A response promise must be
-advertised before payment to support an objective delivery assessment.
+A transaction hash alone does not prove the relevant transfer. A successful HTTP
+response alone does not prove the advertised delivery promise was met.
 
-## Trust model
+## Supported evidence
 
-| Source | Evidence role |
+| Source | What SettleDiff can establish |
 |---|---|
-| Perflo `vendor`, `pay`, Activity, and `tx status` | Provider assertions within one Perflo trust domain; useful for correlation, not independent customer-settlement proof |
-| x402 resource and facilitator responses | Provider assertions about terms and settlement |
-| Signer-owned bounded paid response | Evidence of what the paid request returned, assessed against an advertised response contract |
-| User-configured read-only RPC checking an exact authorized transfer | External settlement observation; configuring an RPC does not establish that its operator is organizationally neutral |
-| Context.dev | Supporting public evidence; never financial proof |
-| Investigation agent | Selects evidence and explains deterministic findings; cannot alter them |
-| Deterministic verifier | Produces checks, delivery assessments, retry classifications, and verdicts |
-| User authorization | Approves one exact paid attempt, not an implicit retry |
+| Perflo v8 catalog, execution, Activity, and transaction status | Provider consistency and disagreements; these records share one provider trust domain |
+| x402 v2 `exact` on Base Sepolia test USDC | Independent settlement when a read-only RPC validates the exact authorized chain, asset, amount, recipient, and payer |
+| Signed x402 offers and receipts | Seller authenticity, signed terms, key continuity, and transaction correlation; signatures remain provider assertions |
+| Signer-owned paid response | Delivery checks against the response contract advertised before payment |
+| Context.dev | Supporting public evidence for an eligible failed-service status page |
 
-## Perflo evidence and independent verification
+**Perflo:** current v8 evidence does not expose the complete pre-payment customer
+transfer profile needed for independent settlement verification. Provider-only
+success remains `UNVERIFIABLE`. An optional Base RPC can corroborate a provider's
+vendor-side transaction receipt, but cannot prove the customer's debit. See
+[provider-chain corroboration](docs/decisions/0011-perflo-provider-chain-corroboration.md).
 
-The Perflo v8 adapter captures catalog terms, execution, charges, task state,
-Activity, and provider settlement. Those records can corroborate each other and
-help investigate failures; being provider assertions does not make them useless.
-They do not, however, independently prove a customer's payment.
+**x402:** authorization binds the signer-probed payer and exact settlement profile.
+A second unpaid challenge must match before signer launch. After the one attempt,
+the observer checks the receipt and exact ERC-20 transfer. Pending receipts,
+unavailable RPC evidence, and contradictions remain explicit. See
+[independent settlement observation](docs/decisions/0010-independent-settlement-observation.md).
 
-A Perflo `settlement.txHash` may refer to Perflo's own payment to a vendor rather
-than the customer's debit. With an opt-in Base mainnet read-only RPC
-(`SETTLEDIFF_PERFLO_RPC_URL`), SettleDiff can check the referenced receipt: a
-revert can contradict Perflo's `finalized` claim, but success proves neither the
-vendor transfer nor the customer charge. The result stays separate from the
-settlement verdict. The [provider-chain decision](docs/decisions/0011-perflo-provider-chain-corroboration.md)
-explains this limited check.
+For advertised JWS/Ed25519 offers, SettleDiff verifies the same-origin seller key,
+binds the proof into authorization, and rechecks it before payment. It assesses
+receipts after normal and uncertain results. Raw JWS strings remain ephemeral;
+private reports and bundles retain assessments and digests. Bundle checks cannot
+replay cryptographic verification without the raw proof. The
+[signed-evidence guide](docs/development/signed-evidence.md) explains the supported
+profile and limits. This integration is verified offline; no live signed-service
+trial is claimed.
 
-Perflo v8 currently does not expose the complete **pre-payment customer transfer
-profile** needed to verify payer, recipient, network, token, and exact amount.
-Consequently, a current provider-only Perflo success is `UNVERIFIABLE`, not a
-payment failure. A fuller integration needs those terms and a verifiable link
-between the customer debit and any vendor-side transfer.
+Controlled live tests have demonstrated disagreements, independent x402 settlement,
+and a settled delivery failure. Historical report schemas have different settlement
+semantics; see the dated [real-world assurance record](docs/testing/assurance-real-world-validation-2026-09-22.md)
+and [Perflo v8/x402 validation](docs/testing/pr2-live-validation-2026-09-28.md) for
+exact terms, masked observations, and limitations.
 
-## x402 independent verification
+## Before a live investigation
 
-For the currently supported x402 v2 exact/Base Sepolia/test-USDC path, SettleDiff
-binds the signer-probed payer, recipient, network and chain ID, token contract
-and decimals, atomic amount, HTTP resource and method, request-body digest,
-timeout, and settlement-profile digest before signing. It observes the unpaid
-challenge again before signer launch and refuses changed terms. After execution,
-a bounded read-only RPC observer checks the chain receipt and exact transfer
-log; provider claims and this observation remain separate.
+Use [.env.example](.env.example) to populate the ignored `.env` file. Keep
+credentials and signer authority out of Git.
 
-This is conditional, **not** a claim that every x402 service can be verified:
-the pre-payment terms, supported network and asset, signer identity, transaction
-reference, and external RPC evidence must be usable. A pending or missing
-receipt, malformed evidence, or an unavailable observer cannot establish
-settlement. See [ADR 0010](docs/decisions/0010-independent-settlement-observation.md).
+- **Every live run:** configure `SETTLEDIFF_CONTEXTDEV_API_KEY` and the Logfire
+  endpoint/token described below.
+- **Choose a rail:** complete the prerequisites in this table.
+- **For live model explanations:** configure `SETTLEDIFF_HYPERFUSION_BASE_URL`,
+  `SETTLEDIFF_HYPERFUSION_API_KEY`, and `SETTLEDIFF_HYPERFUSION_MODEL`. Without a
+  configured model, the application uses its deterministic fallback explanation.
+- **Before payment:** select the exact request and budget, inspect the displayed
+  terms, and approve the one-use authorization. A new attempt needs new approval.
 
-The x402 [signed seller-evidence workflow](docs/development/signed-evidence.md)
-verifies advertised JWS/Ed25519 offers against a same-origin seller identity, binds
-the proof into authorization, and rechecks it before signer launch. After the one
-attempt, deterministic checks assess receipt authenticity, key continuity, terms,
-and transaction correlation. Unsupported or changed offers stop execution; missing
-or contradictory receipts remain explicit findings. Signatures remain provider
-assertions: independent RPC evidence still establishes settlement. Private reports
-and bundles retain assessments and digests, while raw JWS strings remain ephemeral.
-This integration is verified offline; no live signed-service trial is claimed.
+| Rail | Prerequisites |
+|---|---|
+| Perflo | Compatible Perflo v8 CLI, connected account, and permitted spending |
+| x402 | Independently owned signer command in `SETTLEDIFF_X402_SIGNER_COMMAND` (JSON array), Base Sepolia RPC in `SETTLEDIFF_X402_RPC_URL`, `SETTLEDIFF_X402_TESTNET_ENABLED=true`, and `--allow-testnet` on the paid command |
 
-## Evidence from real tests
+These readiness checks contact external dependencies but do not sign or pay:
 
-Controlled, explicitly authorized tests exposed both disagreements and successful
-checks. Examples include a historical advertised-Base/executed-Tempo mismatch,
-a failed broadcast recorded in Activity without proven settlement, a later
-run with provider records aligned, an independently confirmed x402 transfer,
-a credit-funded Perflo call whose vendor-side hash was not the customer debit,
-and independently settled x402 delivery that violated its advertised media type.
+```bash
+uv run settlediff doctor --rail perflo
+uv run settlediff doctor --rail x402
+```
 
-The earlier Perflo `VERIFIED_WITH_WARNINGS` run used **historical report schema 2**:
-provider Activity then filled the settlement role. It does not satisfy current
-independent-settlement rules. The later live HTTP-500 x402 submission lacked a
-transaction reference and remains `UNVERIFIABLE`; a **different, separately
-authorized** response-contract mismatch proved `PAID_FAILURE`. Neither was
-retried. See the dated records for terms, masked observations, and limitations:
+Paid investigations use `run --rail perflo` or `run --rail x402` with interactive
+confirmation. Read the [paid-boundary verification loop](docs/development/verification-loops.md)
+and [release/live setup checklist](docs/development/release-checklist.md) first.
+Offline fixture replay, local report inspection, and evals remain credential-free.
 
-- [Initial live paid test cycle](docs/testing/live-run-report-2026-08-21.md)
-- [Controlled x402 live cycle](docs/testing/x402-live-cycle.md)
-- [Public x402 endpoint validation](docs/testing/x402-public-endpoint-validation.md)
-- [Assurance real-world validation](docs/testing/assurance-real-world-validation-2026-09-22.md)
-- [Perflo v8 and x402 live validation](docs/testing/pr2-live-validation-2026-09-28.md)
+## Observability and Logfire
 
-Current-schema fixtures also include `perflo-v8-credit-authorization` (matched
-provider Activity, unavailable independent settlement). Older fixtures retain
-their historical report semantics; the synthetic HTTP-500 fixture above is not
-the later live HTTP-500 run. See the [full fixture matrix](docs/testing/strategy.md).
+**Authenticated telemetry export is required for live investigations.** Missing
+endpoint or token blocks `run` before provider probing or payment. The configured
+Logfire destination receives operational traces and bounded metrics: investigation
+steps, latency, errors, usage, and check outcomes. Structured logs stay local.
 
-## Offline, read-only, and paid workflows
+Put your project's ingestion base URL and write token in the ignored `.env`:
 
-**Offline:** `verify-fixture`, `show`, `inspect`, `retry-analysis`,
-`verify-bundle`, and the loopback `serve` UI operate on local evidence and need
-no credentials or payment. Default tests use offline fixtures; the comprehensive
-assurance demo explicitly blocks external sockets. Publication creates masked,
-allowlisted static files; raw signatures, payment payloads, and unmasked identifiers
-are excluded.
+```dotenv
+SETTLEDIFF_OTLP_ENDPOINT=https://logfire-us.pydantic.dev
+SETTLEDIFF_OTLP_AUTHORIZATION=your-project-write-token
+```
 
-**Read-only live:** `doctor --rail perflo` checks CLI compatibility;
-`doctor --rail x402` also probes signer metadata and the configured RPC. Vendor
-inspection, unpaid x402 challenge inspection, Activity retrieval, and supported
-transaction lookup gather evidence without a paid submission, but may contact
-external services. Do not confuse read-only network access with offline replay.
+Use `https://logfire-eu.pydantic.dev` for an EU project. The integration sends the
+Authorization header and derives separate trace and metric routes. Prompt/response,
+tool-content, binary content, raw evidence, and signatures are excluded from capture.
 
-**Paid live:** `run --rail perflo` or `run --rail x402` requires live credentials,
-external dependencies, an exact budget, and interactive confirmation for one
-request. Authorization binds the resource and request, adapter/version, selected
-terms, and budget; a second contract observation must match before payment.
-The capability can be consumed only once. If submission is uncertain, SettleDiff
-collects read-only recovery evidence and never silently executes again. The x402
-path additionally requires explicit testnet gates. Read the
-[paid-boundary loop](docs/development/verification-loops.md) before a live run;
-no paid command is part of the quick start.
+```bash
+# Offline, even when export is configured:
+uv run python scripts/observability_trial.py
+# Send synthetic traces and metrics; no model request or payment:
+uv run python scripts/observability_trial.py --export
+```
 
-## Architecture at a glance
-
-A local Python application coordinates a Perflo catalog adapter or x402 adapter,
-strict canonical evidence models, deterministic matching/checks, and redacted
-run records with source-attributed timelines in SQLite. A bounded PydanticAI
-investigator may select and explain evidence without determining financial truth.
-Typer provides the CLI, FastAPI serves a loopback-only UI, and required
-OpenTelemetry export for live investigations keeps model content capture disabled.
-Reports and bundles
-preserve provider assertions separately from
-qualifying external observations. Public reports use a masked allowlist, not
-an unfiltered copy of local evidence.
-
-Schema numbers belong to **different artifact families**. A report schema, a
-bundle schema, and a fixture-manifest schema need not have the same version.
-The [architecture overview](docs/architecture/overview.md) describes the
-interfaces and [ADR index](docs/decisions/README.md) records the boundaries.
+Synthetic ingestion has received HTTP 200 for both signals; dashboard indexing was
+not independently inspected. Live runs export automatically. Exporter outages never
+change a financial verdict or trigger a payment retry. The
+[observability guide](docs/development/observability.md) covers setup, privacy, and
+verification. Offline tests and CI use in-memory or intercepted exporters.
 
 ## Agent evals and regression tests
 
-The offline dataset runs eight scripted scenarios through the production investigator:
-success, missing evidence, ambiguous Activity, limit exhaustion, authorization mismatch,
-uncertain-submission retry, contradictory output, and unknown citations. Graders check
-observed tools, evidence/citations, limits, usage, fallback, immutable findings, and
-payment safety separately. Writes are intercepted and real model requests are disabled.
-These cases prove enforcement and wiring; live model quality needs separate opt-in trials.
+Eight offline scenarios exercise the production investigator: success, missing
+evidence, ambiguous Activity, limit exhaustion, authorization mismatch, uncertain
+submission, contradictory output, and unknown citations. Graders check tools,
+arguments, evidence/citations, limits, usage, fallback, immutable findings, and
+payment safety. Writes are intercepted; real model requests are disabled.
 
 ```bash
 uv run pytest tests/evals tests/unit/agent -q
@@ -249,92 +202,33 @@ uv run python scripts/run_evals.py --out .local/evals/before.json
 uv run python scripts/run_evals.py --out .local/evals/after.json --baseline .local/evals/before.json
 ```
 
-Run records retain code/data digests, observed trajectories, usage, and grader results.
-Changed cases or evidence are flagged as incomparable; the baseline cannot be overwritten
-by the output. Any failing grader makes the runner exit nonzero.
+Experiments record code/data digests, trajectories, usage, and grader results.
+Changed cases are marked incomparable; any failing grader makes the runner exit
+nonzero. Reviewed production failures can become synthetic regression cases without
+copying private live payloads. See the [eval guide](docs/development/evals.md) for
+criteria, baseline comparison, and promotion.
 
-The [eval guide](docs/development/evals.md) covers criteria, comparison, and reviewed
-failure promotion. Promotion keeps the original live bundle private and copies a
-separately reviewed synthetic reconstruction with explicit expected behavior and a
-source digest. Promoted cases automatically join the existing offline CI gate.
+These scripted evals test enforcement and wiring. Live model quality requires
+separate opt-in trials and calibrated graders.
 
-## Observability and Logfire
+## Architecture and project status
 
-SettleDiff records investigation steps, latency, errors, and usage through redacted
-local logs, OpenTelemetry spans, and bounded metrics. **Live investigations require
-authenticated telemetry export**, using the existing
-OTLP HTTP exporters and your configured Logfire project. Missing endpoint or token
-stops `run` before provider probing or payment. Fixture replay, local report
-inspection, evals, and CI need no hosted account.
-Reports continue to derive financial conclusions from deterministic evidence checks.
+SettleDiff **0.1.0** is MIT-licensed and available from source. It is not published
+to a package registry or offered as a hosted service. The application uses Python,
+strict Pydantic models, a bounded PydanticAI investigator, Typer, FastAPI, SQLite,
+and OpenTelemetry. Only deterministic code produces financial findings.
 
-For live investigations, put your project's ingestion base URL and write token in
-the ignored `.env`:
-
-```dotenv
-SETTLEDIFF_OTLP_ENDPOINT=https://logfire-us.pydantic.dev
-SETTLEDIFF_OTLP_AUTHORIZATION=your-project-write-token
-```
-
-Use `https://logfire-eu.pydantic.dev` for an EU project. The integration derives the
-trace and metric paths and sends the configured Authorization header. Prompt/response,
-tool-content, and binary capture remain disabled; structured logs stay local.
-
-```bash
-# No external calls, even if export is configured:
-uv run python scripts/observability_trial.py
-# Explicitly send synthetic telemetry; no model call or payment:
-uv run python scripts/observability_trial.py --export
-```
-
-Confirm the synthetic trace and metrics under service `settlediff` in your project
-before using export for live investigations. The [observability guide](docs/development/observability.md)
-explains authentication, regions, privacy, and verification. There is no live
-export opt-out; the offline synthetic trial remains offline by default. Exporter
-outages never change a verdict or trigger a payment retry.
-
-## Known limitations
-
-- Perflo provider evidence alone cannot establish independent customer settlement; provider-side receipt corroboration is not proof of the customer's debit.
-- Context.dev is supporting evidence only, and live investigations currently require its configuration.
-- The x402 exact-transfer observer supports a narrow EVM testnet profile, not every network, asset, or x402 service. Its configured RPC is an availability and operator-trust dependency.
-- Live compatibility evidence consists of bounded test cycles, not universal provider compatibility or production approval.
-- SettleDiff does not issue refunds, settle disputes, or automatically retry ambiguous payments.
-
-## Project status
-
-SettleDiff is **0.1.0**, MIT-licensed, and available from source. It is not a
-public package or hosted service; no production facilitator is selected. See
-the [release checklist](docs/development/release-checklist.md) for builds and live setup.
+The supported x402 profile is narrow; RPC availability and operator trust remain
+dependencies. No production facilitator is selected. SettleDiff does not issue
+refunds, settle disputes, or automatically retry ambiguous payments.
 
 ## Documentation
 
-**Start here:** [Testing strategy](docs/testing/strategy.md) ·
-[Offline agent evals](docs/development/evals.md) ·
-[Observability and Logfire](docs/development/observability.md) ·
-[Architecture overview](docs/architecture/overview.md) ·
-[Security and data handling](docs/security/data-handling.md)
-
-**Live evidence:** [Initial Perflo incident](docs/testing/live-run-report-2026-08-21.md) ·
-[Controlled x402 cycle](docs/testing/x402-live-cycle.md) ·
-[Assurance validation](docs/testing/assurance-real-world-validation-2026-09-22.md) ·
-[Perflo v8 validation](docs/testing/pr2-live-validation-2026-09-28.md) ·
-[Public x402 endpoint](docs/testing/x402-public-endpoint-validation.md)
-
-**Decisions:** [Independent settlement observation](docs/decisions/0010-independent-settlement-observation.md) ·
-[Provider-chain corroboration](docs/decisions/0011-perflo-provider-chain-corroboration.md) ·
-[Foundation design](docs/superpowers/specs/2026-08-12-production-foundation-design.md) ·
-[All ADRs](docs/decisions/README.md)
-
-**Development:** [Repository structure](docs/development/repository-structure.md) ·
-[Project health review](docs/development/project-health-review.md) ·
-[Shared Codex/Devin skills](skills/matt-pocock/README.md) ·
-[Verification loops](docs/development/verification-loops.md) ·
-[Release checklist](docs/development/release-checklist.md) ·
-[Contributor instructions](AGENTS.md)
-
-## Non-goals
-
-SettleDiff is not a wallet, payment network, generic agent framework, or
-replacement for provider logs. It does not infer a charge from an Activity
-entry, a settlement from a success flag, or financial truth from an LLM.
+- [Testing and fixture matrix](docs/testing/strategy.md)
+- [Architecture overview](docs/architecture/overview.md) and [decisions](docs/decisions/README.md)
+- [Security and data handling](docs/security/data-handling.md)
+- [Eval guide](docs/development/evals.md) and [observability guide](docs/development/observability.md)
+- [Audit results](docs/development/audit-2026-10-12.md)
+- [Shared Codex/Devin skills](skills/matt-pocock/README.md)
+- [Contributor instructions](AGENTS.md) and [verification loops](docs/development/verification-loops.md)
+- [Release checklist](docs/development/release-checklist.md)
