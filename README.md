@@ -21,6 +21,12 @@ create findings or decide financial truth.
 [Run the offline demo](#60-second-offline-demo) to see the trust boundary without
 credentials, a signer, or a payment.
 
+Use SettleDiff to inspect a purchase's expected, executed, and recorded evidence,
+identify payment/delivery disagreements, assess whether another attempt needs human
+judgment, and share a masked report while retaining the local evidence bundle.
+The [eval workflow](#agent-evals-and-regression-tests) protects investigation behavior;
+[observability](#observability-and-logfire) makes its execution inspectable.
+
 ## What SettleDiff establishes
 
 | Evidence available | Supported conclusion |
@@ -71,7 +77,16 @@ In each JSON response, inspect `verdict`, `independent_settlement`, and
 or deliver the service. It means the available evidence cannot independently
 establish the customer's settlement.
 
-For the local UI, retry analysis, and masked publication, see the
+To keep a replay and inspect it in the local UI:
+
+```bash
+mkdir -p .local
+uv run settlediff verify-fixture fixtures/x402-independent-confirmed --database .local/settlediff.sqlite3
+uv run settlediff serve --database .local/settlediff.sqlite3
+```
+
+Open the loopback URL printed by `serve`. The database stays local and ignored by
+Git. For retry analysis, evidence bundles, and masked publication, see the
 [testing strategy](docs/testing/strategy.md).
 
 ## Verdicts
@@ -138,6 +153,10 @@ reference, and external RPC evidence must be usable. A pending or missing
 receipt, malformed evidence, or an unavailable observer cannot establish
 settlement. See [ADR 0010](docs/decisions/0010-independent-settlement-observation.md).
 
+Bounded [signed seller-evidence helpers](docs/development/signed-evidence.md) are
+tested separately on this branch. They are not yet wired into live authorization,
+collection, or verdicts; a provider signature is not independent settlement proof.
+
 ## Evidence from real tests
 
 Controlled, explicitly authorized tests exposed both disagreements and successful
@@ -197,8 +216,8 @@ strict canonical evidence models, deterministic matching/checks, and redacted
 run records with source-attributed timelines in SQLite. A bounded PydanticAI
 investigator may select and explain evidence without determining financial truth.
 Typer provides the CLI, FastAPI serves a loopback-only UI, and optional
-OpenTelemetry export omits sensitive
-content. Reports and bundles preserve provider assertions separately from
+OpenTelemetry export keeps model content capture disabled. Reports and bundles
+preserve provider assertions separately from
 qualifying external observations. Public reports use a masked allowlist, not
 an unfiltered copy of local evidence.
 
@@ -206,6 +225,60 @@ Schema numbers belong to **different artifact families**. A report schema, a
 bundle schema, and a fixture-manifest schema need not have the same version.
 The [architecture overview](docs/architecture/overview.md) describes the
 interfaces and [ADR index](docs/decisions/README.md) records the boundaries.
+
+## Agent evals and regression tests
+
+The offline dataset runs eight scripted scenarios through the production investigator:
+success, missing evidence, ambiguous Activity, limit exhaustion, authorization mismatch,
+uncertain-submission retry, contradictory output, and unknown citations. Graders check
+observed tools, evidence/citations, limits, usage, fallback, immutable findings, and
+payment safety separately. Writes are intercepted and real model requests are disabled.
+These cases prove enforcement and wiring; live model quality needs separate opt-in trials.
+
+```bash
+uv run pytest tests/evals tests/unit/agent -q
+uv run python scripts/run_evals.py --out .local/evals/before.json
+# After changing the agent or its tools:
+uv run python scripts/run_evals.py --out .local/evals/after.json --baseline .local/evals/before.json
+```
+
+Run records retain code/data digests, observed trajectories, usage, and grader results.
+Changed cases or evidence are flagged as incomparable; the baseline cannot be overwritten
+by the output. Any failing grader makes the runner exit nonzero.
+
+The [eval guide](docs/development/evals.md) covers criteria, comparison, and reviewed
+failure promotion. Promotion keeps the original live bundle private and copies a
+separately reviewed synthetic reconstruction with explicit expected behavior and a
+source digest. Promoted cases automatically join the existing offline CI gate.
+
+## Observability and Logfire
+
+SettleDiff records investigation steps, latency, errors, and usage through redacted
+local logs, OpenTelemetry spans, and bounded metrics. **Logfire export is optional**
+and uses the existing OTLP HTTP exporters. Local operation and CI need no hosted account.
+Reports continue to derive financial conclusions from deterministic evidence checks.
+
+To enable it, add your project's ingestion base URL and write token to the ignored `.env`:
+
+```dotenv
+SETTLEDIFF_OTLP_ENDPOINT=https://logfire-us.pydantic.dev
+SETTLEDIFF_OTLP_AUTHORIZATION=your-project-write-token
+```
+
+Use `https://logfire-eu.pydantic.dev` for an EU project. The integration derives the
+trace and metric paths and sends the configured Authorization header. Prompt/response,
+tool-content, and binary capture remain disabled; structured logs stay local.
+
+```bash
+# No external calls, even if export is configured:
+uv run python scripts/observability_trial.py
+# Explicitly send synthetic telemetry; no model call or payment:
+uv run python scripts/observability_trial.py --export
+```
+
+Confirm the synthetic trace and metrics under service `settlediff` in your project
+before using export for live investigations. The [observability guide](docs/development/observability.md)
+explains authentication, regions, privacy, verification, and disabling export.
 
 ## Known limitations
 
@@ -224,6 +297,8 @@ the [release checklist](docs/development/release-checklist.md) for builds and li
 ## Documentation
 
 **Start here:** [Testing strategy](docs/testing/strategy.md) ·
+[Offline agent evals](docs/development/evals.md) ·
+[Observability and Logfire](docs/development/observability.md) ·
 [Architecture overview](docs/architecture/overview.md) ·
 [Security and data handling](docs/security/data-handling.md)
 
@@ -239,6 +314,8 @@ the [release checklist](docs/development/release-checklist.md) for builds and li
 [All ADRs](docs/decisions/README.md)
 
 **Development:** [Repository structure](docs/development/repository-structure.md) ·
+[Project health review](docs/development/project-health-review.md) ·
+[Shared Codex/Devin skills](skills/matt-pocock/README.md) ·
 [Verification loops](docs/development/verification-loops.md) ·
 [Release checklist](docs/development/release-checklist.md) ·
 [Contributor instructions](AGENTS.md)

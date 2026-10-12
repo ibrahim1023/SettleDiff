@@ -117,6 +117,12 @@ Required trajectories:
 
 Set `pydantic_ai.models.ALLOW_MODEL_REQUESTS = False` in the default test configuration.
 
+The [offline eval guide](../development/evals.md) describes runnable cases, versioned
+experiment records, comparison, and reviewed failure promotion. Both built-in and
+promoted cases run under the existing offline pytest gate. Evidence summaries cite
+actual artifact handles across payment rails; missing handles are explicit `null`
+values and cannot be cited. Failed investigations retain completed model/tool usage.
+
 ## Adapter contracts
 
 Captured raw envelopes are sanitized and versioned. Application contract tests also

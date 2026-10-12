@@ -21,47 +21,39 @@ Agent unit tests exercise model wiring, grounding, limits, fallback, and usage w
 offline models. `tests/evals/graders.py` checks verdict consistency, citation validity,
 allowed tools, and required/forbidden trajectory steps.
 
-## What is incomplete
+## Implemented eval loop
 
-`tests/evals/dataset.py` lists six scenario names. `test_regression.py` checks membership
-and grader behavior, but does not execute an investigation for each named scenario.
-The unit suite covers additional behavior; the dataset itself is not yet a complete
-scenario runner or a record of experiments against agent versions.
+The former six-name list is now eight runnable cases, including adversarial output
+and citation cases. They run the production investigator with fixed evidence and
+scripted models, observe actual tools, and exercise authorization with intercepted
+writes. Separate graders cover outcome, findings, citations, trajectory, usage,
+limits, fallback, evidence coverage, immutability, and payment safety.
 
-There is no observed-failure-to-case promotion workflow in the inspected eval files.
-Exported diagnostic spans intentionally omit input and tool payloads, so an exported
-span alone is insufficient to replay a financial investigation. A replay case needs
-sanitized evidence and fixed tool responses from the local evidence boundary.
+Local experiment records include code/data digests and grader results; comparisons
+flag changed cases. Reviewed promotion validates a private local evidence bundle
+and a separate synthetic reconstruction, then copies only the sanitized fixture and
+explicit criteria, retaining a source digest. Promoted cases enter the offline gate.
+The [eval guide](evals.md) documents commands and replay limits under
+[ADR 0005](../decisions/0005-fixture-first-testing-and-evals.md).
 
-## Recommended next increment
-
-1. Turn the six scenario names into runnable cases with explicit required tools,
-   forbidden actions, expected deterministic findings, and grounding expectations.
-   Keep fixed evidence and tool responses; use offline models and intercept every write.
-2. Record case identity, code revision, agent configuration, grader results, and
-   trajectory summaries for comparison between runs. Treat this as eval metadata,
-   separate from evidence and findings.
-3. Add a reviewed promotion path from a local failed investigation to a sanitized
-   fixture and agent case. Scrub identifiers and secrets, preserve source provenance,
-   and have a human specify expected behavior. Never use the failing output as truth.
-4. Run the whole offline dataset in the existing gate. For later opt-in live model
-   trials, define repeated-run acceptance criteria before running them; any safety
-   violation fails the trial. Live trials require separate authorization and budgets.
-
-These are proposed follow-up changes, not implemented features. They extend
-[ADR 0005](../decisions/0005-fixture-first-testing-and-evals.md) and the
-[agent verification loop](verification-loops.md) without adding a hosted dependency.
+Exported diagnostic spans omit input and tool payloads. They alone cannot reproduce
+a financial investigation; reconstruction still requires reviewed fixed evidence
+and tool responses. Automated live sampling, live repeated model trials, and
+calibrated subjective graders remain future work.
 
 ## Backend decision
 
 Keep local diagnostics as the default. Consider an OTLP backend when repeated live
 investigations make cross-run latency, provider errors, or model usage difficult to
 inspect locally. Evaluate backend compatibility and retention before enabling export.
-The current configuration has one `SETTLEDIFF_OTLP_ENDPOINT`, passed directly to both
-the HTTP trace and metric exporters. The [OTLP specification](https://opentelemetry.io/docs/specs/otlp/#otlphttp-request)
-defines separate default paths, `/v1/traces` and `/v1/metrics`;
-validate routing with an in-memory or local collector test before relying on both
-signals. This assessment does not establish successful collector delivery.
+Logfire is now supported as an optional authenticated OTLP destination. The
+[observability guide](observability.md) describes configuration and a synthetic trial;
+no hosted dependency is introduced into the offline gate.
+`SETTLEDIFF_OTLP_ENDPOINT` now denotes the HTTP collector base URL. The telemetry
+module derives separate `/v1/traces` and `/v1/metrics` routes, as defined in the
+[OTLP specification](https://opentelemetry.io/docs/specs/otlp/#otlphttp-request).
+Tests intercept HTTP requests from the real exporters and check both routes.
+This establishes exporter routing without asserting successful delivery to a live collector.
 
 LLM judges may eventually help assess subjective explanation quality after calibration
 against human labels. Financial findings, authorization, settlement, and retry safety
