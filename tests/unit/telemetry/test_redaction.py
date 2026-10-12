@@ -112,6 +112,40 @@ def test_pydantic_ai_instrumentation_disables_content_capture() -> None:
     telemetry.shutdown()
 
 
+def test_logfire_receives_authenticated_redacted_traces_and_metrics() -> None:
+    token = "syn-logfire-token-never-export"
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        otlp_endpoint="https://logfire-us.pydantic.dev",
+        otlp_authorization=SecretStr(token),
+    )
+    stream = io.StringIO()
+    with patch(
+        "requests.Session.post",
+        autospec=True,
+        return_value=Mock(status_code=200, content=b"", ok=True),
+    ) as post:
+        telemetry = configure_telemetry(settings, log_stream=stream)
+        try:
+            with telemetry.span("settlediff.run", {"component": "application", "status": token}):
+                telemetry.event("trial.synthetic", {"status": token, "prompt": "private prompt"})
+                telemetry.counter("settlediff.runs", {"mode": "replay", "verdict": "VERIFIED"})
+            telemetry.force_flush()
+            assert {call.kwargs["url"] for call in post.call_args_list} == {
+                "https://logfire-us.pydantic.dev/v1/traces",
+                "https://logfire-us.pydantic.dev/v1/metrics",
+            }
+            for call in post.call_args_list:
+                assert call.args[0].headers["Authorization"] == token
+                assert token.encode() not in call.kwargs["data"]
+                assert b"private prompt" not in call.kwargs["data"]
+            assert token not in stream.getvalue()
+            assert "private prompt" not in stream.getvalue()
+            assert telemetry.instrumentation.include_content is False
+        finally:
+            telemetry.shutdown()
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [

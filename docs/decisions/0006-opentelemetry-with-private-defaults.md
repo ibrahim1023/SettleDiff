@@ -18,6 +18,13 @@ module derives `/v1/traces` and `/v1/metrics` separately; a legacy URL ending in
 either standard signal path is normalized back to that base. Custom collector
 prefixes are retained. Tests intercept HTTP export from the real exporters.
 
+Logfire is a supported optional destination through standard OTLP, without its SDK.
+`SETTLEDIFF_OTLP_AUTHORIZATION` holds the exact Authorization header in a `SecretStr`
+and requires an explicit endpoint. It is scrubbed from diagnostic attributes and
+is never a metric label or payload. A synthetic trial stays in memory by default;
+`--export` opts into sending synthetic telemetry. Offline tests intercept HTTP and
+do not require a Logfire project or token.
+
 ## Consequences
 
 - Operators can choose any OTLP-compatible backend.

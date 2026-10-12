@@ -57,6 +57,24 @@ def test_otlp_endpoint_rejects_insecure_or_credentialed_urls(endpoint: str) -> N
         offline_settings(otlp_endpoint=endpoint)
 
 
+def test_otlp_authorization_is_secret_and_requires_an_explicit_endpoint() -> None:
+    token = "syn-logfire-write-token"
+    settings = offline_settings(
+        otlp_endpoint="https://logfire-us.pydantic.dev", otlp_authorization=token
+    )
+    assert settings.otlp_authorization is not None
+    assert settings.otlp_authorization.get_secret_value() == token
+    assert token not in repr(settings)
+    with pytest.raises(ValueError, match="endpoint"):
+        offline_settings(otlp_authorization=token)
+
+
+@pytest.mark.parametrize("token", [" ", "syn-token\r\nX-Injected: value"])
+def test_otlp_authorization_rejects_blank_and_header_injection(token: str) -> None:
+    with pytest.raises(ValueError):
+        offline_settings(otlp_endpoint="https://logfire-us.pydantic.dev", otlp_authorization=token)
+
+
 @pytest.mark.parametrize(
     "url",
     [

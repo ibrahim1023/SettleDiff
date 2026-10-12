@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from contextlib import suppress
 from ipaddress import ip_address
-from typing import Annotated
+from typing import Annotated, Self
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, StringConstraints, field_validator
+from pydantic import Field, SecretStr, StringConstraints, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from settlediff.domain.redaction import SECRET_KEYS
@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     contextdev_base_url: str = "https://api.context.dev/v1"
     contextdev_api_key: SecretStr | None = None
     otlp_endpoint: str | None = None
+    otlp_authorization: SecretStr | None = Field(default=None, repr=False)
     x402_signer_command: tuple[str, ...] | None = Field(default=None, repr=False)
     x402_rpc_url: SecretStr | None = Field(default=None, repr=False)
     x402_testnet_enabled: bool = False
@@ -106,6 +107,25 @@ class Settings(BaseSettings):
         if value is not None:
             _safe_rpc_url(value.get_secret_value(), label="Perflo RPC")
         return value
+
+    @field_validator("otlp_authorization")
+    @classmethod
+    def validate_otlp_authorization(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None:
+            token = value.get_secret_value()
+            if (
+                not token.strip()
+                or len(token) > 4096
+                or any(ord(char) < 32 or ord(char) > 126 for char in token)
+            ):
+                raise ValueError("OTLP authorization must be a bounded printable HTTP header value")
+        return value
+
+    @model_validator(mode="after")
+    def require_authorized_otlp_endpoint(self) -> Self:
+        if self.otlp_authorization is not None and not (self.otlp_endpoint or "").strip():
+            raise ValueError("OTLP authorization requires an explicit endpoint")
+        return self
 
     @field_validator("otlp_endpoint")
     @classmethod

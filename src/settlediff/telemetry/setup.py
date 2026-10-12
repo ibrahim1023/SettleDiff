@@ -400,6 +400,11 @@ def configure_telemetry(
         raise ValueError("inject either a meter provider or a metric reader, not both")
 
     resource = Resource.create({"service.name": "settlediff"})
+    headers = (
+        {"Authorization": settings.otlp_authorization.get_secret_value()}
+        if settings.otlp_authorization is not None
+        else None
+    )
     otlp_endpoint = settings.otlp_endpoint.strip() if settings.otlp_endpoint else None
     if otlp_endpoint:
         otlp_endpoint = otlp_endpoint.rstrip("/")
@@ -412,7 +417,9 @@ def configure_telemetry(
         provider.add_span_processor(SimpleSpanProcessor(span_exporter))
     elif otlp_endpoint:
         provider.add_span_processor(
-            BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{otlp_endpoint}/v1/traces"))
+            BatchSpanProcessor(
+                OTLPSpanExporter(endpoint=f"{otlp_endpoint}/v1/traces", headers=headers)
+            )
         )
 
     instrumentation = InstrumentationSettings(
@@ -427,7 +434,7 @@ def configure_telemetry(
     if meter_provider is None:
         if metric_reader is None and otlp_endpoint:
             metric_reader = PeriodicExportingMetricReader(
-                OTLPMetricExporter(endpoint=f"{otlp_endpoint}/v1/metrics")
+                OTLPMetricExporter(endpoint=f"{otlp_endpoint}/v1/metrics", headers=headers)
             )
         readers = (metric_reader,) if metric_reader is not None else ()
         meter_provider = MeterProvider(metric_readers=readers, resource=resource)
