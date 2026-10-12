@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from contextlib import AbstractContextManager, suppress
+from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -213,19 +213,6 @@ class TelemetryPort(Protocol):
     def counter(self, name: str, attributes: Mapping[str, object]) -> None: ...
 
     def histogram(self, name: str, value: object, attributes: Mapping[str, object]) -> None: ...
-
-
-class NullTelemetrySpan:
-    def __enter__(self) -> None:
-        pass
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: object,
-    ) -> None:
-        del exc_type, exc_value, traceback
 
 
 class LiveEvidenceCollector:
@@ -801,7 +788,7 @@ class LiveEvidenceCollector:
 
     def _span(self, name: str, attributes: Mapping[str, object]) -> AbstractContextManager[object]:
         if self._telemetry is None:
-            return NullTelemetrySpan()
+            return nullcontext()
         return self._telemetry.span(name, attributes)
 
     def _record_counter(self, name: str, attributes: Mapping[str, object]) -> None:
@@ -939,7 +926,7 @@ class RunInvestigation:
 
     def _span(self, name: str, attributes: Mapping[str, object]) -> AbstractContextManager[object]:
         if self._telemetry is None:
-            return NullTelemetrySpan()
+            return nullcontext()
         return self._telemetry.span(name, attributes)
 
     async def _recover_submission(self, run_id: str) -> SubmissionRecovery | None:
