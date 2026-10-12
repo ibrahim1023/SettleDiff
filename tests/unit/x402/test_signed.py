@@ -269,3 +269,26 @@ def test_signed_kid_must_belong_to_intended_seller() -> None:
     )
     assert result.seller_identity_binding is SellerBindingStatus.NOT_BOUND
     assert result.signature_validity is SignatureValidity.UNVERIFIABLE
+
+
+@pytest.mark.parametrize("missing", ["provider", "observer"])
+def test_available_transaction_contradiction_survives_missing_other_source(missing: str) -> None:
+    private = Ed25519PrivateKey.generate()
+    reference = "0x" + "3" * 64
+    payload = {
+        "version": 1,
+        "network": "eip155:84532",
+        "resourceUrl": "https://seller.example/data",
+        "payer": _terms().payer,
+        "issuedAt": int(NOW.timestamp()),
+        "transaction": "0x" + "5" * 64,
+    }
+    assessment = assess_signed_receipt(
+        _signed(payload, private),
+        _identity(private),
+        _terms(),
+        provider_reference=None if missing == "provider" else reference,
+        observer_reference=None if missing == "observer" else reference,
+    )
+    assert assessment.diagnostic == "SIGNED_RECEIPT_TRANSACTION_DIFF"
+    assert assessment.correlation == "CONTRADICTED"

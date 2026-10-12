@@ -384,6 +384,10 @@ async def _execute_live_run(
                     f"Settlement profile digest: "
                     f"{payment_terms.settlement_profile_digest or 'unknown'}\n"
                 )
+                if payment_terms.signed_offer_digest is not None:
+                    settlement_lines += (
+                        f"Signed offer proof digest: {payment_terms.signed_offer_digest}\n"
+                    )
             typer.echo(
                 f"Rail: {payment_terms.adapter_id}\n"
                 f"Version: {payment_terms.protocol_version or 'unknown'}\n"

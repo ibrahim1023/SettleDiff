@@ -304,6 +304,24 @@ def verify_seller_jws(jws: str, identity: SellerIdentityEvidence) -> SignatureVe
     )
 
 
+def seller_key_id(jws: str) -> str:
+    if len(jws.encode()) > _MAX_JWS_BYTES:
+        raise ValueError("seller JWS exceeds its bound")
+    parts = jws.split(".")
+    if len(parts) != 3:
+        raise ValueError("seller JWS is malformed")
+    decoded: object = json.loads(_base64url(parts[0], max_bytes=512))
+    if not isinstance(decoded, dict):
+        raise ValueError("seller JWS header must be an object")
+    header = cast(dict[str, object], decoded)
+    if set(header) != {"alg", "kid"} or header.get("alg") != "EdDSA":
+        raise ValueError("seller JWS algorithm or header is unsupported")
+    kid = header.get("kid")
+    if not isinstance(kid, str) or not kid:
+        raise ValueError("seller JWS key identifier is missing")
+    return kid
+
+
 def assess_signed_offer(
     jws: str, identity: SellerIdentityEvidence, terms: PaymentTerms, *, now: datetime
 ) -> SignedProviderOffer:
@@ -324,13 +342,28 @@ def assess_signed_offer(
     else:
         valid_until = payload.get("validUntil")
         amount = terms.quoted_price.amount.scaleb(terms.asset.decimals)
-        if isinstance(valid_until, bool) or not isinstance(valid_until, int):
+        if (
+            set(payload)
+            - {
+                "version",
+                "resourceUrl",
+                "scheme",
+                "network",
+                "asset",
+                "payTo",
+                "amount",
+                "validUntil",
+            }
+            or "validUntil" in payload
+            and (isinstance(valid_until, bool) or not isinstance(valid_until, int))
+        ):
             diagnostic = "SIGNED_OFFER_MALFORMED"
-        elif valid_until <= now.timestamp():
+        elif isinstance(valid_until, int) and valid_until <= now.timestamp():
             diagnostic = "SIGNED_OFFER_EXPIRED"
         else:
             match = (
-                payload.get("version") == 1
+                type(payload.get("version")) is int
+                and payload.get("version") == 1
                 and payload.get("resourceUrl") == terms.resource_url
                 and payload.get("scheme") == terms.scheme
                 and payload.get("network") == terms.network
@@ -367,6 +400,7 @@ def assess_signed_receipt(
     correlation: Literal["TRANSACTION_BOUND", "CONTRADICTED", "NOT_COMPARABLE"] = "NOT_COMPARABLE"
     diagnostic = "SIGNED_RECEIPT_VALID"
     payload = verification.payload
+    captured_at = observed_at or identity.observed_at
     if verification.signature_validity is SignatureValidity.INVALID:
         diagnostic = "SIGNED_RECEIPT_SIGNATURE_INVALID"
     elif verification.signature_validity is not SignatureValidity.VALID:
@@ -377,12 +411,16 @@ def assess_signed_receipt(
         diagnostic = "SIGNED_RECEIPT_SELLER_BINDING_FAILED"
     elif (
         payload is None
+        or bool(
+            set(payload) - {"version", "network", "resourceUrl", "payer", "issuedAt", "transaction"}
+        )
         or not isinstance(payload.get("issuedAt"), int)
         or isinstance(payload.get("issuedAt"), bool)
     ):
         diagnostic = "SIGNED_RECEIPT_MALFORMED"
     elif (
-        payload.get("version") != 1
+        type(payload.get("version")) is not int
+        or payload.get("version") != 1
         or payload.get("resourceUrl") != terms.resource_url
         or payload.get("network") != terms.network
         or not isinstance(payload.get("payer"), str)
@@ -391,18 +429,22 @@ def assess_signed_receipt(
     ):
         diagnostic = "SIGNED_RECEIPT_TERMS_DIFF"
         correlation = "CONTRADICTED"
+    elif not -30 <= captured_at.timestamp() - cast(int, payload["issuedAt"]) <= 3600:
+        diagnostic = "SIGNED_RECEIPT_TIME_DIFF"
+        correlation = "CONTRADICTED"
     else:
         transaction = payload.get("transaction")
         if not isinstance(transaction, str) or not transaction:
             diagnostic = "SIGNED_RECEIPT_TRANSACTION_MISSING"
-        elif provider_reference is None or observer_reference is None:
-            diagnostic = "SIGNED_RECEIPT_TRANSACTION_UNAVAILABLE"
-        elif (
-            transaction.casefold() != provider_reference.casefold()
-            or transaction.casefold() != observer_reference.casefold()
+        elif any(
+            transaction.casefold() != reference.casefold()
+            for reference in (provider_reference, observer_reference)
+            if reference is not None
         ):
             correlation = "CONTRADICTED"
             diagnostic = "SIGNED_RECEIPT_TRANSACTION_DIFF"
+        elif provider_reference is None or observer_reference is None:
+            diagnostic = "SIGNED_RECEIPT_TRANSACTION_UNAVAILABLE"
         else:
             correlation = "TRANSACTION_BOUND"
     return SignedProviderReceipt(
@@ -410,6 +452,6 @@ def assess_signed_receipt(
         identity=identity,
         verification=verification,
         correlation=correlation,
-        captured_at=observed_at or identity.observed_at,
+        captured_at=captured_at,
         diagnostic=diagnostic,
     )

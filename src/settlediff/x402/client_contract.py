@@ -18,6 +18,7 @@ from pydantic import (
 from settlediff.domain.integrity import Sha256Digest, sha256_digest
 from settlediff.domain.models import NonEmptyStr
 from settlediff.domain.money import Money
+from settlediff.x402.signed import seller_key_id
 from settlediff.x402.urls import is_safe_x402_target
 
 EvmAddress = Annotated[str, StringConstraints(pattern=r"^0x[0-9a-fA-F]{40}$")]
@@ -140,13 +141,37 @@ def body_digest_for(body: JsonValue | None) -> Sha256Digest:
     return sha256_digest(body)
 
 
-def _contains_forbidden_key(value: JsonValue) -> bool:
+def _contains_forbidden_key(value: JsonValue, path: tuple[str, ...] = ()) -> bool:
     if isinstance(value, dict):
         mapping = cast(dict[str, JsonValue], value)
         for key, child in mapping.items():
             normalized = "".join(character for character in key.lower() if character.isalnum())
-            if normalized in _FORBIDDEN_OUTPUT_KEYS or _contains_forbidden_key(child):
+            if normalized == "signature" and _public_seller_signature(mapping, path):
+                continue
+            if normalized in _FORBIDDEN_OUTPUT_KEYS or _contains_forbidden_key(
+                child, path + (key,)
+            ):
                 return True
     elif isinstance(value, list):
-        return any(_contains_forbidden_key(child) for child in cast(list[JsonValue], value))
+        return any(
+            _contains_forbidden_key(child, path + ("*",)) for child in cast(list[JsonValue], value)
+        )
     return False
+
+
+def _public_seller_signature(value: dict[str, JsonValue], path: tuple[str, ...]) -> bool:
+    if path not in {
+        ("challenge", "extensions", "offer-receipt", "info", "offers", "*"),
+        ("provider_settlement", "extensions", "offer-receipt", "info", "receipt"),
+    }:
+        return False
+    if value.get("format") != "jws" or set(value) - {"format", "signature", "acceptIndex"}:
+        return False
+    signature = value.get("signature")
+    if not isinstance(signature, str):
+        return False
+    try:
+        seller_key_id(signature)
+    except (ValueError, RecursionError):
+        return False
+    return True

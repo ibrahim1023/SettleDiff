@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
@@ -27,6 +28,7 @@ from settlediff.domain.models import (
     IndependentSettlementObservation,
     LedgerStatus,
     PaymentReceipt,
+    ProviderSignatureEvidence,
     SettlementProfile,
     SettlementStatus,
 )
@@ -38,7 +40,7 @@ from settlediff.x402.client_contract import (
     ExternalSignerResult,
     SignerSubmissionState,
 )
-from settlediff.x402.http import X402ResourcePort
+from settlediff.x402.http import SellerIdentityPort, X402ResourcePort
 from settlediff.x402.models import PaymentRequired, PaymentRequirements, SettlementResponse
 from settlediff.x402.normalize import (
     USDC_DECIMALS,
@@ -51,6 +53,14 @@ from settlediff.x402.recovery import (
     recover_x402_submission,
     x402_recovery_evidence,
 )
+from settlediff.x402.signed import (
+    SignedProviderOffer,
+    SignedProviderReceipt,
+    assess_signed_offer,
+    assess_signed_receipt,
+    seller_key_id,
+)
+from settlediff.x402.signed_extension import extract_offer, extract_receipt
 
 
 class X402SignerPort(Protocol):
@@ -67,11 +77,14 @@ class X402Adapter:
         rpc: ReadOnlyRpcPort | None = None,
         *,
         expected_payer: str | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._resource = resource
         self._signer = signer
         self._rpc = rpc
         self._expected_payer = expected_payer
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._preflight_offer: SignedProviderOffer | None = None
         self._preflight_contract: ExpectedContract | None = None
         self._preflight_profile: SettlementProfile | None = None
         self._recovery: X402SubmissionRecovery | None = None
@@ -92,11 +105,13 @@ class X402Adapter:
         required, requirement, contract = self._contract_from_challenge(
             observed.status_code, observed.payment_required, request
         )
-        self._preflight_contract = contract
         profile = None
         if self._expected_payer is not None:
             profile = _settlement_profile(requirement, self._expected_payer)
             self._preflight_profile = profile
+        contract, offer = await self._capture_offer(required, contract, request, profile)
+        self._preflight_contract = contract
+        self._preflight_offer = offer
         return AdapterEvidence(
             adapter_id=self.adapter_id,
             protocol_version=str(required.x402_version),
@@ -107,7 +122,94 @@ class X402Adapter:
             observed_at=observed.observed_at,
             source_contract=cast(JsonValue, required.model_dump(mode="json", by_alias=True)),
             settlement_profile=profile,
+            provider_signatures=(_signature_evidence(offer, request.run_id),)
+            if offer is not None
+            else (),
         )
+
+    async def _capture_offer(
+        self,
+        required: PaymentRequired,
+        contract: ExpectedContract,
+        request: PaidExecutionRequest,
+        profile: SettlementProfile | None,
+    ) -> tuple[ExpectedContract, SignedProviderOffer | None]:
+        try:
+            signature = extract_offer(required.extensions)
+            if signature is None:
+                return contract, None
+            if not isinstance(self._resource, SellerIdentityPort):
+                raise ValueError("seller identity capture is unavailable")
+            identity = await self._resource.seller_identity(
+                request.target, seller_key_id(signature)
+            )
+            offer = assess_signed_offer(
+                signature, identity, _payment_terms(contract, request, profile), now=self._clock()
+            )
+            if offer.diagnostic != "SIGNED_OFFER_VALID":
+                raise ValueError("seller offer is not valid for the authorized terms")
+        except (ValueError, RecursionError) as error:
+            raise AdapterProtocolError("x402 signed offer could not be verified safely") from error
+        digest = sha256_digest(
+            {
+                "signature": sha256_digest(signature),
+                "identity_document": identity.document_digest,
+            }
+        )
+        return contract.model_copy(
+            update={"schema_version": 4, "signed_offer_digest": digest}
+        ), offer
+
+    async def _capture_receipt(
+        self,
+        result: ExternalSignerResult,
+        terms: PaymentTerms,
+        request: PaidExecutionRequest,
+    ) -> tuple[ProviderSignatureEvidence, ...]:
+        offer = self._preflight_offer
+        if offer is None:
+            return ()
+        offer_evidence = _signature_evidence(offer, request.run_id)
+        try:
+            if result.provider_settlement is None or not isinstance(
+                self._resource, SellerIdentityPort
+            ):
+                raise ValueError("signed receipt is unavailable")
+            extensions = result.provider_settlement.get("extensions", {})
+            if not isinstance(extensions, dict):
+                raise ValueError("signed receipt extensions are malformed")
+            signature = extract_receipt(extensions)
+            if signature is None:
+                raise ValueError("advertised signed receipt is missing")
+            identity = await self._resource.seller_identity(
+                request.target, seller_key_id(signature)
+            )
+            observation = self.independent_settlement()
+            receipt = assess_signed_receipt(
+                signature,
+                identity,
+                terms,
+                provider_reference=result.transaction_reference,
+                observer_reference=observation.transaction_reference
+                if observation is not None
+                else None,
+                observed_at=self._clock(),
+            )
+            return offer_evidence, _signature_evidence(receipt, request.run_id)
+        except (ValueError, RecursionError):
+            return offer_evidence, ProviderSignatureEvidence(
+                kind="receipt",
+                signature_validity="UNVERIFIABLE",
+                seller_identity_binding="UNVERIFIABLE",
+                signed_terms_match=None,
+                correlation="NOT_COMPARABLE",
+                diagnostic="SIGNED_RECEIPT_UNAVAILABLE",
+                signature_digest=None,
+                signer_identity_digest=None,
+                payload_digest=None,
+                observed_at=self._clock(),
+                evidence_ids=(f"{request.run_id}:signed_receipt",),
+            )
 
     async def execute_once(
         self,
@@ -125,11 +227,12 @@ class X402Adapter:
         if preflight_contract.price != quoted_price:
             raise AdapterProtocolError("x402 execution quote differs from preflight")
         observed = await self._resource.challenge(request)
-        _, requirement, contract = self._contract_from_challenge(
+        required, requirement, contract = self._contract_from_challenge(
             observed.status_code, observed.payment_required, request
         )
         expected_payer = cast(str, self._expected_payer)
         profile = _settlement_profile(requirement, expected_payer)
+        contract, _offer = await self._capture_offer(required, contract, request, profile)
         if self._preflight_profile is None:
             raise AdapterProtocolError("x402 execution requires a preflight settlement profile")
         if profile != self._preflight_profile:
@@ -182,7 +285,13 @@ class X402Adapter:
                 force_unknown=True,
             )
             return _execution_evidence(
-                result, execution, observed.observed_at, None, True, observation
+                result,
+                execution,
+                observed.observed_at,
+                None,
+                True,
+                observation,
+                await self._capture_receipt(result, terms, request),
             )
         self._recovery = await recover_x402_submission(
             result,
@@ -206,6 +315,7 @@ class X402Adapter:
             provider_receipt,
             result.submission_state is SignerSubmissionState.SUBMISSION_UNCERTAIN,
             observation,
+            await self._capture_receipt(result, terms, request),
         )
 
     def independent_settlement(self) -> IndependentSettlementObservation | None:
@@ -269,6 +379,19 @@ class X402Adapter:
             contract = normalize_payment_required(
                 required, request_schema=_request_schema(request.body)
             )
+            returned_offer = extract_offer(required.extensions)
+            expected_offer = (
+                self._preflight_offer.jws if self._preflight_offer is not None else None
+            )
+            if returned_offer != expected_offer:
+                raise ValueError("signed offer changed after possible submission")
+            if selected_terms.signed_offer_digest is not None:
+                contract = contract.model_copy(
+                    update={
+                        "schema_version": 4,
+                        "signed_offer_digest": selected_terms.signed_offer_digest,
+                    }
+                )
         except (ValidationError, ValueError) as error:
             raise X402SubmissionUncertainError(
                 "x402 signer returned an invalid challenge after possible submission"
@@ -347,6 +470,7 @@ def _execution_evidence(
     provider_receipt: PaymentReceipt | None,
     submission_uncertain: bool,
     delivery_observation: DeliveryObservation | None,
+    provider_signatures: tuple[ProviderSignatureEvidence, ...] = (),
 ) -> AdapterEvidence:
     return AdapterEvidence(
         adapter_id="x402",
@@ -365,6 +489,7 @@ def _execution_evidence(
             else None
         ),
         delivery_observation=delivery_observation,
+        provider_signatures=provider_signatures,
     )
 
 
@@ -409,16 +534,14 @@ def _settlement_profile(requirement: PaymentRequirements, payer: str) -> Settlem
 def _payment_terms(
     contract: ExpectedContract,
     request: PaidExecutionRequest,
-    profile: SettlementProfile,
+    profile: SettlementProfile | None,
 ) -> PaymentTerms:
     if contract.price is None:
         raise AdapterProtocolError("x402 challenge omitted its quoted price")
     if contract.url is None:
         raise AdapterProtocolError("x402 challenge omitted its resource URL")
-    return PaymentTerms(
-        schema_version=4,
-        payer=profile.payer,
-        settlement_profile_digest=sha256_digest(profile.model_dump(mode="json")),
+    payload: dict[str, object] = dict(
+        schema_version=4 if profile is not None else 2,
         adapter_id="x402",
         protocol_version="2",
         scheme=contract.scheme,
@@ -435,6 +558,64 @@ def _payment_terms(
         response_contract_digest=(
             contract.response_contract.digest if contract.response_contract is not None else None
         ),
+    )
+    if profile is not None:
+        payload.update(
+            {
+                "payer": profile.payer,
+                "settlement_profile_digest": sha256_digest(profile.model_dump(mode="json")),
+            }
+        )
+        if contract.signed_offer_digest is not None:
+            payload["signed_offer_digest"] = contract.signed_offer_digest
+    return PaymentTerms.model_validate(payload)
+
+
+def _signature_evidence(
+    value: SignedProviderOffer | SignedProviderReceipt,
+    run_id: str,
+) -> ProviderSignatureEvidence:
+    kind = "offer" if isinstance(value, SignedProviderOffer) else "receipt"
+    match = (
+        value.signed_terms_match
+        if isinstance(value, SignedProviderOffer)
+        else (
+            value.diagnostic
+            in {
+                "SIGNED_RECEIPT_VALID",
+                "SIGNED_RECEIPT_TRANSACTION_MISSING",
+                "SIGNED_RECEIPT_TRANSACTION_UNAVAILABLE",
+                "SIGNED_RECEIPT_TRANSACTION_DIFF",
+            }
+        )
+    )
+    methods = value.identity.document.get("verificationMethod")
+    selected = (
+        tuple(
+            method
+            for method in methods
+            if isinstance(method, dict) and method.get("id") == value.identity.kid
+        )
+        if isinstance(methods, list)
+        else ()
+    )
+    identity_digest = sha256_digest(
+        {"did": value.identity.did, "kid": value.identity.kid, "methods": selected}
+    )
+    return ProviderSignatureEvidence.model_validate(
+        {
+            "kind": kind,
+            "signature_validity": value.verification.signature_validity.value,
+            "seller_identity_binding": value.verification.seller_identity_binding.value,
+            "signed_terms_match": match,
+            "correlation": value.correlation if isinstance(value, SignedProviderReceipt) else None,
+            "diagnostic": value.diagnostic,
+            "signature_digest": sha256_digest(value.jws),
+            "signer_identity_digest": identity_digest,
+            "payload_digest": value.verification.payload_digest,
+            "observed_at": value.captured_at,
+            "evidence_ids": (f"{run_id}:signed_{kind}",),
+        }
     )
 
 

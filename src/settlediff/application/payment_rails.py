@@ -13,6 +13,7 @@ from settlediff.domain.models import (
     EvidenceClass,
     IndependentSettlementObservation,
     NonEmptyStr,
+    ProviderSignatureEvidence,
     SettlementProfile,
     UtcDatetime,
 )
@@ -48,6 +49,9 @@ class AdapterEvidence(BaseModel):
     source_contract: JsonValue | None = None
     settlement_profile: SettlementProfile | None = None
     provider_chain_observation: PerfloChainCorroboration | None = None
+    provider_signatures: tuple[ProviderSignatureEvidence, ...] = Field(
+        default=(), max_length=2, exclude_if=lambda value: not value
+    )
 
 
 @runtime_checkable

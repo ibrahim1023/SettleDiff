@@ -86,6 +86,10 @@ _CHECK_NAMES = frozenset(
         "recipient",
         "service_execution",
         "settlement",
+        "signed_offer",
+        "signed_receipt",
+        "signed_receipt_continuity",
+        "signed_receipt_transaction",
     }
 )
 _PROVIDERS = frozenset({"contextdev", "hyperfusion", "perflo"})

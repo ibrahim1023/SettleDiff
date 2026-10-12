@@ -70,6 +70,7 @@ from settlediff.domain.models import (
     ExplanationRecord,
     ExplanationSource,
     MachineReport,
+    ProviderSignatureEvidence,
     PurchaseIntent,
     SettlementProfile,
 )
@@ -250,6 +251,8 @@ class LiveEvidenceCollector:
         self._execution: EvidenceArtifact | None = None
         self._receipt: EvidenceArtifact | None = None
         self._provider_chain: EvidenceArtifact | None = None
+        self._provider_signatures: tuple[ProviderSignatureEvidence, ...] = ()
+        self._signature_artifacts: dict[str, EvidenceArtifact] = {}
         self._activity: EvidenceArtifact | None = None
         self._activity_evidence_class = EvidenceClass.PROVIDER_ASSERTION
         self._context: EvidenceArtifact | None = None
@@ -285,7 +288,7 @@ class LiveEvidenceCollector:
             if artifact is not None and artifact.artifact_id not in artifact_ids:
                 artifacts.append(artifact)
                 artifact_ids.add(artifact.artifact_id)
-        return tuple(artifacts)
+        return tuple(artifacts) + tuple(self._signature_artifacts.values())
 
     async def preflight(self, request: PaidExecutionRequest) -> None:
         with self._span(
@@ -305,6 +308,7 @@ class LiveEvidenceCollector:
             adapter_id=self._adapter.adapter_id,
         )
         contract = normalize_contract(self._contract)
+        self._record_signatures(contract_evidence.provider_signatures)
         if contract.price is None:
             raise RunTransitionError("payment terms require a quoted price before authorization")
         if contract.price.unit != request.budget.unit:
@@ -349,6 +353,8 @@ class LiveEvidenceCollector:
                 terms_payload["settlement_profile_digest"] = sha256_digest(
                     profile.model_dump(mode="json")
                 )
+                if contract.signed_offer_digest is not None:
+                    terms_payload["signed_offer_digest"] = contract.signed_offer_digest
             self._payment_terms = PaymentTerms.model_validate(terms_payload)
         else:
             _validate_catalog_contract(contract, request)
@@ -465,6 +471,7 @@ class LiveEvidenceCollector:
             )
         authorization.require_exact_payment_terms(self.payment_terms)
         execution_evidence = await self._adapter.execute_once(authorization, request, self._quote)
+        self._record_signatures(execution_evidence.provider_signatures)
         self._execution = _adapter_artifact(
             request.run_id,
             execution_evidence,
@@ -646,6 +653,7 @@ class LiveEvidenceCollector:
             receipt=receipt,
             delivery=delivery,
             independent=observation,
+            provider_signatures=self._provider_signatures,
         )
         report = MachineReport(
             schema_version=4,
@@ -662,6 +670,7 @@ class LiveEvidenceCollector:
             provider_activity=provider_activity,
             independent_settlement=observation,
             settlement_comparison=settlement_comparison,
+            provider_signatures=self._provider_signatures,
         )
         if execution is not None:
             await self._collect_context(request, execution)
@@ -675,6 +684,20 @@ class LiveEvidenceCollector:
             ),
         )
         return report.model_copy(update={"retry": retry})
+
+    def _record_signatures(self, signatures: tuple[ProviderSignatureEvidence, ...]) -> None:
+        if not signatures:
+            return
+        self._provider_signatures = signatures
+        for item in signatures:
+            self._signature_artifacts[item.kind] = EvidenceArtifact(
+                artifact_id=item.evidence_ids[0],
+                artifact_type=ArtifactType.CONTEXT_EVIDENCE,
+                source=f"{self._adapter.adapter_id}.signed_{item.kind}",
+                collected_at=item.observed_at,
+                redacted=True,
+                data=cast(JsonValue, item.model_dump(mode="json")),
+            )
 
     async def _collect_context(
         self, request: PaidExecutionRequest, execution: ExecutionRecord
