@@ -13,5 +13,6 @@
 | [0009](0009-defer-facilitator-comparison.md) | Defer facilitator comparison pending per-run provenance | Accepted |
 | [0010](0010-independent-settlement-observation.md) | Independent settlement observation | Accepted |
 | [0011](0011-perflo-provider-chain-corroboration.md) | Perflo provider-referenced chain corroboration | Accepted |
+| [0012](0012-signed-provider-evidence.md) | Signed provider evidence with ephemeral signatures | Accepted |
 
 New decisions use the next four-digit number. ADRs are immutable after acceptance except for typo/link corrections; changed decisions supersede earlier records.

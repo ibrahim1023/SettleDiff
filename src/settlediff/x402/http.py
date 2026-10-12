@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Protocol, cast
+from typing import Protocol, cast, runtime_checkable
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from settlediff.application.auth import PaidExecutionRequest
 from settlediff.domain.models import UtcDatetime
+from settlediff.x402.signed import SellerIdentityEvidence, did_for_resource
 from settlediff.x402.urls import is_safe_x402_target
 
 
@@ -31,6 +33,11 @@ class X402ResourcePort(Protocol):
     async def challenge(self, request: PaidExecutionRequest) -> X402ResourceResponse: ...
 
 
+@runtime_checkable
+class SellerIdentityPort(Protocol):
+    async def seller_identity(self, resource_url: str, kid: str) -> SellerIdentityEvidence: ...
+
+
 class X402ResourceClient:
     def __init__(
         self,
@@ -44,6 +51,35 @@ class X402ResourceClient:
         self._client = client
         self._timeout_seconds = timeout_seconds
         self._max_response_bytes = max_response_bytes
+
+    async def seller_identity(self, resource_url: str, kid: str) -> SellerIdentityEvidence:
+        try:
+            did = did_for_resource(resource_url)
+            if not kid.startswith(did + "#"):
+                raise ValueError("seller key does not match the authorized resource origin")
+            parts = urlsplit(resource_url)
+            url = urlunsplit((parts.scheme, parts.netloc, "/.well-known/did.json", "", ""))
+            async with self._client.stream(
+                "GET",
+                url,
+                timeout=self._timeout_seconds,
+                follow_redirects=False,
+            ) as response:
+                if response.status_code != 200:
+                    raise ValueError("seller identity was not returned")
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > 16384:
+                        raise ValueError("seller identity exceeds its bound")
+            document: object = json.loads(content)
+            if not isinstance(document, dict):
+                raise ValueError("seller identity is not an object")
+            return SellerIdentityEvidence.capture(
+                did, kid, cast(dict[str, JsonValue], document), observed_at=datetime.now(UTC)
+            )
+        except (httpx.HTTPError, ValueError, RecursionError) as error:
+            raise X402ResourceError("seller identity could not be captured safely") from error
 
     async def challenge(self, request: PaidExecutionRequest) -> X402ResourceResponse:
         if not is_safe_x402_target(request.target):
