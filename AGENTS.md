@@ -29,3 +29,12 @@ Avoid AI slop throughout development. Do not add speculative abstractions, dupli
 ## Commands
 
 Use `uv run` for Python tools. Use exact test paths while iterating, then run the full offline gate. Live checks require explicit opt-in environment flags and must never run in ordinary CI.
+
+## Agent skills
+
+For skill selection, read [ask-matt](skills/matt-pocock/ask-matt/SKILL.md).
+When a user names an installed Matt Pocock skill, read `skills/matt-pocock/<name>/SKILL.md`;
+use the [project skill index](skills/matt-pocock/README.md) for task triggers and supporting files.
+This routing applies to Codex and Devin. Repository authorization, evidence boundaries,
+ADRs, and verification loops govern every skill. Skills do not authorize paid calls,
+external messages, or changes to financial findings.
