@@ -115,3 +115,20 @@ def test_promotion_rejects_manifest_path_escape(tmp_path: Path) -> None:
     (fixture / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="artifact filename"):
         promote_case(bundle, fixture, CASES[1], tmp_path / "promoted", reviewed=True)
+
+
+@pytest.mark.parametrize("omitted", ["contract.json", "execution.json", "activity.json"])
+def test_promotion_refuses_manifest_missing_required_replay_artifact(
+    tmp_path: Path,
+    omitted: str,
+) -> None:
+    bundle = failure_bundle(tmp_path)
+    fixture = tmp_path / "fixture"
+    shutil.copytree(Path("fixtures/missing-activity"), fixture)
+    manifest = json.loads((fixture / "manifest.json").read_text())
+    manifest["artifacts"].remove(omitted)
+    (fixture / "manifest.json").write_text(json.dumps(manifest))
+    output = tmp_path / "promoted"
+    with pytest.raises(ValueError, match="required replay artifacts"):
+        promote_case(bundle, fixture, CASES[1], output, reviewed=True)
+    assert not output.exists()

@@ -67,6 +67,8 @@ def promote_case(
     manifest = FixtureManifest.model_validate_json((fixture / "manifest.json").read_text())
     if any(name not in _ARTIFACT_FILES for name in manifest.artifacts):
         raise ValueError("fixture declares an unsupported artifact filename")
+    if not {"contract.json", "execution.json", "activity.json"}.issubset(manifest.artifacts):
+        raise ValueError("fixture manifest omits required replay artifacts")
     filenames = {"manifest.json", "intent.json", *manifest.artifacts}
     payloads: dict[str, str] = {}
     for name in sorted(filenames):
