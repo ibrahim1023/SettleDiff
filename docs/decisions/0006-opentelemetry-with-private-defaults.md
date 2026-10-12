@@ -13,6 +13,11 @@ Emit structured local logs and OpenTelemetry-compatible spans behind a telemetry
 
 PydanticAI instrumentation uses current OpenTelemetry GenAI conventions where stable enough; SettleDiff-specific financial spans use the `settlediff.*` namespace.
 
+`SETTLEDIFF_OTLP_ENDPOINT` configures the HTTP collector base URL. The telemetry
+module derives `/v1/traces` and `/v1/metrics` separately; a legacy URL ending in
+either standard signal path is normalized back to that base. Custom collector
+prefixes are retained. Tests intercept HTTP export from the real exporters.
+
 ## Consequences
 
 - Operators can choose any OTLP-compatible backend.

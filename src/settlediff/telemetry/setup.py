@@ -401,11 +401,19 @@ def configure_telemetry(
 
     resource = Resource.create({"service.name": "settlediff"})
     otlp_endpoint = settings.otlp_endpoint.strip() if settings.otlp_endpoint else None
+    if otlp_endpoint:
+        otlp_endpoint = otlp_endpoint.rstrip("/")
+        for suffix in ("/v1/traces", "/v1/metrics"):
+            if otlp_endpoint.endswith(suffix):
+                otlp_endpoint = otlp_endpoint.removesuffix(suffix)
+                break
     provider = TracerProvider(resource=resource)
     if span_exporter is not None:
         provider.add_span_processor(SimpleSpanProcessor(span_exporter))
     elif otlp_endpoint:
-        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=otlp_endpoint)))
+        provider.add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{otlp_endpoint}/v1/traces"))
+        )
 
     instrumentation = InstrumentationSettings(
         tracer_provider=provider,
@@ -419,7 +427,7 @@ def configure_telemetry(
     if meter_provider is None:
         if metric_reader is None and otlp_endpoint:
             metric_reader = PeriodicExportingMetricReader(
-                OTLPMetricExporter(endpoint=otlp_endpoint)
+                OTLPMetricExporter(endpoint=f"{otlp_endpoint}/v1/metrics")
             )
         readers = (metric_reader,) if metric_reader is not None else ()
         meter_provider = MeterProvider(metric_readers=readers, resource=resource)

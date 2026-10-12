@@ -5,7 +5,7 @@ import logging
 from collections.abc import Sequence
 from contextlib import suppress
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
@@ -110,6 +110,41 @@ def test_pydantic_ai_instrumentation_disables_content_capture() -> None:
     assert telemetry.instrumentation.include_binary_content is False
     assert telemetry.instrumentation.event_mode == "attributes"
     telemetry.shutdown()
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://localhost:4318",
+        "http://localhost:4318/",
+        "http://localhost:4318/v1/traces",
+    ],
+)
+def test_otlp_signals_use_distinct_standard_http_routes(endpoint: str) -> None:
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    settings = configured_settings().model_copy(update={"otlp_endpoint": endpoint})
+    with (
+        patch(
+            "requests.Session.post", return_value=Mock(status_code=200, content=b"", ok=True)
+        ) as post,
+        patch("settlediff.telemetry.setup.OTLPSpanExporter", wraps=OTLPSpanExporter) as spans,
+        patch("settlediff.telemetry.setup.OTLPMetricExporter", wraps=OTLPMetricExporter) as metrics,
+    ):
+        telemetry = configure_telemetry(settings, log_stream=io.StringIO())
+        try:
+            assert spans.call_args.kwargs["endpoint"] == "http://localhost:4318/v1/traces"
+            assert metrics.call_args.kwargs["endpoint"] == "http://localhost:4318/v1/metrics"
+            with telemetry.span("settlediff.run", {"component": "application"}):
+                telemetry.counter("settlediff.runs", {"mode": "replay", "verdict": "VERIFIED"})
+            telemetry.force_flush()
+            assert {call.kwargs["url"] for call in post.call_args_list} == {
+                "http://localhost:4318/v1/traces",
+                "http://localhost:4318/v1/metrics",
+            }
+        finally:
+            telemetry.shutdown()
 
 
 def test_metric_canary_is_rejected_without_dropping_useful_counters() -> None:
