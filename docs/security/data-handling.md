@@ -13,7 +13,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Context.dev live evidence service;
 - local SQLite/filesystem;
 - browser rendering;
-- optional OpenTelemetry exporter.
+- authenticated OpenTelemetry export required for live investigations; offline tests use in-memory exporters.
 
 ## Required controls
 

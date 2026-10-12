@@ -1,17 +1,21 @@
-# Observability and optional Logfire export
+# Observability and required live export
 
 Operational telemetry records how an investigation ran: steps, duration, tool/model
 usage, errors, and check outcomes. Financial conclusions remain in the deterministic
 machine report. The [eval guide](evals.md) explains how behavior is tested and how a
 reviewed failure becomes a regression case.
 
-## Local defaults
+## Live requirement and offline workflows
 
 The investigation path emits redacted structured JSON logs and OpenTelemetry spans.
-Export is off until `SETTLEDIFF_OTLP_ENDPOINT` is configured. Logfire is supported
-through the existing OTLP HTTP exporters; no Logfire SDK or hosted account is needed
-for local operation or CI. Structured logs remain local; traces and metrics are the
-signals exported by this integration.
+Every live `settlediff run` requires `SETTLEDIFF_OTLP_ENDPOINT` and
+`SETTLEDIFF_OTLP_AUTHORIZATION` before provider/signer probing or payment. Configured
+live runs export automatically; there is no live opt-out. Logfire uses the existing
+OTLP HTTP exporters, without its SDK. Fixture replay, local report inspection, evals,
+and CI remain offline and need no hosted account. See
+[ADR 0013](../decisions/0013-required-live-observability.md), which supersedes the
+optional-export policy in ADR 0006 for live investigations. Structured logs remain
+local; traces and metrics are the signals exported by this integration.
 
 PydanticAI prompt, response, tool, and binary-content capture are disabled. Custom
 diagnostic attributes are allowlisted; configured secrets are scrubbed, local run
@@ -41,9 +45,9 @@ as a secret setting, requires an explicit endpoint, and is excluded from diagnos
 The telemetry module appends `/v1/traces` and `/v1/metrics`. Use an ingestion base
 URL rather than the dashboard URL or public management API URL.
 
-Other OTLP HTTP collectors can use the same endpoint setting and, when needed,
-their Authorization header value. Remote endpoints require HTTPS; loopback HTTP
-is supported for local collectors.
+Other authenticated OTLP HTTP collectors can use the same endpoint and
+Authorization header settings. Live runs require both. Remote endpoints require
+HTTPS; loopback HTTP is supported for local collectors.
 
 ## Test before live investigation
 
@@ -69,8 +73,11 @@ RPC, or payment call. In Logfire, filter the service to `settlediff` and inspect
 The CLI reports export requested; exporter flushing alone does not confirm that
 the destination accepted or indexed the data. Confirm it in the project UI.
 
-After the trial, configured live investigations use the same private-default export.
-Remove the endpoint and authorization values to return to local-only diagnostics.
+After the trial, live investigations use the same privacy-preserving export
+automatically. Removing either setting blocks live investigations. Offline workflows
+continue to work. Exporter delivery failures after initialization remain best effort
+so they cannot interrupt evidence recovery or affect financial findings; required
+configuration does not guarantee destination availability or dashboard indexing.
 Do not add hosted export to default tests; the integration tests intercept HTTP
 from the real exporters and check authentication, signal routes, and redaction.
 

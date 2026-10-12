@@ -28,4 +28,4 @@ Resolved choices are recorded alongside the remaining gates so implemented testn
 | Deterministic ownership | PydanticAI/Hyperfusion may select and explain evidence; only deterministic code creates findings and verdicts. | ADRs and architecture tests |
 | Settlement payer policy | Payer validation is mandatory; `REQUIRED` is the only policy and missing payer evidence cannot confirm settlement. | ADR 0010 |
 
-No input is required for the single-agent boundary, fixture-first tests, optional OpenTelemetry, SQLite, or the server-rendered loopback UI; those choices are accepted in the existing ADRs.
+No input is required for the single-agent boundary, fixture-first tests, required live telemetry export with offline test isolation, SQLite, or the server-rendered loopback UI; those choices are accepted in the existing ADRs.

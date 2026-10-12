@@ -7,7 +7,7 @@ The next useful investment is connecting observed failures to runnable offline c
 ## What exists
 
 `src/settlediff/telemetry/setup.py` provides JSON logs, OpenTelemetry spans, approved
-counters and histograms, and optional OTLP export. PydanticAI content and binary
+counters and histograms, and OTLP export required for live investigations. PydanticAI content and binary
 capture are disabled. Attribute allowlists, secret filtering, salted correlation
 identifiers, and bounded metric labels protect exported diagnostics. In-memory tests
 cover redaction, metric contracts, and exporter failures without an external backend.
@@ -43,12 +43,13 @@ calibrated subjective graders remain future work.
 
 ## Backend decision
 
-Keep local diagnostics as the default. Consider an OTLP backend when repeated live
-investigations make cross-run latency, provider errors, or model usage difficult to
-inspect locally. Evaluate backend compatibility and retention before enabling export.
-Logfire is now supported as an optional authenticated OTLP destination. The
-[observability guide](observability.md) describes configuration and a synthetic trial;
-no hosted dependency is introduced into the offline gate.
+Live investigations now require authenticated OTLP export; the configured backend
+is Logfire. Missing endpoint or authorization stops live preflight before provider
+probing or payment. [ADR 0013](../decisions/0013-required-live-observability.md)
+supersedes the earlier optional-export decision. The
+[observability guide](observability.md) describes configuration and a synthetic trial.
+Fixture replay and the offline gate retain in-memory/local diagnostics and require
+no hosted dependency.
 `SETTLEDIFF_OTLP_ENDPOINT` now denotes the HTTP collector base URL. The telemetry
 module derives separate `/v1/traces` and `/v1/metrics` routes, as defined in the
 [OTLP specification](https://opentelemetry.io/docs/specs/otlp/#otlphttp-request).

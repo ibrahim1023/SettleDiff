@@ -221,8 +221,9 @@ A local Python application coordinates a Perflo catalog adapter or x402 adapter,
 strict canonical evidence models, deterministic matching/checks, and redacted
 run records with source-attributed timelines in SQLite. A bounded PydanticAI
 investigator may select and explain evidence without determining financial truth.
-Typer provides the CLI, FastAPI serves a loopback-only UI, and optional
-OpenTelemetry export keeps model content capture disabled. Reports and bundles
+Typer provides the CLI, FastAPI serves a loopback-only UI, and required
+OpenTelemetry export for live investigations keeps model content capture disabled.
+Reports and bundles
 preserve provider assertions separately from
 qualifying external observations. Public reports use a masked allowlist, not
 an unfiltered copy of local evidence.
@@ -260,11 +261,15 @@ source digest. Promoted cases automatically join the existing offline CI gate.
 ## Observability and Logfire
 
 SettleDiff records investigation steps, latency, errors, and usage through redacted
-local logs, OpenTelemetry spans, and bounded metrics. **Logfire export is optional**
-and uses the existing OTLP HTTP exporters. Local operation and CI need no hosted account.
+local logs, OpenTelemetry spans, and bounded metrics. **Live investigations require
+authenticated telemetry export**, using the existing
+OTLP HTTP exporters and your configured Logfire project. Missing endpoint or token
+stops `run` before provider probing or payment. Fixture replay, local report
+inspection, evals, and CI need no hosted account.
 Reports continue to derive financial conclusions from deterministic evidence checks.
 
-To enable it, add your project's ingestion base URL and write token to the ignored `.env`:
+For live investigations, put your project's ingestion base URL and write token in
+the ignored `.env`:
 
 ```dotenv
 SETTLEDIFF_OTLP_ENDPOINT=https://logfire-us.pydantic.dev
@@ -284,7 +289,9 @@ uv run python scripts/observability_trial.py --export
 
 Confirm the synthetic trace and metrics under service `settlediff` in your project
 before using export for live investigations. The [observability guide](docs/development/observability.md)
-explains authentication, regions, privacy, verification, and disabling export.
+explains authentication, regions, privacy, and verification. There is no live
+export opt-out; the offline synthetic trial remains offline by default. Exporter
+outages never change a verdict or trigger a payment retry.
 
 ## Known limitations
 
