@@ -551,7 +551,7 @@ class ExplanationRecord(CanonicalModel):
     source: ExplanationSource
     tool_calls: int = Field(ge=0, le=25)
     model_requests: int = Field(default=0, ge=0, le=10)
-    input_tokens: int = Field(default=0, ge=0, le=100_000)
-    output_tokens: int = Field(default=0, ge=0, le=10_000)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
     model_cost: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("1000"))
     rejected_output: str | None = Field(default=None, min_length=1, max_length=2048)

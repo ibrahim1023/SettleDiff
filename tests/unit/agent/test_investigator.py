@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RequestUsage
 
 from settlediff.agent.investigator import (
     InvestigationState,
@@ -159,3 +162,60 @@ async def test_untyped_runtime_error_is_not_hidden_by_fallback() -> None:
             InvestigationDependencies(evidence, evidence, evidence),
             BrokenTestModel(),
         )
+
+
+@pytest.mark.asyncio
+async def test_limit_fallback_preserves_completed_model_and_tool_usage() -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+
+    def looping_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart("get_activity", {})],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    result = await investigate(
+        InvestigationState(report=report, artifact_ids=frozenset({"fixture:evidence"})),
+        InvestigationDependencies(evidence, evidence, evidence),
+        FunctionModel(looping_model),
+    )
+
+    assert result.used_fallback
+    assert result.model_requests == 4
+    assert result.tool_calls == 4
+    assert result.input_tokens == 40
+    assert result.output_tokens == 20
+
+
+@pytest.mark.asyncio
+async def test_token_overrun_returns_fallback_with_truthful_observed_usage() -> None:
+    report = replay_fixture(Path("fixtures/clean-success"))
+
+    def oversized_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart("get_activity", {})],
+            usage=RequestUsage(input_tokens=100_001, output_tokens=10_001),
+        )
+
+    result = await investigate(
+        InvestigationState(report=report, artifact_ids=frozenset({"fixture:evidence"})),
+        InvestigationDependencies(evidence, evidence, evidence),
+        FunctionModel(oversized_model),
+    )
+    assert result.used_fallback
+    assert result.model_requests == 1
+    assert result.input_tokens == 100_001
+    assert result.output_tokens == 10_001
+    assert result.explanation.deterministic_verdict is report.verdict
+
+    from settlediff.domain.models import ExplanationRecord, ExplanationSource
+
+    record = ExplanationRecord(
+        explanation=result.explanation,
+        source=ExplanationSource.FALLBACK,
+        tool_calls=result.tool_calls,
+        model_requests=result.model_requests,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+    )
+    assert record.input_tokens == 100_001

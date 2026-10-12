@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_ai import Agent, RunContext, UsageLimits
 from pydantic_ai.exceptions import AgentRunError
 from pydantic_ai.models import Model
+from pydantic_ai.usage import RunUsage
 
 from settlediff.agent.grounding import (
     ExplanationGroundingError,
@@ -33,8 +34,8 @@ class InvestigationResult(BaseModel):
     tool_calls: int = Field(ge=0, le=25)
     used_fallback: bool
     model_requests: int = Field(default=0, ge=0, le=10)
-    input_tokens: int = Field(default=0, ge=0, le=100_000)
-    output_tokens: int = Field(default=0, ge=0, le=10_000)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
     model_cost: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("1000"))
     rejected_output: str | None = Field(default=None, min_length=1, max_length=2048)
 
@@ -87,7 +88,8 @@ def build_investigator(
         output_type=_ProviderInvestigationResult,
         instructions=(
             "Select evidence needed to explain the already-computed report. "
-            "You cannot alter findings or verdicts. Cite only tool artifact IDs."
+            "You cannot alter findings or verdicts. Cite only tool artifact IDs. "
+            "A null artifact ID means no source artifact is available and cannot be cited."
         ),
         retries=0,
     )
@@ -133,11 +135,13 @@ async def investigate(
     """Run with fixed request/tool/token limits and a deterministic fallback."""
     agent = build_investigator(model)
     prompt = build_investigation_prompt(state.report)
+    usage = RunUsage()
     try:
         async with asyncio.timeout(timeout_seconds):
             response = await agent.run(
                 prompt,
                 deps=deps,
+                usage=usage,
                 usage_limits=UsageLimits(
                     request_limit=INVESTIGATION_REQUEST_LIMIT,
                     tool_calls_limit=INVESTIGATION_TOOL_CALL_LIMIT,
@@ -148,8 +152,11 @@ async def investigate(
     except (TimeoutError, AgentRunError):
         return InvestigationResult(
             explanation=fallback_explanation(state.report, set(state.artifact_ids)),
-            tool_calls=0,
+            tool_calls=usage.tool_calls,
             used_fallback=True,
+            model_requests=usage.requests,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
         )
 
     usage = response.usage
