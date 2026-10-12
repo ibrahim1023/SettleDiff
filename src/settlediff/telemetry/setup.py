@@ -1,4 +1,4 @@
-"""Redacted structured logs and optional OpenTelemetry export."""
+"""Redacted structured logs and privacy-preserving OpenTelemetry export."""
 
 from __future__ import annotations
 
@@ -399,7 +399,7 @@ def configure_telemetry(
     metric_reader: MetricReader | None = None,
     log_stream: IO[str] | None = None,
 ) -> TelemetryRuntime:
-    """Configure local JSON diagnostics and optional private OTLP export."""
+    """Configure diagnostics and OTLP export; offline callers can inject memory exporters."""
     if meter_provider is not None and metric_reader is not None:
         raise ValueError("inject either a meter provider or a metric reader, not both")
 

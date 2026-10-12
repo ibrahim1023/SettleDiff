@@ -696,6 +696,7 @@ def run(
     try:
         settings = Settings()
         contextdev_config = settings.require_contextdev()
+        settings.require_observability()
         if rail is PaymentRail.X402:
             x402_config = settings.require_x402()
             if not allow_testnet or not x402_config.testnet_enabled:

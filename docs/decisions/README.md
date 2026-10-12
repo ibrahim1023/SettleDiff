@@ -14,5 +14,6 @@
 | [0010](0010-independent-settlement-observation.md) | Independent settlement observation | Accepted |
 | [0011](0011-perflo-provider-chain-corroboration.md) | Perflo provider-referenced chain corroboration | Accepted |
 | [0012](0012-signed-provider-evidence.md) | Signed provider evidence with ephemeral signatures | Accepted |
+| [0013](0013-required-live-observability.md) | Required export for live investigations (supersedes 0006 export policy) | Accepted |
 
 New decisions use the next four-digit number. ADRs are immutable after acceptance except for typo/link corrections; changed decisions supersede earlier records.

@@ -189,3 +189,24 @@ def test_contextdev_base_url_can_be_replaced_for_contract_testing() -> None:
         contextdev_api_key=SecretStr("syn-key"),
     ).require_contextdev()
     assert config.base_url == "https://contextdev.example.invalid/v1"
+
+
+@pytest.mark.parametrize("missing", ["endpoint", "authorization"])
+def test_live_observability_requires_endpoint_and_authorization(missing: str) -> None:
+    values: dict[str, object] = {
+        "otlp_endpoint": "https://otel.example.invalid",
+        "otlp_authorization": SecretStr("syn-write-token"),
+    }
+    if missing == "endpoint":
+        values = {}
+    else:
+        values.pop("otlp_authorization")
+    with pytest.raises(ValueError, match="Observability.*required for live investigations"):
+        offline_settings(**values).require_observability()
+
+
+def test_live_observability_accepts_complete_configuration() -> None:
+    offline_settings(
+        otlp_endpoint="https://otel.example.invalid",
+        otlp_authorization=SecretStr("syn-write-token"),
+    ).require_observability()

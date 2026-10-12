@@ -154,6 +154,14 @@ class Settings(BaseSettings):
             raise ValueError("OTLP endpoint requires HTTPS unless it is loopback HTTP")
         return value
 
+    def require_observability(self) -> None:
+        """Refuse live investigation without authenticated telemetry export."""
+        if not (self.otlp_endpoint or "").strip() or self.otlp_authorization is None:
+            raise ValueError(
+                "Observability export is required for live investigations: configure "
+                "SETTLEDIFF_OTLP_ENDPOINT and SETTLEDIFF_OTLP_AUTHORIZATION"
+            )
+
     def require_contextdev(self) -> ContextDevConfig:
         """Return the Context.dev configuration required by a live investigation."""
         api_key = self.contextdev_api_key

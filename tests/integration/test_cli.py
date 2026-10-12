@@ -11,6 +11,8 @@ from typing import cast
 
 import pytest
 from fastapi import FastAPI
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import JsonValue, SecretStr
 from pydantic_ai.messages import (
     ModelMessage,
@@ -65,10 +67,21 @@ from settlediff.perflo.adapter import PerfloAdapter, PerfloClientPort
 from settlediff.perflo.client import PerfloClient, PerfloCliVersion, PerfloVersionError
 from settlediff.perflo.parser import PerfloSuccessEnvelope
 from settlediff.storage.sqlite import SQLiteReportRepository
+from settlediff.telemetry.setup import TelemetryRuntime, configure_telemetry
 from settlediff.x402.adapter import X402Adapter
 from settlediff.x402.client import X402ClientError, X402SignerMetadata
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def offline_cli_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
+    def in_memory(settings: Settings) -> TelemetryRuntime:
+        return configure_telemetry(
+            settings, span_exporter=InMemorySpanExporter(), metric_reader=InMemoryMetricReader()
+        )
+
+    monkeypatch.setattr("settlediff.cli.configure_telemetry", in_memory)
 
 
 def isolated_settings() -> Settings:
@@ -84,6 +97,8 @@ def live_settings() -> Settings:
     return Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue]
         contextdev_api_key=SecretStr("syn-contextdev-key"),
+        otlp_endpoint="https://otel.example.invalid",
+        otlp_authorization=SecretStr("syn-write-token"),
     )
 
 
@@ -91,6 +106,8 @@ def x402_live_settings(*, enabled: bool = True) -> Settings:
     return Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue]
         contextdev_api_key=SecretStr("syn-contextdev-key"),
+        otlp_endpoint="https://otel.example.invalid",
+        otlp_authorization=SecretStr("syn-write-token"),
         x402_signer_command=(sys.executable,),
         x402_rpc_url="https://rpc.example.invalid",
         x402_testnet_enabled=enabled,
@@ -2610,6 +2627,8 @@ def test_perflo_credit_authorization_live_shape_builds_provider_only_report(
                 _env_file=None,  # pyright: ignore[reportCallIssue]
                 contextdev_api_key=SecretStr("syn-contextdev-key"),
                 perflo_rpc_url=SecretStr("https://rpc.example.invalid"),
+                otlp_endpoint="https://otel.example.invalid",
+                otlp_authorization=SecretStr("syn-write-token"),
             )
 
         class FakeRpc:
@@ -2714,3 +2733,30 @@ def test_perflo_credit_authorization_live_shape_builds_provider_only_report(
         ],
         ["activity", "--json"],
     ]
+
+
+@pytest.mark.parametrize("rail", ["perflo", "x402"])
+def test_live_run_requires_observability_before_provider_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    rail: str,
+) -> None:
+    def settings_without_export() -> Settings:
+        return Settings(
+            _env_file=None,  # pyright: ignore[reportCallIssue]
+            contextdev_api_key=SecretStr("syn-contextdev-key"),
+        )
+
+    async def forbidden_probe() -> None:
+        raise AssertionError("provider must not be probed without observability")
+
+    monkeypatch.setattr("settlediff.cli.Settings", settings_without_export)
+    monkeypatch.setattr("settlediff.cli._doctor_perflo", forbidden_probe)
+    args = (
+        ["--slug", "synthetic-weather"]
+        if rail == "perflo"
+        else ["--url", "https://example.invalid/paid", "--method", "GET"]
+    )
+    result = runner.invoke(app, ["run", "--rail", rail, *args, "--budget", "1"])
+    assert result.exit_code == 2
+    assert "Observability export is required for live investigations" in result.stderr
+    assert "Confirm" not in result.stdout
