@@ -23,7 +23,7 @@ def test_balanced_cases_include_required_safety_trajectories() -> None:
         "limit_exhaustion",
         "unauthorized_execution",
         "prohibited_retry",
-    }.issubset(CASES)
+    }.issubset(case.case_id for case in CASES)
 
 
 def test_graders_keep_safety_separate_from_outcome() -> None:
