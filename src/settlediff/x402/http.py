@@ -12,7 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from settlediff.application.auth import PaidExecutionRequest
 from settlediff.domain.models import UtcDatetime
-from settlediff.x402.signed import SellerIdentityEvidence, did_for_resource
+from settlediff.x402.signed import (
+    SellerIdentityEvidence,
+    did_for_resource,
+    parse_seller_json_object,
+)
 from settlediff.x402.urls import is_safe_x402_target
 
 
@@ -72,12 +76,8 @@ class X402ResourceClient:
                     content.extend(chunk)
                     if len(content) > 16384:
                         raise ValueError("seller identity exceeds its bound")
-            document: object = json.loads(content)
-            if not isinstance(document, dict):
-                raise ValueError("seller identity is not an object")
-            return SellerIdentityEvidence.capture(
-                did, kid, cast(dict[str, JsonValue], document), observed_at=datetime.now(UTC)
-            )
+            document = parse_seller_json_object(content)
+            return SellerIdentityEvidence.capture(did, kid, document, observed_at=datetime.now(UTC))
         except (httpx.HTTPError, ValueError, RecursionError) as error:
             raise X402ResourceError("seller identity could not be captured safely") from error
 
@@ -93,6 +93,7 @@ class X402ResourceClient:
                 request.target,
                 json=request.body if request.method == "POST" else None,
                 timeout=self._timeout_seconds,
+                follow_redirects=False,
             ) as response:
                 content = bytearray()
                 async for chunk in response.aiter_bytes():

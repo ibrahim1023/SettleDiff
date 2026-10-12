@@ -292,3 +292,53 @@ def test_available_transaction_contradiction_survives_missing_other_source(missi
     )
     assert assessment.diagnostic == "SIGNED_RECEIPT_TRANSACTION_DIFF"
     assert assessment.correlation == "CONTRADICTED"
+
+
+@pytest.mark.parametrize("location", ["header", "payload"])
+def test_duplicate_signed_json_keys_are_unverifiable(location: str) -> None:
+    private = Ed25519PrivateKey.generate()
+    header = json.dumps({"alg": "EdDSA", "kid": KID})
+    payload = json.dumps(_offer())
+    if location == "header":
+        header = '{"alg":"unsupported",' + header[1:]
+    else:
+        payload = '{"amount":"9999",' + payload[1:]
+    message = f"{_b64(header.encode())}.{_b64(payload.encode())}"
+    jws = f"{message}.{_b64(private.sign(message.encode()))}"
+    result = verify_seller_jws(jws, _identity(private))
+    assert result.signature_validity is SignatureValidity.UNVERIFIABLE
+
+
+@pytest.mark.parametrize("transaction", [None, 42, True, "", [], {}])
+def test_present_malformed_receipt_transaction_is_not_optional_omission(
+    transaction: object,
+) -> None:
+    private = Ed25519PrivateKey.generate()
+    payload = {
+        "version": 1,
+        "resourceUrl": "https://seller.example/data",
+        "network": "eip155:84532",
+        "payer": _terms().payer,
+        "issuedAt": int(NOW.timestamp()),
+        "transaction": transaction,
+    }
+    result = assess_signed_receipt(
+        _signed(payload, private),
+        _identity(private),
+        _terms(),
+        provider_reference=None,
+        observer_reference=None,
+    )
+    assert result.diagnostic == "SIGNED_RECEIPT_MALFORMED"
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e9999"])
+def test_nonfinite_signed_json_numbers_are_unverifiable(number: str) -> None:
+    private = Ed25519PrivateKey.generate()
+    header = _b64(json.dumps({"alg": "EdDSA", "kid": KID}).encode())
+    payload = '{"extra":' + number + "," + json.dumps(_offer())[1:]
+    message = f"{header}.{_b64(payload.encode())}"
+    result = verify_seller_jws(
+        f"{message}.{_b64(private.sign(message.encode()))}", _identity(private)
+    )
+    assert result.signature_validity is SignatureValidity.UNVERIFIABLE

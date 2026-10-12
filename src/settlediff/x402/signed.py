@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import math
 import re
 from datetime import datetime
 from enum import StrEnum
@@ -173,6 +174,33 @@ def _base64url(part: str, *, max_bytes: int) -> bytes:
     return decoded
 
 
+def _unique_seller_members(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
+    document = dict(pairs)
+    if len(document) != len(pairs):
+        raise ValueError("seller JSON contains duplicate object members")
+    return document
+
+
+def _finite_seller_number(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("seller JSON contains a nonfinite number")
+    return number
+
+
+def parse_seller_json_object(content: bytes | bytearray) -> dict[str, JsonValue]:
+    """Decode bounded seller evidence without ambiguous members or nonfinite numbers."""
+    value: object = json.loads(
+        content,
+        object_pairs_hook=_unique_seller_members,
+        parse_float=_finite_seller_number,
+        parse_constant=_finite_seller_number,
+    )
+    if not isinstance(value, dict):
+        raise ValueError("seller JSON must be an object")
+    return cast(dict[str, JsonValue], value)
+
+
 def _result(
     validity: SignatureValidity,
     binding: SellerBindingStatus,
@@ -198,23 +226,19 @@ def verify_seller_jws(jws: str, identity: SellerIdentityEvidence) -> SignatureVe
         )
     try:
         header_part, payload_part, signature_part = jws.split(".")
-        header_value: object = json.loads(_base64url(header_part, max_bytes=512))
-        payload_value: object = json.loads(_base64url(payload_part, max_bytes=4096))
+        header_value = parse_seller_json_object(_base64url(header_part, max_bytes=512))
+        payload_value = parse_seller_json_object(_base64url(payload_part, max_bytes=4096))
         signature = _base64url(signature_part, max_bytes=64)
-        if (
-            len(signature) != 64
-            or not isinstance(header_value, dict)
-            or not isinstance(payload_value, dict)
-        ):
+        if len(signature) != 64:
             raise ValueError("JWS structure is malformed")
         header = cast(dict[str, object], header_value)
-        payload = cast(dict[str, JsonValue], payload_value)
+        payload = payload_value
         if set(header) != {"alg", "kid"} or header["alg"] != "EdDSA":
             raise ValueError("unsupported seller JWS header")
         kid = header["kid"]
         if not isinstance(kid, str) or not kid:
             raise ValueError("seller JWS key identifier is malformed")
-    except (ValueError, UnicodeDecodeError, TypeError):
+    except (ValueError, UnicodeDecodeError, TypeError, RecursionError):
         return _result(
             SignatureValidity.UNVERIFIABLE, SellerBindingStatus.UNVERIFIABLE, "SIGNED_JWS_MALFORMED"
         )
@@ -310,9 +334,7 @@ def seller_key_id(jws: str) -> str:
     parts = jws.split(".")
     if len(parts) != 3:
         raise ValueError("seller JWS is malformed")
-    decoded: object = json.loads(_base64url(parts[0], max_bytes=512))
-    if not isinstance(decoded, dict):
-        raise ValueError("seller JWS header must be an object")
+    decoded = parse_seller_json_object(_base64url(parts[0], max_bytes=512))
     header = cast(dict[str, object], decoded)
     if set(header) != {"alg", "kid"} or header.get("alg") != "EdDSA":
         raise ValueError("seller JWS algorithm or header is unsupported")
@@ -416,6 +438,8 @@ def assess_signed_receipt(
         )
         or not isinstance(payload.get("issuedAt"), int)
         or isinstance(payload.get("issuedAt"), bool)
+        or "transaction" in payload
+        and (not isinstance(payload["transaction"], str) or not payload["transaction"])
     ):
         diagnostic = "SIGNED_RECEIPT_MALFORMED"
     elif (

@@ -156,3 +156,21 @@ async def test_resource_client_fails_bounded_without_leaking_response(mode: str)
 
     assert calls == 1
     assert "synthetic secret" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_challenge_never_inherits_redirect_following_from_http_client() -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(value: httpx.Request) -> httpx.Response:
+        calls.append(value)
+        if len(calls) == 1:
+            return httpx.Response(307, headers={"location": "https://other.invalid/paid"})
+        return httpx.Response(402, headers={"PAYMENT-REQUIRED": "syn_header"})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), follow_redirects=True
+    ) as http:
+        observed = await X402ResourceClient(http).challenge(request())
+    assert observed.status_code == 307
+    assert len(calls) == 1

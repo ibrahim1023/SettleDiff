@@ -64,3 +64,15 @@ async def test_invalid_identity_is_refused_without_redirect_or_payment(problem: 
         with pytest.raises(X402ResourceError):
             await X402ResourceClient(client).seller_identity("https://seller.example/data", KID)
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_identity_keys_are_refused() -> None:
+    import json
+
+    content = '{"id":"did:web:other.example",' + json.dumps(DOCUMENT)[1:]
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, content=content))
+    ) as client:
+        with pytest.raises(X402ResourceError):
+            await X402ResourceClient(client).seller_identity("https://seller.example/data", KID)
