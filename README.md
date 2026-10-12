@@ -153,9 +153,15 @@ reference, and external RPC evidence must be usable. A pending or missing
 receipt, malformed evidence, or an unavailable observer cannot establish
 settlement. See [ADR 0010](docs/decisions/0010-independent-settlement-observation.md).
 
-Bounded [signed seller-evidence helpers](docs/development/signed-evidence.md) are
-tested separately on this branch. They are not yet wired into live authorization,
-collection, or verdicts; a provider signature is not independent settlement proof.
+The x402 [signed seller-evidence workflow](docs/development/signed-evidence.md)
+verifies advertised JWS/Ed25519 offers against a same-origin seller identity, binds
+the proof into authorization, and rechecks it before signer launch. After the one
+attempt, deterministic checks assess receipt authenticity, key continuity, terms,
+and transaction correlation. Unsupported or changed offers stop execution; missing
+or contradictory receipts remain explicit findings. Signatures remain provider
+assertions: independent RPC evidence still establishes settlement. Private reports
+and bundles retain assessments and digests, while raw JWS strings remain ephemeral.
+This integration is verified offline; no live signed-service trial is claimed.
 
 ## Evidence from real tests
 

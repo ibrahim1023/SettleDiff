@@ -56,7 +56,10 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Once an external signer process launches, that client instance cannot launch again, including after timeout, overflow, malformed output, or another uncertain failure.
 - SettleDiff configuration contains only a signer command and RPC URL, never a wallet key; both fields are hidden from configuration representations, the potentially credential-bearing RPC URL uses `SecretStr`, secret-bearing command arguments are rejected, and no private-key setting exists.
 - x402 live composition requires explicit rail selection, environment and CLI testnet gates, and the same interactive exact-request authorization. No gate bypasses confirmation.
-- The resource client does not follow redirects. Remote targets require HTTPS; x402 permits HTTP only for parsed loopback hosts without credentials or fragments. It repeats the unsigned challenge and rebuilds the exact settlement profile immediately before signing; profile drift fails without signer invocation, while post-launch signer/provider contradictions preserve the transaction reference and force settlement unknown.
+- The resource client does not follow redirects. Remote targets require HTTPS; x402 permits HTTP only for parsed loopback hosts without credentials or fragments. It repeats the challenge and rebuilds the exact settlement profile immediately before signing; profile drift fails without signer invocation, while post-launch signer/provider contradictions preserve the transaction reference and force settlement unknown.
+
+- Advertised seller offers use bounded JWS/Ed25519 verification and a same-origin HTTPS DID document with no redirects. Exact proof and identity-document digests join schema-4 authorization; proof, identity, expiry, or signed-term drift refuses signer launch. Current DID assertions establish current key authorization, not historical rotation.
+- The signer result boundary admits ephemeral public seller JWS only at `challenge.extensions.offer-receipt.info.offers[]` and `provider_settlement.extensions.offer-receipt.info.receipt`. This narrow parsing exception does not permit wallet/payment signatures or raw JWS persistence. Receipt assessments run after uncertain results too; no signature authorizes a retry or proves independent settlement.
 
 ### Data minimization
 

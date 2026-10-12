@@ -116,6 +116,20 @@ SettleDiff should compare those layers without collapsing them into one "transac
 
 # 3. Highest-priority improvement: Signed x402 offers and receipts
 
+## Implementation status (2026-10-12)
+
+The JWS/Ed25519 profile is integrated and verified offline. Offers are checked
+against same-origin DID assertions before authorization, proof and identity digests
+are bound to schema-4 terms, and reinspection refuses drift before signer launch.
+Receipt authenticity, key continuity, signed terms, and available transaction
+references produce deterministic findings after the one attempt, including uncertain
+results. See [the signed evidence guide](docs/development/signed-evidence.md) and
+[ADR 0012](docs/decisions/0012-signed-provider-evidence.md).
+
+The gap analysis below describes the starting point. EIP-712, historical key
+rotation, replayable exported signatures, and a live signed-service trial remain
+outside this implementation. Raw signatures remain ephemeral under the data policy.
+
 ## Why this should be P0
 
 x402 now has a Signed Offers & Receipts extension.

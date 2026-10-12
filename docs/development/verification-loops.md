@@ -56,7 +56,10 @@ Before any x402 execution or settlement-observer change:
 3. prove the second challenge rebuilds the same profile before signer launch and drift prevents launch;
 4. run `tests/unit/observers/` and `tests/integration/observers/` to cover exact-transfer dimensions, bounded RPC classification, and all four observation statuses;
 5. prove provider Activity and transaction status cannot establish settlement, while retry analysis still treats them as attempt evidence;
-6. prove the public projection excludes observer source, transaction reference, profile, ledgers, provider Activity, and evidence IDs.
+6. prove the public projection excludes observer source, transaction reference, profile, ledgers, provider Activity, and evidence IDs;
+7. for advertised signed services, prove bad/expired offers and proof/DID drift prevent signer launch, and that schema-4 terms bind the proof digest;
+8. prove missing/bad receipts and known transaction mismatches produce findings after normal and uncertain attempts, without another write;
+9. prove raw seller JWS remains ephemeral, wallet signatures are refused, and SQLite/bundles/public projection retain only their permitted assessment fields.
 
 No paid test runs without explicit user authorization in the current conversation, the paid environment flag, a test budget, and an interactive confirmation.
 

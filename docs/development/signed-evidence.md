@@ -1,20 +1,82 @@
 # Signed seller evidence
 
-`src/settlediff/x402/signed.py` contains bounded, offline JWS helpers for captured
-Ed25519 seller keys, signed offers, and signed receipts. Tests exercise signature
-validity separately from did:web assertion authorization, seller-origin matching,
-offer terms/expiry, and receipt transaction/payer correlation.
+The x402 adapter supports the `offer-receipt` extension's compact JWS/Ed25519
+profile. It follows the [pinned normative specification](https://github.com/x402-foundation/x402/blob/dd927a26cfefc98c24b3ec38b3a8f204dad0c60d/specs/extensions/extension-offer-and-receipt.md)
+under [ADR 0012](../decisions/0012-signed-provider-evidence.md). Unsigned services
+retain the existing workflow. EIP-712, other JWS algorithms, historical key rotation,
+and networks outside the existing Base Sepolia exact-USDC profile are unsupported.
 
-The key document is supplied as captured evidence; these helpers perform no live
-DID lookup. A mathematically valid signature does not by itself establish that a
-key is authorized for the requested seller origin. Both offer and receipt assessment
-require the captured DID to match the authorized resource's HTTPS origin.
+## Before authorization
 
-These helpers are not wired into the live collector, payment authorization, findings,
-or verdicts. They are the first tested increment of the signed-evidence work on this
-branch, not a claim that live signed-offer enforcement is complete. Provider-signed
-receipts remain provider assertions rather than independent settlement proof.
+The unpaid challenge advertises offers at
+`extensions.offer-receipt.info.offers`. SettleDiff requires one unambiguous primary
+offer. Its `acceptIndex` is an unsigned hint; the signed `resourceUrl`, `scheme`,
+`network`, `asset`, `payTo`, and `amount` must match the selected requirement.
+When present, `validUntil` must not have expired.
+
+The adapter captures the seller's `/.well-known/did.json` through same-origin HTTPS,
+without redirects, bounded to 16 KiB. The JWS header's `kid` must belong to that
+origin's `did:web` identity, and the Ed25519 key must be authorized for assertions.
+Mathematical signature validity and seller-key authorization are separate results.
+
+A digest of the exact JWS and captured identity-document digest becomes
+`PaymentTerms.signed_offer_digest` and `ExpectedContract.signed_offer_digest` in
+schema 4. The CLI shows the proof digest with the exact request confirmation.
+Immediately before signer launch, the adapter repeats the challenge and identity
+capture and verifies the offer again. Changed proof, identity document, terms,
+revoked key, or expiry refuses execution and requires fresh authorization.
+
+## After the one attempt
+
+The external signer returns the public seller receipt at
+`provider_settlement.extensions.offer-receipt.info.receipt`. SettleDiff checks its
+signature, assertion authorization, offer-to-receipt key continuity, signed
+resource/network/payer, and `issuedAt` (at most one hour old, with 30 seconds of
+future clock tolerance). Every available transaction reference is checked for a
+contradiction. Positive transaction binding requires both the signer/provider and
+independent observer references to match the signed `transaction`.
+
+The deterministic report adds `signed_offer`, `signed_receipt`,
+`signed_receipt_continuity`, and `signed_receipt_transaction` findings. A missing
+advertised receipt is unknown. An omitted optional transaction is a warning;
+a known mismatch fails even when another source is unavailable. Receipt capture
+also runs when the outer signer result is uncertain. Recovery remains read-only
+and never repeats the payment.
+
+These signatures remain **provider assertions**. They cannot establish settlement
+when independent observation is unavailable, and cannot convert a contradiction
+into a verified result. Existing independent transfer and delivery checks still run.
+
+## Signer compatibility and evidence retention
+
+The external request stays schema 2 and carries the opaque payment-terms digest;
+the result stays schema 3. A signed-service-compatible signer must preserve the
+challenge's public offer extension and the provider settlement's public receipt
+extension. Only those exact namespaces admit bounded public seller JWS strings.
+Wallet signatures, payment payloads, credentials, and other nested signatures are
+still rejected. Run the existing metadata/doctor compatibility check before any
+separately authorized live trial; offline integration does not prove an external
+signer's signed-service compatibility.
+
+Raw JWS strings and DID documents are used in memory. Persisted schema-4
+`provider_signatures` contain assessments, digests, timestamps, and source handles;
+raw signatures are redacted from captured snapshots and excluded from SQLite,
+bundles, public reports, agent summaries, and telemetry. Unsigned reports omit the
+new optional fields, preserving their existing serialization.
+
+Private bundle verification recomputes signature findings from the retained
+assessments and checks consistency and integrity. It **cannot replay cryptographic
+verification** because the raw proof is deliberately absent, and a checksum does
+not authenticate the bundle's origin. Current DID capture also does not establish
+which keys were authorized at a historical time.
+
+## Offline verification
+
+Tests use generated synthetic Ed25519 keys, fixed clocks, mocked HTTP/RPC, and an
+intercepted signer. They cover authorization drift, bad/missing receipts, uncertain
+results, forbidden signer material, persistence, bundle consistency, and public
+projection. No live signed-service or paid trial has been performed for this change.
 
 ```bash
-uv run pytest tests/unit/x402/test_signed.py -q
+uv run pytest tests/unit/x402/test_signed.py tests/unit/x402/test_signed_extension.py tests/unit/x402/test_seller_identity_http.py tests/unit/x402/test_signed_adapter.py tests/unit/domain/test_provider_signatures.py -q
 ```
