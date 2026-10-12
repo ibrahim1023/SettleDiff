@@ -73,3 +73,11 @@ After the trial, configured live investigations use the same private-default exp
 Remove the endpoint and authorization values to return to local-only diagnostics.
 Do not add hosted export to default tests; the integration tests intercept HTTP
 from the real exporters and check authentication, signal routes, and redaction.
+
+## Validation record
+
+On 2026-10-12, an explicitly authorized synthetic trial against the configured US
+Logfire ingestion endpoint received HTTP 200 for both `/v1/traces` and `/v1/metrics`.
+No model, Perflo, Context.dev, signer, RPC, or payment call occurred. This confirms
+ingestion acceptance; dashboard indexing was not independently inspected. No token,
+project identifier, or raw financial evidence is retained in this record.
