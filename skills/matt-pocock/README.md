@@ -12,6 +12,7 @@ The upstream files and supporting references are copied without modifications; s
 | Reproduce and diagnose a difficult failure | [diagnosing-bugs](diagnosing-bugs/SKILL.md) |
 | Review a diff against standards and its specification | [code-review](code-review/SKILL.md) |
 | Design a module interface or test seam | [codebase-design](codebase-design/SKILL.md) |
+| Find architectural friction and deepening opportunities | [improve-codebase-architecture](improve-codebase-architecture/SKILL.md) |
 | Clarify evidence vocabulary or an architectural decision | [domain-modeling](domain-modeling/SKILL.md) |
 | Transfer context between Codex and Devin | [handoff](handoff/SKILL.md) |
 | Improve the development environment after a session | [retro](retro/SKILL.md) |
