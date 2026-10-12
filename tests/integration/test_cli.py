@@ -12,10 +12,19 @@ from typing import cast
 import pytest
 from fastapi import FastAPI
 from pydantic import JsonValue, SecretStr
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from typer.testing import CliRunner
 
 from settlediff import __version__
 from settlediff.agent.grounding import fallback_explanation
+from settlediff.agent.tools import EvidenceSummary
 from settlediff.application.auth import (
     CatalogResourceReference,
     HttpResourceReference,
@@ -488,6 +497,99 @@ def test_live_run_requires_contextdev_configuration(monkeypatch: pytest.MonkeyPa
     result = runner.invoke(app, ["run", "--slug", "synthetic-weather", "--budget", "1"])
     assert result.exit_code == 2
     assert "Context.dev configuration is required for live investigations" in result.stderr
+
+
+def test_cli_model_cites_collected_evidence_without_grounding_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "explanation.sqlite3"
+    command_log = tmp_path / "commands.jsonl"
+
+    def client_factory(**_kwargs: object) -> PerfloClient:
+        return PerfloClient(
+            command=(
+                sys.executable,
+                "tests/integration/perflo/fake_perflo.py",
+                "live-credit",
+                str(command_log),
+            ),
+            timeout_seconds=5,
+        )
+
+    def scripted_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_results = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not tool_results:
+            return ModelResponse(parts=[ToolCallPart("inspect_contract", {})])
+        summary = tool_results[-1].content
+        assert isinstance(summary, EvidenceSummary)
+        assert summary.artifact_id is not None
+        prompt = next(
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if part.part_kind == "user-prompt"
+        )
+        assert isinstance(prompt, str)
+        run_id = prompt.split(" for run=", 1)[1].split(".", 1)[0]
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "explanation": {
+                            "run_id": run_id,
+                            "summary": "Provider evidence lacks independent settlement.",
+                            "evidence_used": [summary.artifact_id],
+                            "finding_ids": [],
+                            "deterministic_verdict": "UNVERIFIABLE",
+                            "recommended_next_step": None,
+                        },
+                        "tool_calls": 0,
+                        "used_fallback": False,
+                    },
+                )
+            ]
+        )
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli.PerfloClient", client_factory)
+    monkeypatch.setattr("settlediff.cli.shutil.which", available_executable)
+
+    def model_factory(_settings: Settings) -> FunctionModel:
+        return FunctionModel(scripted_model)
+
+    monkeypatch.setattr("settlediff.cli._build_model_if_configured", model_factory)
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--rail",
+            "perflo",
+            "--slug",
+            "synthetic-news",
+            "--budget",
+            "0.001",
+            "--database",
+            str(database),
+        ],
+        input="y\n",
+    )
+    assert result.exit_code == 0, result.output
+    repository = SQLiteReportRepository(database)
+    report = repository.list()[0]
+    explanation = repository.explanation(report.run_id)
+    assert explanation is not None
+    assert explanation.source is ExplanationSource.PROVIDER
+    assert explanation.explanation.evidence_used == (f"{report.run_id}:service_contract",)
+    repository.close()
 
 
 def test_live_run_decline_does_not_build_a_model(monkeypatch: pytest.MonkeyPatch) -> None:

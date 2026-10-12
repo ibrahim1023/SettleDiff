@@ -7,14 +7,14 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict
 
-from settlediff.domain.models import EvidenceArtifact, MachineReport
+from settlediff.domain.models import ArtifactType, EvidenceArtifact, MachineReport
 from settlediff.domain.redaction import redact_embedded_identifiers
 
 
 class EvidenceSummary(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
-    artifact_id: str
+    artifact_id: str | None
     summary: str
 
 
@@ -29,10 +29,31 @@ def build_investigation_dependencies(
     report: MachineReport, artifacts: tuple[EvidenceArtifact, ...]
 ) -> InvestigationDependencies:
     """Build bounded canonical summaries backed by stable artifact handles."""
-    by_source = {artifact.source: artifact for artifact in artifacts}
+    contract_artifact = next(
+        (
+            artifact
+            for artifact in artifacts
+            if artifact.artifact_type is ArtifactType.SERVICE_CONTRACT
+        ),
+        None,
+    )
+    schema_artifact = next(
+        (
+            artifact
+            for artifact in artifacts
+            if artifact.artifact_type is ArtifactType.CONTEXT_EVIDENCE
+            and artifact.source.endswith((".schema", ".request_schema"))
+        ),
+        contract_artifact
+        if report.contract is not None and report.contract.request_schema is not None
+        else None,
+    )
+    activity_artifact = next(
+        (artifact for artifact in artifacts if artifact.artifact_type is ArtifactType.ACTIVITY),
+        None,
+    )
 
     async def inspect_contract() -> EvidenceSummary:
-        artifact = by_source.get("perflo.vendor")
         contract = report.contract
         if contract is None:
             summary = "No normalized service contract is available."
@@ -48,23 +69,21 @@ def build_investigation_dependencies(
                 f"protocol={contract.protocol or 'unknown'}; chain={contract.chain or 'unknown'}"
             )
         return EvidenceSummary(
-            artifact_id=artifact.artifact_id if artifact is not None else "report:contract",
+            artifact_id=contract_artifact.artifact_id if contract_artifact is not None else None,
             summary=summary,
         )
 
     async def get_schema() -> EvidenceSummary:
-        artifact = by_source.get("perflo.schema")
         schema = report.contract.request_schema if report.contract is not None else None
         schema = schema or {}
         fields = tuple(sorted(redact_embedded_identifiers(key) for key in schema))[:20]
         summary = f"request schema fields: {', '.join(fields) if fields else 'none'}"
         return EvidenceSummary(
-            artifact_id=artifact.artifact_id if artifact is not None else "report:schema",
+            artifact_id=schema_artifact.artifact_id if schema_artifact is not None else None,
             summary=summary,
         )
 
     async def get_activity() -> EvidenceSummary:
-        artifact = by_source.get("perflo.activity.agent")
         schema4 = report.schema_version >= 4
         ledger = report.provider_activity if schema4 else report.ledger
         if ledger is None:
@@ -96,7 +115,7 @@ def build_investigation_dependencies(
                 f"({independent.diagnostic}); comparison={comparison.status.value}"
             )
         return EvidenceSummary(
-            artifact_id=artifact.artifact_id if artifact is not None else "report:activity",
+            artifact_id=activity_artifact.artifact_id if activity_artifact is not None else None,
             summary=summary,
         )
 

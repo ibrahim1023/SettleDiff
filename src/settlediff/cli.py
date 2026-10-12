@@ -236,13 +236,17 @@ def _build_model_if_configured(settings: Settings) -> Model | None:
 
 
 async def _explain_report(
-    report: MachineReport, artifacts: frozenset[str], model: Model | None
+    report: MachineReport,
+    artifacts: frozenset[str],
+    model: Model | None,
+    *,
+    evidence: tuple[EvidenceArtifact, ...] = (),
 ) -> ExplanationRecord:
     if model is None:
         return await _explain_without_model(report, artifacts)
     result = await investigate(
         InvestigationState(report=report, artifact_ids=artifacts),
-        build_investigation_dependencies(report, artifacts=()),
+        build_investigation_dependencies(report, artifacts=evidence),
         model,
     )
     return ExplanationRecord(
@@ -446,7 +450,9 @@ async def _execute_live_run(
             lambda: collector.verify(request),
             persist_event=persist_event,
             telemetry=telemetry,
-            explain=lambda report, artifact_ids: _explain_report(report, artifact_ids, model),
+            explain=lambda report, artifact_ids: _explain_report(
+                report, artifact_ids, model, evidence=collector.artifacts
+            ),
             artifact_ids=lambda: frozenset(
                 artifact.artifact_id for artifact in collector.artifacts
             ),

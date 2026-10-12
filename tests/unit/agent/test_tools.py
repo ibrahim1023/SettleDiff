@@ -92,3 +92,37 @@ async def test_legacy_activity_summary_is_unchanged() -> None:
     assert activity.summary.startswith("status=confirmed")
     assert "provider assertion" not in activity.summary
     assert "independent settlement" not in activity.summary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rail", ["perflo", "x402"])
+async def test_summaries_cite_actual_artifacts_across_payment_rails(rail: str) -> None:
+    report = replay_fixture(Path("fixtures/x402-independent-confirmed"))
+    artifacts = tuple(
+        EvidenceArtifact(
+            artifact_id=f"artifact:{kind.value}",
+            artifact_type=kind,
+            source=source,
+            collected_at=datetime(2026, 8, 18, tzinfo=UTC),
+            redacted=True,
+            data={},
+        )
+        for kind, source in (
+            (ArtifactType.SERVICE_CONTRACT, f"{rail}.contract"),
+            (ArtifactType.CONTEXT_EVIDENCE, f"{rail}.contract.request_schema"),
+            (ArtifactType.ACTIVITY, f"{rail}.activity"),
+        )
+    )
+    deps = build_investigation_dependencies(report, artifacts)
+    assert (await deps.inspect_contract()).artifact_id == "artifact:service_contract"
+    assert (await deps.get_schema()).artifact_id == "artifact:context_evidence"
+    assert (await deps.get_activity()).artifact_id == "artifact:activity"
+
+
+@pytest.mark.asyncio
+async def test_missing_artifacts_are_explicit_without_invented_citations() -> None:
+    report = replay_fixture(Path("fixtures/x402-independent-confirmed"))
+    deps = build_investigation_dependencies(report, ())
+    assert (await deps.inspect_contract()).artifact_id is None
+    assert (await deps.get_schema()).artifact_id is None
+    assert (await deps.get_activity()).artifact_id is None

@@ -11,6 +11,10 @@ Evidence for an autonomous purchase may be distributed across contract metadata,
 
 Use one bounded Investigation Agent to select and explain evidence. Use pure deterministic code for normalization, matching confidence, every finding, and verdict precedence. If an explanation conflicts with the verifier, validation rejects the explanation and the machine report remains complete.
 
+Evidence summaries retain actual collected artifact handles across payment rails.
+Missing source handles are explicit `null` values and cannot be cited. Grounding
+continues to accept only existing finding and artifact IDs.
+
 ## Consequences
 
 - The agent cannot improve a result by hiding or rewriting discrepancies.
