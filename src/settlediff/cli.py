@@ -718,55 +718,55 @@ def run(
     except (OSError, X402ClientError, ValueError) as error:
         typer.echo(f"Invalid live preflight: {error}", err=True)
         raise typer.Exit(code=2) from error
-    telemetry = configure_telemetry(settings)
-    contextdev = ContextDevClient(
-        contextdev_config.base_url,
-        contextdev_config.api_key,
-        timeout_seconds=contextdev_config.timeout_seconds,
-    )
-    request = PaidExecutionRequest(
-        run_id=f"live_{uuid4().hex}",
-        resource=resource,
-        budget=Money(amount=amount, unit=budget_unit),
-    )
     repository: SQLiteReportRepository | None = None
-    if database is not None:
-        try:
-            repository = SQLiteReportRepository(database)
-            provenance = (
-                RunProvenance.CONTROLLED_LIVE
-                if rail is PaymentRail.X402 and url is not None and urlparse(url).scheme == "http"
-                else RunProvenance.EXTERNAL_LIVE
-            )
-            repository.begin_run(
-                request.run_id,
-                task=task,
-                provenance=provenance,
-                created_at=datetime.now(UTC),
-            )
-        except (OSError, sqlite3.Error, ValueError) as error:
-            if repository is not None:
-                repository.close()
-            typer.echo("Live run database is not writable.", err=True)
-            raise typer.Exit(code=2) from error
-    budget_state = InvestigationBudgetState(
-        InvestigationBudget.issue(
-            request.run_id,
-            contextdev_calls=1,
-            model_requests=INVESTIGATION_REQUEST_LIMIT,
-            tool_calls=INVESTIGATION_TOOL_CALL_LIMIT,
-            input_tokens=INVESTIGATION_INPUT_TOKEN_LIMIT,
-            output_tokens=INVESTIGATION_OUTPUT_TOKEN_LIMIT,
-        )
-    )
-    adapter, adapter_close = _build_payment_adapter(rail, settings, x402_payer)
-    collector = LiveEvidenceCollector(
-        adapter,
-        contextdev=contextdev,
-        budget=budget_state,
-        telemetry=telemetry,
-    )
+    telemetry = configure_telemetry(settings)
     try:
+        request = PaidExecutionRequest(
+            run_id=f"live_{uuid4().hex}",
+            resource=resource,
+            budget=Money(amount=amount, unit=budget_unit),
+        )
+        if database is not None:
+            try:
+                repository = SQLiteReportRepository(database)
+                provenance = (
+                    RunProvenance.CONTROLLED_LIVE
+                    if rail is PaymentRail.X402
+                    and url is not None
+                    and urlparse(url).scheme == "http"
+                    else RunProvenance.EXTERNAL_LIVE
+                )
+                repository.begin_run(
+                    request.run_id,
+                    task=task,
+                    provenance=provenance,
+                    created_at=datetime.now(UTC),
+                )
+            except (OSError, sqlite3.Error, ValueError) as error:
+                typer.echo("Live run database is not writable.", err=True)
+                raise typer.Exit(code=2) from error
+        budget_state = InvestigationBudgetState(
+            InvestigationBudget.issue(
+                request.run_id,
+                contextdev_calls=1,
+                model_requests=INVESTIGATION_REQUEST_LIMIT,
+                tool_calls=INVESTIGATION_TOOL_CALL_LIMIT,
+                input_tokens=INVESTIGATION_INPUT_TOKEN_LIMIT,
+                output_tokens=INVESTIGATION_OUTPUT_TOKEN_LIMIT,
+            )
+        )
+        contextdev = ContextDevClient(
+            contextdev_config.base_url,
+            contextdev_config.api_key,
+            timeout_seconds=contextdev_config.timeout_seconds,
+        )
+        adapter, adapter_close = _build_payment_adapter(rail, settings, x402_payer)
+        collector = LiveEvidenceCollector(
+            adapter,
+            contextdev=contextdev,
+            budget=budget_state,
+            telemetry=telemetry,
+        )
         try:
             outcome = asyncio.run(
                 _execute_live_run(
@@ -819,9 +819,11 @@ def run(
         if persistence_failed:
             raise typer.Exit(code=2)
     finally:
-        if repository is not None:
-            repository.close()
-        telemetry.shutdown()
+        try:
+            if repository is not None:
+                repository.close()
+        finally:
+            telemetry.shutdown()
 
 
 def _provider_chain_observation(

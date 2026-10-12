@@ -2760,3 +2760,29 @@ def test_live_run_requires_observability_before_provider_probe(
     assert result.exit_code == 2
     assert "Observability export is required for live investigations" in result.stderr
     assert "Confirm" not in result.stdout
+
+
+def test_live_database_initialization_failure_shuts_down_telemetry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import Mock
+
+    telemetry = Mock(spec=TelemetryRuntime)
+
+    async def probe() -> None:
+        return None
+
+    monkeypatch.setattr("settlediff.cli.Settings", live_settings)
+    monkeypatch.setattr("settlediff.cli._doctor_perflo", probe)
+
+    def configured_telemetry(_settings: Settings) -> Mock:
+        return telemetry
+
+    monkeypatch.setattr("settlediff.cli.configure_telemetry", configured_telemetry)
+    result = runner.invoke(
+        app, ["run", "--slug", "synthetic-weather", "--budget", "1", "--database", str(tmp_path)]
+    )
+    assert result.exit_code == 2
+    assert "database is not writable" in result.stderr
+    telemetry.shutdown.assert_called_once_with()
