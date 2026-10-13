@@ -284,10 +284,16 @@ def verify_seller_jws(jws: str, identity: SellerIdentityEvidence) -> SignatureVe
     jwk = cast(dict[str, JsonValue], jwk_value)
     if (
         method.get("controller") != identity.did
-        or set(jwk) != {"kty", "crv", "x"}
+        or set(jwk) - {"kty", "crv", "x", "alg", "use", "kid", "key_ops"}
         or jwk.get("kty") != "OKP"
         or jwk.get("crv") != "Ed25519"
         or not isinstance(jwk.get("x"), str)
+        or jwk.get("alg", "EdDSA") != "EdDSA"
+        or jwk.get("use", "sig") != "sig"
+        or "key_ops" in jwk
+        and jwk["key_ops"] != ["verify"]
+        or "kid" in jwk
+        and (not isinstance(jwk["kid"], str) or not jwk["kid"])
     ):
         return _result(
             SignatureValidity.UNVERIFIABLE,

@@ -342,3 +342,32 @@ def test_nonfinite_signed_json_numbers_are_unverifiable(number: str) -> None:
         f"{message}.{_b64(private.sign(message.encode()))}", _identity(private)
     )
     assert result.signature_validity is SignatureValidity.UNVERIFIABLE
+
+
+@pytest.mark.parametrize(
+    "metadata,valid",
+    [
+        ({"alg": "EdDSA", "use": "sig", "kid": KID}, True),
+        ({"key_ops": ["verify"]}, True),
+        ({"alg": "ES256"}, False),
+        ({"use": "enc"}, False),
+        ({"key_ops": ["encrypt"]}, False),
+        ({"kid": 42}, False),
+    ],
+)
+def test_public_jwk_metadata_is_accepted_only_for_signature_verification(
+    metadata: dict[str, JsonValue],
+    valid: bool,
+) -> None:
+    private = Ed25519PrivateKey.generate()
+    original = _identity(private)
+    document = dict(original.document)
+    methods = cast(list[dict[str, JsonValue]], document["verificationMethod"])
+    method = dict(methods[0])
+    method["publicKeyJwk"] = cast(dict[str, JsonValue], method["publicKeyJwk"]) | metadata
+    document["verificationMethod"] = [method]
+    identity = SellerIdentityEvidence.capture(DID, KID, document, observed_at=NOW)
+    result = verify_seller_jws(_signed(_offer(), private), identity)
+    assert (result.signature_validity is SignatureValidity.VALID) is valid
+    if valid:
+        assert result.seller_identity_binding is SellerBindingStatus.BOUND

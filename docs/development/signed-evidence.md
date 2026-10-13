@@ -18,6 +18,8 @@ The adapter captures the seller's `/.well-known/did.json` through same-origin HT
 without redirects, bounded to 16 KiB. The JWS header's `kid` must belong to that
 origin's `did:web` identity, and the Ed25519 key must be authorized for assertions.
 Mathematical signature validity and seller-key authorization are separate results.
+Public JWKs may also carry compatible `alg`, `use`, `kid`, and `key_ops` metadata;
+conflicting algorithms or encryption-only key uses are rejected.
 
 A digest of the exact JWS and captured identity-document digest becomes
 `PaymentTerms.signed_offer_digest` and `ExpectedContract.signed_offer_digest` in
@@ -75,7 +77,9 @@ which keys were authorized at a historical time.
 Tests use generated synthetic Ed25519 keys, fixed clocks, mocked HTTP/RPC, and an
 intercepted signer. They cover authorization drift, bad/missing receipts, uncertain
 results, forbidden signer material, persistence, bundle consistency, and public
-projection. No live signed-service or paid trial has been performed for this change.
+projection. An [unpaid live staging inspection](../testing/signed-x402-readiness-2026-10-13.md)
+verified a seller offer. Paid receipt collection remains verified offline; no paid
+signed-service trial has been performed.
 
 ```bash
 uv run pytest tests/unit/x402/test_signed.py tests/unit/x402/test_signed_extension.py tests/unit/x402/test_seller_identity_http.py tests/unit/x402/test_signed_adapter.py tests/unit/domain/test_provider_signatures.py -q

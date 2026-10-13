@@ -116,8 +116,8 @@ receipts after normal and uncertain results. Raw JWS strings remain ephemeral;
 private reports and bundles retain assessments and digests. Bundle checks cannot
 replay cryptographic verification without the raw proof. The
 [signed-evidence guide](docs/development/signed-evidence.md) explains the supported
-profile and limits. This integration is verified offline; no live signed-service
-trial is claimed.
+profile and limits. An [unpaid live staging inspection](docs/testing/signed-x402-readiness-2026-10-13.md)
+verified a signed offer; paid signed-receipt verification remains tested offline.
 
 Controlled live tests have demonstrated disagreements, independent x402 settlement,
 and a settled delivery failure. Historical report schemas have different settlement
