@@ -4,9 +4,9 @@
 
 **Goal:** Build a local developer tool that performs one authorized Perflo purchase investigation, deterministically verifies its evidence, and renders the same report through a CLI and local web UI.
 
-**Architecture:** A pure domain core owns normalization, matching, checks, and verdicts. Application services coordinate replaceable Perflo, Hyperfusion/PydanticAI, Context.dev, storage, and telemetry adapters. The single bounded agent may select evidence and explain immutable findings but cannot execute payment without a one-use capability or alter the machine report.
+**Architecture:** A pure domain core owns normalization, matching, checks, and verdicts. Application services coordinate replaceable Perflo, Groq/PydanticAI, Context.dev, storage, and telemetry adapters. The single bounded agent may select evidence and explain immutable findings but cannot execute payment without a one-use capability or alter the machine report.
 
-**Tech Stack:** Python 3.12, uv, Pydantic v2, PydanticAI with Hyperfusion's OpenAI-compatible Chat Completions API, Typer, FastAPI, Jinja, minimal vendored HTMX, SQLite, pytest, Hypothesis, Ruff, Pyright, deterministic code graders, and optional OpenTelemetry.
+**Tech Stack:** Python 3.12, uv, Pydantic v2, PydanticAI with Groq's OpenAI-compatible Chat Completions API, Typer, FastAPI, Jinja, minimal vendored HTMX, SQLite, pytest, Hypothesis, Ruff, Pyright, deterministic code graders, and optional OpenTelemetry.
 
 ## Global Constraints
 
@@ -15,7 +15,7 @@
 - Only deterministic code produces findings and verdicts.
 - A live paid execution requires one explicit capability bound to run ID, target, canonical body digest, and budget.
 - A money-moving command is never automatically retried after an error or uncertain submission.
-- Default tests and evals make no Hyperfusion, Perflo, Context.dev, or paid calls.
+- Default tests and evals make no Groq, Perflo, Context.dev, or paid calls.
 - Money uses `Decimal` and explicit units; timestamps are aware UTC.
 - Sensitive content is redacted before persistence, prompting, display, logging, or telemetry.
 - Implement test-first and commit each task in a coherent, passing increment.
@@ -45,7 +45,7 @@ src/settlediff/application/run.py     live orchestration state machine
 src/settlediff/application/auth.py    one-use paid capability
 src/settlediff/perflo/client.py       safe subprocess runner
 src/settlediff/perflo/parser.py       Perflo envelope parsers
-src/settlediff/agent/model.py         Hyperfusion PydanticAI provider factory
+src/settlediff/agent/model.py         Groq PydanticAI provider factory
 src/settlediff/agent/investigator.py  bounded agent definition
 src/settlediff/agent/tools.py         typed evidence tools
 src/settlediff/agent/grounding.py     explanation citation validation
@@ -75,7 +75,7 @@ Each file has one primary reason to change. Concrete files are created in the ta
 - Modify: `README.md`
 
 **Interfaces:**
-- Produces: installed `settlediff` package, `settlediff` console entry point, pytest markers `live_hyperfusion` and `paid`, and a global block on real PydanticAI model requests.
+- Produces: installed `settlediff` package, `settlediff` console entry point, pytest markers `live_groq` and `paid`, and a global block on real PydanticAI model requests.
 
 - [ ] **Step 1: Write the tooling contract test**
 
@@ -105,14 +105,13 @@ Expected: failure because `.env.example` does not exist.
 
 - [ ] **Step 3: Define the locked Python project**
 
-Create `pyproject.toml` with Python `>=3.12,<3.14`, a `src` layout, and the console script `settlediff = "settlediff.cli:app"`. Add bounded major-version ranges for Pydantic, pydantic-settings, `pydantic-ai-slim[openai]`, Typer, FastAPI, Jinja2, and HTTPX. Add a `dev` dependency group containing pytest, pytest-cov, pytest-asyncio, Hypothesis, Ruff, Pyright, inline-snapshot, and dirty-equals. Configure strict Pyright, Ruff formatting/linting, pytest markers, and coverage source in this single file.
+Create `pyproject.toml` with Python `>=3.12,<3.14`, a `src` layout, and the console script `settlediff = "settlediff.cli:app"`. Add bounded major-version ranges for Pydantic, pydantic-settings, `pydantic-ai-slim[groq]`, Typer, FastAPI, Jinja2, and HTTPX. Add a `dev` dependency group containing pytest, pytest-cov, pytest-asyncio, Hypothesis, Ruff, Pyright, inline-snapshot, and dirty-equals. Configure strict Pyright, Ruff formatting/linting, pytest markers, and coverage source in this single file.
 
 Create `.python-version` containing `3.12` and `.env.example` containing only:
 
 ```dotenv
-SETTLEDIFF_HYPERFUSION_BASE_URL=
-SETTLEDIFF_HYPERFUSION_API_KEY=
-SETTLEDIFF_HYPERFUSION_MODEL=
+SETTLEDIFF_GROQ_API_KEY=
+SETTLEDIFF_GROQ_MODEL=
 SETTLEDIFF_DATABASE_PATH=
 SETTLEDIFF_OTLP_ENDPOINT=
 SETTLEDIFF_CONTEXTDEV_API_KEY=
@@ -133,7 +132,7 @@ def pytest_configure() -> None:
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
-        if 'live_hyperfusion' not in item.keywords and 'paid' not in item.keywords:
+        if 'live_groq' not in item.keywords and 'paid' not in item.keywords:
             item.add_marker(pytest.mark.offline)
 ```
 
@@ -478,20 +477,20 @@ git commit -m "feat: guard Perflo paid execution boundary"
 
 ---
 
-### Task 8: Hyperfusion Provider Factory and Compatibility Contract
+### Task 8: Groq Provider Factory and Compatibility Contract
 
 **Files:**
 - Create: `src/settlediff/config.py`
 - Create: `src/settlediff/agent/model.py`
 - Create: `tests/unit/agent/test_model_factory.py`
-- Create: `tests/contract/test_hyperfusion_live.py`
+- Create: `tests/contract/test_groq_live.py`
 
 **Interfaces:**
-- Produces: `Settings`, `HyperfusionConfig`, and `build_hyperfusion_model(config) -> OpenAIChatModel`.
+- Produces: `Settings`, `GroqConfig`, and `build_chat_model(config) -> GroqModel`.
 
 - [ ] **Step 1: Write settings and factory tests**
 
-Assert live agent configuration fails clearly when base URL, API key, or model ID is absent. Assert the factory constructs `AsyncOpenAI(base_url=..., api_key=...)`, selects Chat Completions, applies the explicit model profile, and never logs the key.
+Assert live agent configuration fails clearly when API key or model ID is absent. Assert the factory constructs `AsyncGroq(base_url=..., api_key=...)`, selects Chat Completions, applies the explicit model profile, and never logs the key.
 
 - [ ] **Step 2: Run and confirm missing configuration modules**
 
@@ -503,11 +502,11 @@ Use `pydantic-settings` with the `SETTLEDIFF_` prefix and `SecretStr` for keys. 
 
 - [ ] **Step 4: Implement the provider factory**
 
-Construct an `AsyncOpenAI` client with Hyperfusion base URL, zero SDK mutation retries, explicit HTTP timeout, and redacted logging. Wrap it in `OpenAIProvider`, then `OpenAIChatModel` with the injected model ID. Do not use Responses-specific features.
+Construct an `AsyncGroq` client with Groq base URL, zero SDK mutation retries, explicit HTTP timeout, and redacted logging. Wrap it in `GroqProvider`, then `GroqModel` with the injected model ID. Do not use Responses-specific features.
 
 - [ ] **Step 5: Implement the opt-in live contract**
 
-The marked test skips unless `SETTLEDIFF_LIVE_HYPERFUSION=1`. It verifies one simple structured output, one tool call, one tool-result continuation, usage metadata shape when present, and typed timeout/rate-limit behavior. It performs no Perflo call and no paid service action.
+The marked test skips unless `SETTLEDIFF_LIVE_GROQ=1`. It verifies one simple structured output, one tool call, one tool-result continuation, usage metadata shape when present, and typed timeout/rate-limit behavior. It performs no Perflo call and no paid service action.
 
 - [ ] **Step 6: Run offline factory tests**
 
@@ -515,14 +514,14 @@ Run: `uv run pytest tests/unit/agent/test_model_factory.py -q`.
 
 - [ ] **Step 7: Run the compatibility contract with owner-provided configuration**
 
-Run: `SETTLEDIFF_LIVE_HYPERFUSION=1 uv run pytest tests/contract/test_hyperfusion_live.py -m live_hyperfusion -q`
-Expected: all required compatibility assertions pass for the selected model. If they fail, update only the explicit model profile or select a compatible Hyperfusion model; do not weaken domain schemas.
+Run: `SETTLEDIFF_LIVE_GROQ=1 uv run pytest tests/contract/test_groq_live.py -m live_groq -q`
+Expected: all required compatibility assertions pass for the selected model. If they fail, update only the explicit model profile or select a compatible Groq model; do not weaken domain schemas.
 
 - [ ] **Step 8: Commit the provider increment**
 
 ```bash
-git add src/settlediff/config.py src/settlediff/agent/model.py tests/unit/agent/test_model_factory.py tests/contract/test_hyperfusion_live.py
-git commit -m "feat: connect PydanticAI to Hyperfusion"
+git add src/settlediff/config.py src/settlediff/agent/model.py tests/unit/agent/test_model_factory.py tests/contract/test_groq_live.py
+git commit -m "feat: connect PydanticAI to Groq"
 ```
 
 ---
@@ -541,7 +540,7 @@ git commit -m "feat: connect PydanticAI to Hyperfusion"
 - Create: `tests/evals/test_regression.py`
 
 **Interfaces:**
-- Consumes: application ports, `PaidExecutionCapability`, and Hyperfusion model factory.
+- Consumes: application ports, `PaidExecutionCapability`, and Groq model factory.
 - Produces: `InvestigationDependencies`, `InvestigationResult`, `build_investigator(model)`, `investigate(state, deps)`, and `validate_explanation(explanation, report, artifacts)`.
 
 - [ ] **Step 1: Write exact trajectory tests with `FunctionModel`**
@@ -608,7 +607,7 @@ Run: `uv run pytest tests/unit/application/test_run.py tests/integration/test_cl
 
 - [ ] **Step 4: Implement explicit state transitions**
 
-Use a small enum and transition table. Persist an event after each accepted transition. Perform deterministic verification even if Hyperfusion explanation fails. Never recompute findings during rendering.
+Use a small enum and transition table. Persist an event after each accepted transition. Perform deterministic verification even if Groq explanation fails. Never recompute findings during rendering.
 
 - [ ] **Step 5: Implement Typer commands**
 
@@ -722,7 +721,7 @@ Replay every fixture, render CLI JSON/human output, persist/read through SQLite,
 
 - [ ] **Step 7: Update the README to make the 60-second demo truthful**
 
-Remove the planning-stage warning only after the exact documented commands work from a clean checkout. Add configuration for optional live Hyperfusion and required live Context.dev evidence without including secrets or implying that paid smoke tests are routine.
+Remove the planning-stage warning only after the exact documented commands work from a clean checkout. Add configuration for optional live Groq and required live Context.dev evidence without including secrets or implying that paid smoke tests are routine.
 
 - [ ] **Step 8: Run the complete completion gate**
 

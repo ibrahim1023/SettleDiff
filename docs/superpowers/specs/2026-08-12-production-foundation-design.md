@@ -20,7 +20,7 @@ Use one Python application with a functional core and an imperative shell:
 - Python 3.12, managed and locked with `uv`.
 - Pydantic v2 models for all domain boundaries.
 - PydanticAI for one Investigation Agent.
-- Hyperfusion through an OpenAI-compatible Chat Completions client.
+- Groq through an OpenAI-compatible Chat Completions client.
 - FastAPI for the local HTTP interface.
 - Jinja templates plus minimal HTMX for the local debugger UI.
 - Typer for the CLI.
@@ -29,7 +29,7 @@ Use one Python application with a functional core and an imperative shell:
 - Deterministic pytest graders for evidence-only investigation behavior.
 - OpenTelemetry-compatible spans and structured logs, disabled for sensitive content by default.
 
-This is a production-shaped MVP, not a distributed production platform. It keeps replaceable adapters around Hyperfusion, Perflo, Context.dev, storage, and telemetry without introducing services or brokers.
+This is a production-shaped MVP, not a distributed production platform. It keeps replaceable adapters around Groq, Perflo, Context.dev, storage, and telemetry without introducing services or brokers.
 
 ## Alternatives Considered
 
@@ -84,11 +84,11 @@ The run enforces all of the following:
 
 The agent cannot mutate `Report`, `Finding`, or verdict fields. Its explanation is stored beside, not inside, the deterministic result.
 
-### Hyperfusion model provider
+### Groq model provider
 
-A provider factory constructs PydanticAI's OpenAI-compatible chat model with Hyperfusion's base URL, API key, and configured model ID. Provider configuration is injected; no provider secret or model name is embedded in prompts or source defaults.
+A provider factory constructs PydanticAI's OpenAI-compatible chat model with Groq's base URL, API key, and configured model ID. Provider configuration is injected; no provider secret or model name is embedded in prompts or source defaults.
 
-Before production implementation is accepted, a no-payment compatibility contract must prove that the chosen Hyperfusion model supports:
+Before production implementation is accepted, a no-payment compatibility contract must prove that the chosen Groq model supports:
 
 - Chat Completions at the configured base URL;
 - tool calls with JSON-schema arguments;
@@ -129,14 +129,14 @@ The server-rendered UI provides a run list and an Expected/Executed/Recorded det
 
 ### Fixture replay
 
-Fixture replay skips Hyperfusion, Perflo, and all paid behavior. It loads versioned sanitized artifacts, normalizes them, runs matching and verification, and compares the resulting report with expected findings. This is the default development, CI, and demo path.
+Fixture replay skips Groq, Perflo, and all paid behavior. It loads versioned sanitized artifacts, normalizes them, runs matching and verification, and compares the resulting report with expected findings. This is the default development, CI, and demo path.
 
 ## Error Model
 
 Errors are typed by boundary and preserved as evidence:
 
 - `InputError`: invalid URL, body, amount, or missing authorization;
-- `ProviderError`: Hyperfusion authentication, rate limit, timeout, or invalid model output;
+- `ProviderError`: Groq authentication, rate limit, timeout, or invalid model output;
 - `PerfloCommandError`: a known Perflo error envelope with recoverability and submission certainty;
 - `ArtifactParseError`: provider data cannot be normalized without guessing;
 - `MatchError`: no deterministic ledger match or ambiguous candidates;
@@ -188,7 +188,7 @@ The eval suite measures investigation behavior, not financial truth. Initial cas
 - correct escalation to `UNVERIFIABLE` when evidence is insufficient;
 - explanation citation validity and contradiction with the machine verdict.
 
-Code-based graders are primary. Model-based grading is deferred until a subjective explanation-quality question demonstrates value and can be calibrated against human review. Live Hyperfusion evals are opt-in and excluded from default CI.
+Code-based graders are primary. Model-based grading is deferred until a subjective explanation-quality question demonstrates value and can be calibrated against human review. Live Groq evals are opt-in and excluded from default CI.
 
 ## Observability
 
@@ -259,7 +259,7 @@ Implementation files are not created during foundation initialization. Empty sou
 1. Establish project tooling and domain models.
 2. Implement normalization, matching, verification, and fixture replay without an LLM.
 3. Implement the safe Perflo subprocess adapter and captured-envelope contracts.
-4. Complete the Hyperfusion compatibility spike.
+4. Complete the Groq compatibility spike.
 5. Add the bounded PydanticAI investigator and deterministic agent tests.
 6. Add the Typer CLI.
 7. Add SQLite persistence and the local FastAPI/Jinja UI.
@@ -271,7 +271,7 @@ Implementation files are not created during foundation initialization. Empty sou
 
 The following choices require owner input before their implementation task begins:
 
-- the exact Hyperfusion base URL and model identifier;
+- the exact Groq base URL and model identifier;
 - whether live runs require an interactive confirmation in addition to the explicit CLI budget;
 - local report retention duration and whether raw artifacts should be disabled by default;
 - the initial deployment target after the local-only MVP.

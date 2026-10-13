@@ -2,7 +2,7 @@
 
 ## Scope
 
-The opt-in Context.dev contract used the documented Markdown scrape endpoint with an owner-approved public IANA page. It did not invoke Perflo, x402 payment or signer code, or Hyperfusion.
+The opt-in Context.dev contract used the documented Markdown scrape endpoint with an owner-approved public IANA page. It did not invoke Perflo, x402 payment or signer code, or Groq.
 
 | Field | Authorized value |
 |---|---|

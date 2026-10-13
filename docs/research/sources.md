@@ -6,7 +6,6 @@ Research was conducted on 2026-08-12. Primary and official sources were preferre
 
 ### Product and model provider
 
-- [Hyperfusion](https://hyperfusion.io/) — OpenAI-compatible APIs, function calling, structured outputs, Pydantic/JSON Schema compatibility, and regional deployment claims.
 - The local `Product-spec.md` — authoritative product scope; intentionally ignored by Git.
 - Perflo instructions supplied with the workspace — command envelopes, account capability differences, ambiguous amounts, mutation certainty, and no-double-spend recovery.
 
@@ -23,7 +22,7 @@ Research was conducted on 2026-08-12. Primary and official sources were preferre
 ### Agent, context, harness, loop, graph, and eval practices
 
 - [PydanticAI agents](https://pydantic.dev/docs/ai/core-concepts/agent/) — typed dependencies and structured outputs.
-- [PydanticAI OpenAI-compatible providers](https://pydantic.dev/docs/ai/models/openai/) — custom `AsyncOpenAI` client and base URL for Hyperfusion.
+- [PydanticAI Groq models](https://ai.pydantic.dev/models/groq/) — native model/provider integration.
 - [PydanticAI testing](https://pydantic.dev/docs/ai/guides/testing/) — `TestModel`, `FunctionModel`, `Agent.override`, and blocking real model requests.
 - [PydanticAI evals](https://pydantic.dev/docs/ai/evals/evals/) — datasets, cases, code-based evaluators, and experiment reports.
 - [PydanticAI observability](https://pydantic.dev/docs/ai/integrations/logfire/#using-opentelemetry) — OpenTelemetry export without requiring a particular hosted backend.
@@ -74,4 +73,7 @@ Research was conducted on 2026-08-12. Primary and official sources were preferre
 
 ## Compatibility risk requiring an early spike
 
-“OpenAI-compatible” does not guarantee identical tool-call, structured-output, streaming, usage, or error behavior. Before agent implementation, an unpaid Hyperfusion contract test must validate the selected base URL and model against the exact PydanticAI chat path. The application must use a model profile for known capability differences rather than weakening schemas after runtime failures.
+“OpenAI-compatible” does not guarantee identical tool-call, structured-output, streaming, usage, or error behavior. Before agent implementation, an bounded Groq contract test must validate the selected base URL and model against the exact PydanticAI chat path. The application must use a model profile for known capability differences rather than weakening schemas after runtime failures.
+
+- [Groq OpenAI compatibility](https://console.groq.com/docs/openai) — official Chat Completions endpoint and supported client fields.
+- [Groq Python SDK](https://github.com/groq/groq-python) — native API client and explicit retry configuration.

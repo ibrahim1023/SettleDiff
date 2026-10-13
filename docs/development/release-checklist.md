@@ -70,4 +70,4 @@ uv pip install --python "$release_tmp/venv/bin/python" "$release_tmp/dist/settle
 
 ## Explicit live gates
 
-Hyperfusion, Context.dev, and paid smoke tests remain opt-in and are never part of the offline gate. Run one only when the release makes the corresponding compatibility claim, with fresh owner authorization for every credit-bearing or money-moving request. The 2026-09-02 Context.dev and x402 claims are bounded by their committed reports under `docs/testing/`.
+Groq, Context.dev, and paid smoke tests remain opt-in and are never part of the offline gate. Run one only when the release makes the corresponding compatibility claim, with fresh owner authorization for every credit-bearing or money-moving request. The 2026-09-02 Context.dev and x402 claims are bounded by their committed reports under `docs/testing/`.

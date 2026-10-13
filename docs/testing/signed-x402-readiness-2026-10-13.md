@@ -54,7 +54,5 @@ refused. Synthetic regression tests cover both acceptance and contradictions.
   refuse execution before payment; no paid execution was attempted to test this.
 - A paid trial requires fresh approval of the exact request and test-USDC budget,
   with interactive authorization and no automatic retry.
-- The live model structured-output attempt returned `ModelHTTPError`. A subsequent
-  non-generating provider catalog request returned HTTP 401. Hyperfusion model
-  compatibility and explanation quality remain unconfirmed; the owner requested
-  Groq support instead of further Hyperfusion troubleshooting.
+- The separate Groq compatibility and synthetic production-investigator suite now
+  passes with the accepted setup in the [model guide](../development/model-providers.md).

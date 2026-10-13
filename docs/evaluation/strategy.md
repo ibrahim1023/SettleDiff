@@ -26,7 +26,7 @@ The regression tests also prove that payment, retry, shell, filesystem, and netw
 
 ## Agent contract coverage
 
-Separate unit tests use PydanticAI `FunctionModel` and `TestModel` to exercise tool calls, structured output, grounding, request/tool/token limits, and deterministic fallback behavior. The opt-in Hyperfusion contract checks provider mechanics against an owner-configured model. It is a compatibility test, not a capability benchmark.
+Separate unit tests use PydanticAI `FunctionModel` and `TestModel` to exercise tool calls, structured output, grounding, request/tool/token limits, and deterministic fallback behavior. The opt-in Groq contract checks provider mechanics against an owner-configured model. It is a compatibility test, not a capability benchmark.
 
 ## Promotion policy
 

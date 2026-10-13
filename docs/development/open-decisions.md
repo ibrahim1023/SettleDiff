@@ -25,7 +25,7 @@ Resolved choices are recorded alongside the remaining gates so implemented testn
 | First x402 network and asset | Support only x402 v2 `exact` on Base Sepolia (`eip155:84532`) canonical test USDC. Keep mainnet and alternative networks/assets unsupported. | Offline corpus, controlled cycle, public endpoint cycle |
 | Testnet facilitator compatibility | The official x402 testnet facilitator worked in the controlled and GoPlausible cycles. This is testnet evidence, not a production facilitator selection, and historical compatibility does not establish persisted per-run facilitator provenance. | Sanitized live reports |
 | Context.dev live boundary | Require Context.dev configuration for live investigations and call it only for an eligible failed-service HTTPS status URL. Context evidence cannot decide financial truth. | Offline contracts and 2026-09-02 live compatibility record |
-| Deterministic ownership | PydanticAI/Hyperfusion may select and explain evidence; only deterministic code creates findings and verdicts. | ADRs and architecture tests |
+| Deterministic ownership | PydanticAI/Groq may select and explain evidence; only deterministic code creates findings and verdicts. | ADRs and architecture tests |
 | Settlement payer policy | Payer validation is mandatory; `REQUIRED` is the only policy and missing payer evidence cannot confirm settlement. | ADR 0010 |
 
 No input is required for the single-agent boundary, fixture-first tests, required live telemetry export with offline test isolation, SQLite, or the server-rendered loopback UI; those choices are accepted in the existing ADRs.
