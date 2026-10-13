@@ -10,5 +10,5 @@ def pytest_configure() -> None:
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
-        if "live_hyperfusion" not in item.keywords and "paid" not in item.keywords:
+        if not {"live", "live_groq", "live_hyperfusion", "paid"}.intersection(item.keywords):
             item.add_marker(pytest.mark.offline)
