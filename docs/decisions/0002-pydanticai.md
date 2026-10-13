@@ -1,15 +1,17 @@
-# ADR 0002: PydanticAI with Hyperfusion
+# ADR 0002: PydanticAI with Groq
 
 **Status:** Accepted  
 **Date:** 2026-08-12
 
+Provider selection was updated under [ADR 0014](0014-groq-explanation-provider.md).
+
 ## Context
 
-The investigator needs typed tools, structured output, hard usage limits, offline loop tests, and portable tracing. Hyperfusion is the selected model provider and exposes an OpenAI-compatible API.
+The investigator needs typed tools, structured output, hard usage limits, offline loop tests, and portable tracing. Groq is the selected model provider and exposes an OpenAI-compatible API.
 
 ## Decision
 
-Use PydanticAI for the single investigator. Configure an OpenAI-compatible Chat Completions model through a provider factory using Hyperfusion's injected base URL, API key, and model ID. Validate the exact model with an unpaid compatibility contract before agent implementation is accepted.
+Use PydanticAI for the single investigator. Configure an OpenAI-compatible Chat Completions model through a provider factory using Groq's injected base URL, API key, and model ID. Validate the exact model with an unpaid compatibility contract before agent implementation is accepted.
 
 Use current PydanticAI APIs (`output_type`, `result.output`, typed dependencies, `UsageLimits`, `TestModel`, and `FunctionModel`). Provider-specific compatibility belongs in a model profile, not prompts or domain code.
 
@@ -19,7 +21,7 @@ Use current PydanticAI APIs (`output_type`, `result.output`, typed dependencies,
 - The model provider remains replaceable behind one factory.
 - CI can block real model requests.
 - Tool/request/token/cost limits are enforced by the SDK and application deadline.
-- Hyperfusion edge compatibility remains a tracked risk until the contract passes.
+- Groq edge compatibility remains a tracked risk until the contract passes.
 
 ## Rejected
 

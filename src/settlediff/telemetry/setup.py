@@ -92,7 +92,7 @@ _CHECK_NAMES = frozenset(
         "signed_receipt_transaction",
     }
 )
-_PROVIDERS = frozenset({"contextdev", "groq", "hyperfusion", "perflo"})
+_PROVIDERS = frozenset({"contextdev", "groq", "perflo"})
 _PROVIDER_ERROR_CLASSES = frozenset(
     {
         "ContextDevProtocolError",

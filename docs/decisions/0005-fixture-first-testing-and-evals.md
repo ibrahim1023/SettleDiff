@@ -11,7 +11,7 @@ Default development must be reproducible and free while the product operates aro
 
 Make sanitized fixture replay the primary integration path. Test deterministic logic with pytest and Hypothesis. Test agent trajectories using PydanticAI `FunctionModel`, tool schemas using `TestModel`, and globally disable real model requests in the offline suite.
 
-Use small pytest datasets and deterministic code graders for investigation behavior. Add a dedicated eval framework only when repeated capability trials require it. Keep live Hyperfusion contracts and manually authorized paid cycles explicit, separate, and opt-in.
+Use small pytest datasets and deterministic code graders for investigation behavior. Add a dedicated eval framework only when repeated capability trials require it. Keep live Groq contracts and manually authorized paid cycles explicit, separate, and opt-in.
 
 The offline dataset declares fixed evidence, scripted model stimuli, and independent
 pass criteria. Every case runs the production investigation interface; payment safety

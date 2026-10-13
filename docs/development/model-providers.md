@@ -1,82 +1,59 @@
-# Model providers
+# Groq model setup
 
-SettleDiff supports Groq and Hyperfusion for evidence selection and explanations.
-Only deterministic code produces findings and verdicts. Provider selection does
-not change payment authorization, evidence handling, or retry safety.
-[ADR 0014](../decisions/0014-groq-explanation-provider.md) records the decision.
+Groq supplies SettleDiff's bounded investigation and explanation model. Only
+deterministic code produces findings and verdicts.
+[ADR 0014](../decisions/0014-groq-explanation-provider.md) records the accepted setup.
 
-## Groq setup
+## Configure
 
 Put these settings in the ignored `.env` file:
 
 ```dotenv
-SETTLEDIFF_MODEL_PROVIDER=groq
 SETTLEDIFF_GROQ_API_KEY=your-groq-api-key
-SETTLEDIFF_GROQ_MODEL=openai/gpt-oss-20b
+SETTLEDIFF_GROQ_MODEL=openai/gpt-oss-120b
 ```
 
-The endpoint is `https://api.groq.com/openai/v1`, using Groq's
-[official OpenAI compatibility](https://console.groq.com/docs/openai) through the
-existing client dependency. SDK retries are disabled. `SETTLEDIFF_GROQ_TIMEOUT_SECONDS`
-can override the 30-second client timeout within the supported 1–300 second range.
-The investigation's application deadline and request/tool/token limits still apply.
+The endpoint is `https://api.groq.com/openai/v1`, using the
+[Groq API](https://console.groq.com/docs/openai) through PydanticAI’s native Groq adapter and SDK. There is no provider selector or automatic switch.
+`SETTLEDIFF_GROQ_TIMEOUT_SECONDS` can override the 30-second client timeout within
+1–300 seconds. The application deadline and request/tool/token limits still apply.
 
-Select a currently available tool-capable model from the
-[Groq model catalog](https://console.groq.com/docs/models). Availability can depend
-on the account: the current account rejected `llama-3.3-70b-versatile`, while its
-catalog included `openai/gpt-oss-20b`. Model IDs are configuration, not hardcoded
-provider defaults.
+Use a currently available tool-capable model from the
+[Groq catalog](https://console.groq.com/docs/models). The accepted local setup is
+`openai/gpt-oss-120b`, tool-based structured output, and temperature zero. The native adapter handles provider-specific tool error responses and token usage.
+SDK retries are disabled. Model IDs remain configuration rather than source defaults.
 
-## Hyperfusion compatibility
+With no model configured, SettleDiff uses its deterministic fallback. A configured
+model with incomplete credentials causes refusal before provider probing or payment.
+Runtime model failures retain the authoritative machine report and cannot authorize
+another payment.
 
-Existing installations default to Hyperfusion if no provider is selected. To use it
-explicitly, configure:
+Keys use `SecretStr` and are scrubbed from diagnostics. Model metrics use the bounded
+`groq` label. Prompt/tool/body capture remains disabled. Live runs and model probes
+require authenticated telemetry; ordinary tests remain offline.
 
-```dotenv
-SETTLEDIFF_MODEL_PROVIDER=hyperfusion
-SETTLEDIFF_HYPERFUSION_BASE_URL=your-chat-completions-base-url
-SETTLEDIFF_HYPERFUSION_API_KEY=your-hyperfusion-api-key
-SETTLEDIFF_HYPERFUSION_MODEL=your-model-id
-```
-
-The factory keeps its old `build_hyperfusion_model` import as a compatibility alias.
-There is no automatic switch to another provider on errors. The current Hyperfusion
-credentials returned HTTP 401 on 2026-10-13; this does not establish that the
-provider itself lacks compatibility.
-
-## Missing configuration and privacy
-
-If the selected provider has no model configured, SettleDiff uses its existing
-fallback explanation without contacting either provider. If a model is selected
-but required configuration is incomplete, the CLI refuses before provider probing
-or payment. An authenticated model request may still fail at runtime; its error
-cannot change the machine report or authorize another payment.
-
-API keys use `SecretStr` and are scrubbed from diagnostics. Groq usage metrics carry
-the bounded `groq` provider label. Content capture remains disabled. Live
-investigations and the Groq probe require the existing authenticated telemetry setup.
-Default tests and evals make no live model request.
-
-## Explicit live compatibility probe
+## Explicit live checks
 
 ```bash
 SETTLEDIFF_LIVE_GROQ=1 uv run pytest tests/contract/test_groq_live.py -m live_groq -q
 ```
 
-For Hyperfusion, use its separate gate:
+The suite contains three checks:
 
-```bash
-SETTLEDIFF_LIVE_HYPERFUSION=1 uv run pytest tests/contract/test_hyperfusion_live.py -m live_hyperfusion -q
-```
+- Structured output and one local echo-tool continuation: at most three model
+  requests, one tool call, 256 output tokens per request, and 768 aggregate output tokens.
+- Production investigator on provider-only evidence: preserves `UNVERIFIABLE`,
+  returns a grounded explanation, and leaves the report unchanged.
+- Production investigator on independently confirmed evidence: preserves `VERIFIED`,
+  returns a grounded explanation, and leaves the report unchanged.
 
-The shared contract verifies exact structured output, one local echo tool call,
-and continuation using its opaque returned token. It permits at most three model
-requests, one tool call, and 256 output tokens per request (768 aggregate), with
-bounded input-token usage. Prompts and tool data are synthetic. It makes no
-Perflo, Context.dev, signer, RPC, or payment call. Running it may consume model API
-credits; it is not part of ordinary CI.
+Each production case uses the existing four-request, six-tool, 8,000-input-token,
+1,000-output-token limits and 20-second deadline. All reports and tool data are
+synthetic. No Perflo, Context.dev, signer, RPC, or payment tool is available.
+Running the checks may consume model API credits; they require the explicit gate
+and are excluded from ordinary CI.
 
-On 2026-10-13, the Groq contract passed with `openai/gpt-oss-20b`. This verifies the
-protocol features required by the investigator. It is a bounded compatibility
-result, not a benchmark of explanation quality or a production-readiness claim.
-See the [eval guide](evals.md) for behavioral grading and regression cases.
+On 2026-10-13, all three checks passed with the accepted setup. Earlier attempts
+exposed output/tool failures with a smaller model and another output mode; those
+attempts were not counted as passes. This is bounded validation, not a capability
+benchmark. See the [eval guide](evals.md) for broader behavioral regression testing.

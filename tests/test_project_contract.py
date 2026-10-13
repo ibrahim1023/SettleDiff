@@ -85,19 +85,14 @@ def test_environment_example_contains_only_blank_safe_assignments() -> None:
 
     parsed = dict(line.split("=", maxsplit=1) for line in assignments)
     assert parsed == {
-        "SETTLEDIFF_MODEL_PROVIDER": "",
         "SETTLEDIFF_GROQ_API_KEY": "",
         "SETTLEDIFF_GROQ_MODEL": "",
         "SETTLEDIFF_LIVE_GROQ": "",
         "SETTLEDIFF_CONTEXTDEV_API_KEY": "",
         "SETTLEDIFF_DATABASE_PATH": "",
-        "SETTLEDIFF_HYPERFUSION_API_KEY": "",
-        "SETTLEDIFF_HYPERFUSION_BASE_URL": "",
-        "SETTLEDIFF_HYPERFUSION_MODEL": "",
         "SETTLEDIFF_LIVE_CONTEXTDEV": "",
         "SETTLEDIFF_LIVE_CONTEXTDEV_CLAIM": "",
         "SETTLEDIFF_LIVE_CONTEXTDEV_URL": "",
-        "SETTLEDIFF_LIVE_HYPERFUSION": "",
         "SETTLEDIFF_OTLP_ENDPOINT": "",
         "SETTLEDIFF_OTLP_AUTHORIZATION": "",
         "SETTLEDIFF_PERFLO_RPC_URL": "",
@@ -156,7 +151,7 @@ def test_development_and_pytest_contract() -> None:
     pytest_config = object_mapping(pytest_section["ini_options"])
     assert pytest_config["addopts"] == "--strict-config --strict-markers"
     markers = "\n".join(string_list(pytest_config["markers"]))
-    assert "live_hyperfusion" in markers
+    assert "live_groq" in markers
     assert "live_contextdev" in markers
     assert "paid" in markers
     assert "offline" in markers

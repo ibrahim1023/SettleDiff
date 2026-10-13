@@ -25,7 +25,7 @@ CANARY = "syn_canary_secret_never_export"
 def configured_settings() -> Settings:
     return Settings(
         _env_file=None,  # pyright: ignore[reportCallIssue]
-        hyperfusion_api_key=SecretStr(CANARY),
+        groq_api_key=SecretStr(CANARY),
         contextdev_api_key=SecretStr(CANARY),
     )
 
@@ -246,8 +246,8 @@ def test_metric_contract_fails_closed(name: str, attributes: dict[str, object]) 
     telemetry.shutdown()
 
 
-@pytest.mark.parametrize("provider", ["hyperfusion", "groq"])
-def test_remaining_bounded_metrics_export_useful_values(provider: str) -> None:
+def test_remaining_bounded_metrics_export_useful_values() -> None:
+    provider = "groq"
     reader = InMemoryMetricReader()
     telemetry = configure_telemetry(
         configured_settings(), metric_reader=reader, log_stream=io.StringIO()
@@ -304,17 +304,17 @@ def test_remaining_bounded_metrics_export_useful_values(provider: str) -> None:
             None,
             {"provider": CANARY, "error_class": "PerfloCommandError"},
         ),
-        ("histogram", "settlediff.unknown", 1, {"provider": "hyperfusion"}),
+        ("histogram", "settlediff.unknown", 1, {"provider": "groq"}),
         ("histogram", "settlediff.model_requests", 1, {"provider": CANARY}),
         (
             "histogram",
             "settlediff.model_requests",
             1,
-            {"provider": "hyperfusion", "model": CANARY},
+            {"provider": "groq", "model": CANARY},
         ),
-        ("histogram", "settlediff.model_requests", CANARY, {"provider": "hyperfusion"}),
-        ("histogram", "settlediff.model_requests", True, {"provider": "hyperfusion"}),
-        ("histogram", "settlediff.model_requests", -1, {"provider": "hyperfusion"}),
+        ("histogram", "settlediff.model_requests", CANARY, {"provider": "groq"}),
+        ("histogram", "settlediff.model_requests", True, {"provider": "groq"}),
+        ("histogram", "settlediff.model_requests", -1, {"provider": "groq"}),
     ],
 )
 def test_remaining_metric_contract_fails_closed(
@@ -360,7 +360,7 @@ def test_telemetry_delivery_failures_do_not_raise_after_validation() -> None:
     )
 
     telemetry.counter("settlediff.runs", {"mode": "replay", "verdict": "VERIFIED"})
-    telemetry.histogram("settlediff.model_requests", 1, {"provider": "hyperfusion"})
+    telemetry.histogram("settlediff.model_requests", 1, {"provider": "groq"})
     telemetry.event("run.started", {"component": "application"})
     telemetry._logger.removeHandler(  # pyright: ignore[reportPrivateUsage]
         failing_handler

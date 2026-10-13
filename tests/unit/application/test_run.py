@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
 import pytest
 from pydantic import JsonValue
@@ -1645,10 +1645,7 @@ class StubTelemetry:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["hyperfusion", "groq"])
-async def test_run_emits_safe_state_and_boundary_telemetry(
-    provider: Literal["hyperfusion", "groq"],
-) -> None:
+async def test_run_emits_safe_state_and_boundary_telemetry() -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
@@ -1668,12 +1665,12 @@ async def test_run_emits_safe_state_and_boundary_telemetry(
     async def verify() -> MachineReport:
         return report
 
-    outcome = await RunInvestigation(
-        execute, verify, telemetry=telemetry, model_provider=provider
-    ).execute(LiveRunCommand(request, capability))
+    outcome = await RunInvestigation(execute, verify, telemetry=telemetry).execute(
+        LiveRunCommand(request, capability)
+    )
 
     assert outcome.report is report
-    assert all(labels == {"provider": provider} for _, _, labels in telemetry.histograms)
+    assert all(labels == {"provider": "groq"} for _, _, labels in telemetry.histograms)
     assert telemetry.spans == [
         "settlediff.run",
         "settlediff.authorize",

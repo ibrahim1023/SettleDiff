@@ -453,7 +453,6 @@ async def _execute_live_run(
             lambda: collector.verify(request),
             persist_event=persist_event,
             telemetry=telemetry,
-            model_provider=settings.model_provider,
             explain=lambda report, artifact_ids: _explain_report(
                 report, artifact_ids, model, evidence=collector.artifacts
             ),

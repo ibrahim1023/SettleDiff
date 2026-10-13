@@ -12,9 +12,9 @@ Prove financial semantics, evidence matching, safety gates, and interface contra
 | Property | Financial/check invariants and parser stability | None |
 | Fixture replay | End-to-end deterministic reports from sanitized artifacts | None |
 | Agent loop | Exact tool trajectories, limits, and grounded output | None; `FunctionModel`/`TestModel` |
-| Adapter contract | Parse captured Hyperfusion/Perflo envelopes and Context.dev responses | None |
+| Adapter contract | Parse captured Groq/Perflo envelopes and Context.dev responses | None |
 | Interface integration | Typer and FastAPI against in-memory/fake ports | None |
-| Live compatibility | Hyperfusion and Context.dev response mechanics | Explicit opt-in; Context.dev consumes credits |
+| Live compatibility | Groq and Context.dev response mechanics | Explicit opt-in; Context.dev consumes credits |
 | Authorized live cycle | Perflo or x402 end-to-end compatibility | Manual approval, exact budget, no retry |
 
 ## Deterministic core matrix
@@ -270,7 +270,7 @@ uv run pytest -m "not live and not paid" --cov=settlediff --cov-report=term-miss
 uv run settlediff verify-fixture fixtures/paid-failure --json
 
 # Explicit unpaid provider compatibility
-SETTLEDIFF_LIVE_HYPERFUSION=1 uv run pytest -m live_hyperfusion
+SETTLEDIFF_LIVE_GROQ=1 uv run pytest -m live_groq
 
 # Context.dev compatibility; one credit per explicitly authorized invocation
 SETTLEDIFF_LIVE_CONTEXTDEV=1 uv run pytest -m live_contextdev

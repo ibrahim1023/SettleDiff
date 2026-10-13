@@ -6,7 +6,7 @@ import base64
 import binascii
 import json
 import re
-from typing import Annotated, Literal, NoReturn, Protocol, cast
+from typing import Annotated, Literal, NoReturn, Protocol, Self, cast
 
 from pydantic import (
     AfterValidator,
@@ -63,17 +63,25 @@ class BundleError(ValueError):
 
 
 class CompatibilityMetadata(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+    model_config = ConfigDict(strict=True, extra="allow", frozen=True)
 
     settlediff_version: NonEmptyStr
     report_schema_version: int = Field(ge=1)
     database_schema_version: int = Field(ge=1)
     contextdev_api_path: NonEmptyStr
-    hyperfusion_model: NonEmptyStr | None
     perflo_cli_version: NonEmptyStr | None
     payment_adapter_id: NonEmptyStr | None = None
     x402_protocol_version: Literal["2"] | None = None
     x402_signer_schema_version: Literal[2, 3] | None = None
+
+    @model_validator(mode="after")
+    def require_retired_metadata_is_null(self) -> Self:
+        extras = self.__pydantic_extra__ or {}
+        if len(extras) > 1 or any(
+            not key.endswith("_model") or value is not None for key, value in extras.items()
+        ):
+            raise ValueError("unsupported compatibility metadata")
+        return self
 
 
 def _validate_logical_path(path: str) -> str:
@@ -216,7 +224,6 @@ def _compatibility(report: MachineReport) -> CompatibilityMetadata:
         report_schema_version=report.schema_version,
         database_schema_version=DATABASE_SCHEMA_VERSION,
         contextdev_api_path="/web/scrape/markdown",
-        hyperfusion_model=None,
         perflo_cli_version=None,
         payment_adapter_id=report.adapter_id,
         x402_protocol_version=(X402_PROTOCOL_VERSION if report.adapter_id == "x402" else None),

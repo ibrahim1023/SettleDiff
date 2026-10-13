@@ -94,7 +94,6 @@ def test_bundle_rejects_signature_assessments_that_contradict_their_findings() -
             report_schema_version=4,
             database_schema_version=DATABASE_SCHEMA_VERSION,
             contextdev_api_path="/web/scrape/markdown",
-            hyperfusion_model=None,
             perflo_cli_version=None,
             payment_adapter_id=None,
             x402_protocol_version=None,

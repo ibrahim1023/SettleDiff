@@ -17,7 +17,7 @@ dependencies = [
   "opentelemetry-exporter-otlp-proto-http>=1.44,<2",
   "opentelemetry-sdk>=1.44,<2",
   "pydantic>=2.11,<3",
-  "pydantic-ai-slim[openai]>=1,<2",
+  "pydantic-ai-slim[groq]>=1,<2",
   "pydantic-settings>=2.10,<3",
   "typer>=0.16,<1",
   "uvicorn>=0.34,<1",
@@ -57,7 +57,6 @@ markers = [
   "offline: deterministic test that must not use external services",
   "live: opt-in test that contacts an external service",
   "live_groq: opt-in live Groq compatibility test",
-  "live_hyperfusion: opt-in live Hyperfusion compatibility test",
   "live_contextdev: opt-in live Context.dev contract that consumes one credit",
   "paid: opt-in paid Perflo smoke test requiring explicit authorization",
 ]

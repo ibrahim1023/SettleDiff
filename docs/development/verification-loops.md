@@ -86,7 +86,6 @@ These loops use live model API credits and never run in default CI. Run only the
 
 ```bash
 SETTLEDIFF_LIVE_GROQ=1 uv run pytest tests/contract/test_groq_live.py -m live_groq -q
-SETTLEDIFF_LIVE_HYPERFUSION=1 uv run pytest tests/contract/test_hyperfusion_live.py -m live_hyperfusion -q
 ```
 
 Validate the configured model's tool call, multi-turn continuation, structured output, usage metadata, timeout, rate-limit, and malformed-response behavior. Pin the accepted model ID in deployment configuration, not source prompts.

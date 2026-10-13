@@ -1,4 +1,4 @@
-"""Bounded, synthetic chat compatibility checks shared by the live provider probes."""
+"""Bounded synthetic chat compatibility checks for the Groq live probe."""
 
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ from pydantic_ai import Agent
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from settlediff.agent.model import build_chat_model
-from settlediff.config import ChatCompletionsConfig
+from settlediff.config import GroqConfig
 
 
 class ContractOutput(BaseModel):
     answer: str
 
 
-async def check_chat_compatibility(config: ChatCompletionsConfig) -> RunUsage:
+async def check_chat_compatibility(config: GroqConfig) -> RunUsage:
     model = build_chat_model(config)
     usage = RunUsage()
     try:

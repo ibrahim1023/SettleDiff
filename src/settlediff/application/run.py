@@ -7,7 +7,7 @@ from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Literal, Protocol, cast
+from typing import Protocol, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
@@ -848,13 +848,11 @@ class RunInvestigation:
         ]
         | None = None,
         transaction_hash: Callable[[], str | None] | None = None,
-        model_provider: Literal["hyperfusion", "groq"] = "hyperfusion",
     ) -> None:
         self._execute_paid = execute_paid
         self._verify = verify
         self._persist_event = persist_event
         self._telemetry = telemetry
-        self._model_provider = model_provider
         self._explain = explain
         self._artifact_ids = artifact_ids
         self._recover = recover
@@ -1035,28 +1033,28 @@ class RunInvestigation:
             self._telemetry.histogram(
                 "settlediff.model_requests",
                 record.model_requests,
-                {"provider": self._model_provider},
+                {"provider": "groq"},
             )
             self._telemetry.histogram(
                 "settlediff.tool_calls",
                 record.tool_calls,
-                {"provider": self._model_provider},
+                {"provider": "groq"},
             )
             self._telemetry.histogram(
                 "settlediff.input_tokens",
                 record.input_tokens,
-                {"provider": self._model_provider},
+                {"provider": "groq"},
             )
             self._telemetry.histogram(
                 "settlediff.output_tokens",
                 record.output_tokens,
-                {"provider": self._model_provider},
+                {"provider": "groq"},
             )
             if record.model_cost is not None:
                 self._telemetry.histogram(
                     "settlediff.model_cost",
                     record.model_cost,
-                    {"provider": self._model_provider},
+                    {"provider": "groq"},
                 )
 
 

@@ -7,7 +7,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 ## Trust boundaries
 
 - local user input;
-- explicitly selected Groq or Hyperfusion model API;
+- explicitly selected Groq model API;
 - Perflo executable and backend;
 - x402 resource/facilitator headers and independently owned external signer;
 - Context.dev live evidence service;

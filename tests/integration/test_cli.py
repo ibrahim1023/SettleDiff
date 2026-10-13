@@ -2792,9 +2792,7 @@ def test_missing_selected_groq_credentials_refuse_before_provider_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def incomplete_groq() -> Settings:
-        return live_settings().model_copy(
-            update={"model_provider": "groq", "groq_model": "syn-model"}
-        )
+        return live_settings().model_copy(update={"groq_model": "syn-model"})
 
     async def forbidden_probe() -> None:
         raise AssertionError(

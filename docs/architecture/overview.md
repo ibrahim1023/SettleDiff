@@ -170,7 +170,7 @@ Issues bounded unsigned GET/POST challenge requests without redirects. Remote re
 
 ### Investigation Agent
 
-One PydanticAI agent chooses among typed tools. Groq or Hyperfusion supplies the explicitly selected model through the shared OpenAI-compatible Chat Completions factory. PydanticAI owns the model/tool loop; SettleDiff owns authorization, evidence state, limits, and all financial checks.
+One PydanticAI agent chooses among typed tools. Groq supplies the explicitly selected model through the OpenAI-compatible Chat Completions factory. PydanticAI owns the model/tool loop; SettleDiff owns authorization, evidence state, limits, and all financial checks.
 
 ### Activity matcher
 

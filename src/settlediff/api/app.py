@@ -91,7 +91,7 @@ def create_app(repository: SQLiteReportRepository) -> FastAPI:
             database_schema=DATABASE_SCHEMA_VERSION,
             bundle_schema=3,
             contextdev_api_path=CONTEXTDEV_API_PATH,
-            hyperfusion_model="Not recorded",
+            explanation_model="Not recorded",
             perflo_version="Not recorded",
             x402_protocol_version=X402_PROTOCOL_VERSION,
             x402_signer_schema_version=X402_SIGNER_SCHEMA_VERSION,

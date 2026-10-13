@@ -3,7 +3,7 @@
 | ADR | Decision | Status |
 |---|---|---|
 | [0001](0001-agentic-investigation-deterministic-verdict.md) | Agentic investigation, deterministic verdict | Accepted |
-| [0002](0002-pydanticai-hyperfusion.md) | PydanticAI with Hyperfusion | Accepted |
+| [0002](0002-pydanticai.md) | PydanticAI with Groq | Accepted |
 | [0003](0003-single-python-application.md) | Single Python application and server-rendered UI | Accepted |
 | [0004](0004-safe-perflo-subprocess-boundary.md) | Safe Perflo subprocess and mutation boundary | Accepted |
 | [0005](0005-fixture-first-testing-and-evals.md) | Fixture-first tests and code-first agent evals | Accepted |
@@ -16,6 +16,6 @@
 | [0012](0012-signed-provider-evidence.md) | Signed provider evidence with ephemeral signatures | Accepted |
 | [0013](0013-required-live-observability.md) | Required export for live investigations (supersedes 0006 export policy) | Accepted |
 
-| [0014](0014-groq-explanation-provider.md) | Groq as an explicit explanation provider | Accepted |
+| [0014](0014-groq-explanation-provider.md) | Groq explanation provider | Accepted |
 
 New decisions use the next four-digit number. ADRs are immutable after acceptance except for typo/link corrections; changed decisions supersede earlier records.

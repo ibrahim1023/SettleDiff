@@ -34,3 +34,64 @@ async def test_groq_supports_structured_output_and_tool_continuation(
             telemetry.token_usage(usage.input_tokens, usage.output_tokens, "groq")
     finally:
         telemetry.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fixture", ["perflo-v8-provider-only-success", "x402-independent-confirmed"]
+)
+async def test_groq_production_investigator_preserves_grounded_report(
+    monkeypatch: pytest.MonkeyPatch,
+    fixture: str,
+) -> None:
+    import json
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from settlediff.agent.investigator import InvestigationState, investigate
+    from settlediff.agent.model import build_chat_model
+    from settlediff.agent.tools import build_investigation_dependencies
+    from settlediff.application.replay import replay_fixture
+    from settlediff.domain.models import ArtifactType, EvidenceArtifact
+
+    if os.getenv("SETTLEDIFF_LIVE_GROQ") != "1":
+        pytest.skip("set SETTLEDIFF_LIVE_GROQ=1 for the synthetic production-investigator check")
+    monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", True)
+    settings = Settings()
+    settings.require_observability()
+    telemetry = configure_telemetry(settings)
+    model = build_chat_model(settings.require_groq())
+    try:
+        root = Path(__file__).resolve().parents[2] / "fixtures" / fixture
+        report = replay_fixture(root)
+        before = report.model_dump_json()
+        artifacts = tuple(
+            EvidenceArtifact(
+                artifact_id=f"{fixture}:{filename}",
+                artifact_type=kind,
+                source="synthetic.fixture",
+                collected_at=datetime.now(UTC),
+                redacted=True,
+                data=json.loads((root / filename).read_text()),
+            )
+            for filename, kind in (
+                ("contract.json", ArtifactType.SERVICE_CONTRACT),
+                ("activity.json", ArtifactType.ACTIVITY),
+            )
+        )
+        with telemetry.span(
+            "settlediff.agent.live_eval", {"component": "agent", "provider": "groq"}
+        ):
+            result = await investigate(
+                InvestigationState(report, frozenset(a.artifact_id for a in artifacts)),
+                build_investigation_dependencies(report, artifacts),
+                model,
+            )
+        assert report.model_dump_json() == before
+        assert result.explanation.deterministic_verdict == report.verdict
+        assert not result.used_fallback
+        assert result.rejected_output is None
+    finally:
+        assert model.provider is not None
+        await model.provider.client.close()
+        telemetry.shutdown()

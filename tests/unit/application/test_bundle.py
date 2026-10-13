@@ -143,7 +143,6 @@ def _v2_bundle(
             report_schema_version=report.schema_version,
             database_schema_version=6,
             contextdev_api_path="/web/scrape/markdown",
-            hyperfusion_model=None,
             perflo_cli_version=None,
             payment_adapter_id=report.adapter_id,
             x402_protocol_version="2" if report.adapter_id == "x402" else None,
@@ -184,7 +183,6 @@ def test_export_load_verify_round_trip(tmp_path: Path) -> None:
         report_schema_version=2,
         database_schema_version=6,
         contextdev_api_path="/web/scrape/markdown",
-        hyperfusion_model=None,
         perflo_cli_version=None,
         payment_adapter_id=None,
         x402_protocol_version=None,
@@ -499,7 +497,7 @@ def test_verify_accepts_internally_consistent_unverifiable_fixture_report(
 # --- schema-2 compatibility (constructed directly; export no longer emits v2) ---
 
 
-def test_schema_v2_bundle_bytes_and_verify_unchanged() -> None:
+def test_schema_v2_bundle_bytes_and_verify_are_stable() -> None:
     report = replay_fixture(FIXTURES / "clean-success")
     artifacts = tuple(
         redact_artifact(a) for a in _fixture_artifacts("clean-success", report.run_id)
@@ -629,7 +627,7 @@ def test_load_rejects_unknown_schema_version() -> None:
         load_bundle(json.dumps(payload).encode())
 
 
-SCHEMA_V2_CANONICAL_DIGEST = "e9267a7fd54fd196077bda1f243d87935896aedda7b6a893b86159467a418133"
+SCHEMA_V2_CANONICAL_DIGEST = "260d706bf46085697d5f274cda74149e1b669a64758ef1938c50a32fd1bd2d28"
 
 
 def _resigned_object(bundle: EvidenceBundleV3, path: str, value: Any) -> EvidenceBundleV3:
@@ -898,3 +896,23 @@ def test_schema4_bundle_round_trip_and_provenance_tamper_detection(
         with pytest.raises(BundleError):
             verify_bundle(bundle.model_copy(update={"objects": objects}))
     repository.close()
+
+
+def test_retired_null_model_metadata_preserves_legacy_bundle_integrity() -> None:
+    report = replay_fixture(FIXTURES / "clean-success")
+    payload = _v2_bundle(report).model_dump(mode="json")
+    payload["compatibility"]["retired_model"] = None
+    payload["integrity"] = sha256_digest({k: v for k, v in payload.items() if k != "integrity"})
+    loaded = load_bundle(json.dumps(payload).encode())
+    assert verify_bundle(loaded).run_id == report.run_id
+    assert json.loads(serialize_bundle(loaded))["compatibility"]["retired_model"] is None
+
+
+@pytest.mark.parametrize(
+    "field,value", [("unknown", None), ("retired_model", "untrusted"), ("api_key", None)]
+)
+def test_unknown_compatibility_metadata_is_not_accepted(field: str, value: object) -> None:
+    payload = _v2_bundle(replay_fixture(FIXTURES / "clean-success")).model_dump(mode="json")
+    payload["compatibility"][field] = value
+    with pytest.raises(BundleError):
+        load_bundle(json.dumps(payload).encode())
