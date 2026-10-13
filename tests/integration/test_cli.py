@@ -2786,3 +2786,23 @@ def test_live_database_initialization_failure_shuts_down_telemetry(
     assert result.exit_code == 2
     assert "database is not writable" in result.stderr
     telemetry.shutdown.assert_called_once_with()
+
+
+def test_missing_selected_groq_credentials_refuse_before_provider_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def incomplete_groq() -> Settings:
+        return live_settings().model_copy(
+            update={"model_provider": "groq", "groq_model": "syn-model"}
+        )
+
+    async def forbidden_probe() -> None:
+        raise AssertionError(
+            "provider must not be probed with incomplete explanation configuration"
+        )
+
+    monkeypatch.setattr("settlediff.cli.Settings", incomplete_groq)
+    monkeypatch.setattr("settlediff.cli._doctor_perflo", forbidden_probe)
+    result = runner.invoke(app, ["run", "--slug", "synthetic-weather", "--budget", "1"])
+    assert result.exit_code == 2
+    assert "Groq configuration is incomplete" in result.stderr

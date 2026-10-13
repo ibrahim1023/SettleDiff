@@ -246,7 +246,8 @@ def test_metric_contract_fails_closed(name: str, attributes: dict[str, object]) 
     telemetry.shutdown()
 
 
-def test_remaining_bounded_metrics_export_useful_values() -> None:
+@pytest.mark.parametrize("provider", ["hyperfusion", "groq"])
+def test_remaining_bounded_metrics_export_useful_values(provider: str) -> None:
     reader = InMemoryMetricReader()
     telemetry = configure_telemetry(
         configured_settings(), metric_reader=reader, log_stream=io.StringIO()
@@ -258,10 +259,10 @@ def test_remaining_bounded_metrics_export_useful_values() -> None:
     telemetry.limit_exceeded("input_tokens")
     telemetry.prohibited_action_blocked("uncertain_submission_retry")
     telemetry.component_duration(12.5, "perflo")
-    telemetry.model_requests(2, "hyperfusion")
-    telemetry.tool_calls(3, "hyperfusion")
-    telemetry.token_usage(400, 50, "hyperfusion")
-    telemetry.model_cost(Decimal("0.01"), "hyperfusion")
+    telemetry.model_requests(2, provider)
+    telemetry.tool_calls(3, provider)
+    telemetry.token_usage(400, 50, provider)
+    telemetry.model_cost(Decimal("0.01"), provider)
     telemetry.activity_candidate_count(4, "transaction_id")
 
     exported = repr(reader.get_metrics_data())
@@ -279,7 +280,7 @@ def test_remaining_bounded_metrics_export_useful_values() -> None:
         "settlediff.model_cost",
         "settlediff.activity_candidate_count",
         "contextdev",
-        "hyperfusion",
+        provider,
         "transaction_id",
     ):
         assert useful_value in exported

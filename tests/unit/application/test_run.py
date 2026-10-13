@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from pydantic import JsonValue
@@ -1628,6 +1628,7 @@ class StubTelemetry:
         self.spans: list[str] = []
         self.events: list[tuple[str, dict[str, object]]] = []
         self.counters: list[tuple[str, dict[str, object]]] = []
+        self.histograms: list[tuple[str, object, dict[str, object]]] = []
 
     def span(self, name: str, attributes: Mapping[str, object]) -> StubSpan:
         del attributes
@@ -1640,11 +1641,14 @@ class StubTelemetry:
         self.counters.append((name, dict(attributes)))
 
     def histogram(self, name: str, value: object, attributes: Mapping[str, object]) -> None:
-        del name, value, attributes
+        self.histograms.append((name, value, dict(attributes)))
 
 
 @pytest.mark.asyncio
-async def test_run_emits_safe_state_and_boundary_telemetry() -> None:
+@pytest.mark.parametrize("provider", ["hyperfusion", "groq"])
+async def test_run_emits_safe_state_and_boundary_telemetry(
+    provider: Literal["hyperfusion", "groq"],
+) -> None:
     report = replay_fixture(Path("fixtures/clean-success"))
     request = PaidExecutionRequest(
         run_id=report.run_id,
@@ -1664,11 +1668,12 @@ async def test_run_emits_safe_state_and_boundary_telemetry() -> None:
     async def verify() -> MachineReport:
         return report
 
-    outcome = await RunInvestigation(execute, verify, telemetry=telemetry).execute(
-        LiveRunCommand(request, capability)
-    )
+    outcome = await RunInvestigation(
+        execute, verify, telemetry=telemetry, model_provider=provider
+    ).execute(LiveRunCommand(request, capability))
 
     assert outcome.report is report
+    assert all(labels == {"provider": provider} for _, _, labels in telemetry.histograms)
     assert telemetry.spans == [
         "settlediff.run",
         "settlediff.authorize",

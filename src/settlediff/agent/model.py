@@ -1,4 +1,4 @@
-"""Hyperfusion-backed PydanticAI Chat Completions model factory."""
+"""PydanticAI Chat Completions model factory for Hyperfusion and Groq."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from settlediff.config import HyperfusionConfig
+from settlediff.config import ChatCompletionsConfig
 
-HYPERFUSION_PROFILE = OpenAIModelProfile(
+CHAT_COMPLETIONS_PROFILE = OpenAIModelProfile(
     supports_tools=True,
     supports_json_schema_output=False,
     supports_json_object_output=False,
@@ -18,7 +18,7 @@ HYPERFUSION_PROFILE = OpenAIModelProfile(
 )
 
 
-def build_hyperfusion_model(config: HyperfusionConfig) -> OpenAIChatModel:
+def build_chat_model(config: ChatCompletionsConfig) -> OpenAIChatModel:
     """Build an explicit OpenAI-compatible Chat model with SDK retries disabled."""
     client = AsyncOpenAI(
         base_url=config.base_url,
@@ -30,5 +30,9 @@ def build_hyperfusion_model(config: HyperfusionConfig) -> OpenAIChatModel:
     return OpenAIChatModel(
         config.model_id,
         provider=provider,
-        profile=HYPERFUSION_PROFILE,
+        profile=CHAT_COMPLETIONS_PROFILE,
     )
+
+
+# Preserve the existing factory import for Hyperfusion integrations.
+build_hyperfusion_model = build_chat_model

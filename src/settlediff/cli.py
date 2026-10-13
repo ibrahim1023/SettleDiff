@@ -29,7 +29,7 @@ from settlediff.agent.investigator import (
     InvestigationState,
     investigate,
 )
-from settlediff.agent.model import build_hyperfusion_model
+from settlediff.agent.model import build_chat_model
 from settlediff.agent.tools import build_investigation_dependencies
 from settlediff.api.app import create_app
 from settlediff.application.auth import (
@@ -230,9 +230,8 @@ def _render(
 
 def _build_model_if_configured(settings: Settings) -> Model | None:
     """Build the live model only for an authorized live explanation attempt."""
-    if not settings.hyperfusion_model or not settings.hyperfusion_model.strip():
-        return None
-    return build_hyperfusion_model(settings.require_hyperfusion())
+    config = settings.explanation_model_config()
+    return build_chat_model(config) if config is not None else None
 
 
 async def _explain_report(
@@ -454,6 +453,7 @@ async def _execute_live_run(
             lambda: collector.verify(request),
             persist_event=persist_event,
             telemetry=telemetry,
+            model_provider=settings.model_provider,
             explain=lambda report, artifact_ids: _explain_report(
                 report, artifact_ids, model, evidence=collector.artifacts
             ),
@@ -697,6 +697,7 @@ def run(
         settings = Settings()
         contextdev_config = settings.require_contextdev()
         settings.require_observability()
+        settings.explanation_model_config()
         if rail is PaymentRail.X402:
             x402_config = settings.require_x402()
             if not allow_testnet or not x402_config.testnet_enabled:

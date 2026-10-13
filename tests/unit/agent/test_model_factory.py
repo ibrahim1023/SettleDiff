@@ -64,3 +64,60 @@ async def test_factory_builds_explicit_chat_model_without_leaking_secret() -> No
     assert secret not in repr(model)
     assert secret not in repr(model.provider)
     await model.provider.client.close()
+
+
+def test_groq_configuration_is_explicit_and_secret_safe() -> None:
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        model_provider="groq",
+        groq_api_key=SecretStr("syn-groq-key"),
+        groq_model="llama-3.3-70b-versatile",
+    )
+    config = settings.require_groq()
+    assert config.base_url == "https://api.groq.com/openai/v1"
+    assert config.model_id == "llama-3.3-70b-versatile"
+    assert "syn-groq-key" not in repr(settings)
+    assert "syn-groq-key" not in repr(config)
+
+
+@pytest.mark.parametrize("missing", ["key", "model"])
+def test_groq_configuration_refuses_incomplete_live_setup(missing: str) -> None:
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        model_provider="groq",
+        groq_api_key=None if missing == "key" else SecretStr("syn-key"),
+        groq_model=None if missing == "model" else "syn-model",
+    )
+    with pytest.raises(ValueError, match="Groq configuration is incomplete"):
+        settings.require_groq()
+
+
+@pytest.mark.asyncio
+async def test_cli_selects_groq_without_using_hyperfusion_credentials() -> None:
+    from settlediff.cli import _build_model_if_configured  # pyright: ignore[reportPrivateUsage]
+
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        model_provider="groq",
+        groq_api_key=SecretStr("syn-groq-key"),
+        groq_model="llama-3.3-70b-versatile",
+        hyperfusion_model="syn-hyperfusion-model",
+    )
+    model = _build_model_if_configured(settings)
+    assert isinstance(model, OpenAIChatModel)
+    assert model.model_name == "llama-3.3-70b-versatile"
+    assert model.provider is not None
+    assert model.provider.base_url == "https://api.groq.com/openai/v1/"
+    assert model.provider.client.max_retries == 0
+    await model.provider.client.close()
+
+
+def test_unconfigured_groq_uses_fallback_without_selecting_hyperfusion() -> None:
+    from settlediff.cli import _build_model_if_configured  # pyright: ignore[reportPrivateUsage]
+
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        model_provider="groq",
+        hyperfusion_model="syn-hyperfusion-model",
+    )
+    assert _build_model_if_configured(settings) is None

@@ -16,4 +16,6 @@
 | [0012](0012-signed-provider-evidence.md) | Signed provider evidence with ephemeral signatures | Accepted |
 | [0013](0013-required-live-observability.md) | Required export for live investigations (supersedes 0006 export policy) | Accepted |
 
+| [0014](0014-groq-explanation-provider.md) | Groq as an explicit explanation provider | Accepted |
+
 New decisions use the next four-digit number. ADRs are immutable after acceptance except for typo/link corrections; changed decisions supersede earlier records.

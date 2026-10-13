@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from ipaddress import ip_address
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, StringConstraints, field_validator, model_validator
@@ -15,8 +15,8 @@ from settlediff.domain.redaction import SECRET_KEYS
 NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class HyperfusionConfig(BaseSettings):
-    """Complete configuration required only when a live model is requested."""
+class ChatCompletionsConfig(BaseSettings):
+    """Validated credentials and limits for the supported chat providers."""
 
     model_config = SettingsConfigDict(strict=True, extra="forbid", frozen=True)
 
@@ -29,8 +29,18 @@ class HyperfusionConfig(BaseSettings):
     @classmethod
     def require_api_key(cls, value: SecretStr) -> SecretStr:
         if not value.get_secret_value().strip():
-            raise ValueError("Hyperfusion API key must not be blank")
+            raise ValueError("Model API key must not be blank")
         return value
+
+
+class HyperfusionConfig(ChatCompletionsConfig):
+    """Hyperfusion's explicitly configured Chat Completions endpoint."""
+
+
+class GroqConfig(ChatCompletionsConfig):
+    """Groq's official OpenAI-compatible Chat Completions endpoint."""
+
+    base_url: NonEmpty = "https://api.groq.com/openai/v1"
 
 
 class ContextDevConfig(BaseSettings):
@@ -84,6 +94,10 @@ class Settings(BaseSettings):
         frozen=True,
     )
 
+    model_provider: Literal["hyperfusion", "groq"] = "hyperfusion"
+    groq_api_key: SecretStr | None = Field(default=None, repr=False)
+    groq_model: str | None = None
+    groq_timeout_seconds: float = Field(default=30, gt=0, le=300)
     hyperfusion_base_url: str | None = None
     hyperfusion_api_key: SecretStr | None = None
     hyperfusion_model: str | None = None
@@ -181,6 +195,21 @@ class Settings(BaseSettings):
             resource_timeout_seconds=self.x402_resource_timeout_seconds,
             signer_timeout_seconds=self.x402_signer_timeout_seconds,
             rpc_timeout_seconds=self.x402_rpc_timeout_seconds,
+        )
+
+    def explanation_model_config(self) -> ChatCompletionsConfig | None:
+        if self.model_provider == "groq":
+            return self.require_groq() if (self.groq_model or "").strip() else None
+        return self.require_hyperfusion() if (self.hyperfusion_model or "").strip() else None
+
+    def require_groq(self) -> GroqConfig:
+        model_id = self.groq_model
+        if self.groq_api_key is None or model_id is None or not model_id.strip():
+            raise ValueError("Groq configuration is incomplete")
+        return GroqConfig(
+            api_key=self.groq_api_key,
+            model_id=model_id,
+            timeout_seconds=self.groq_timeout_seconds,
         )
 
     def require_hyperfusion(self) -> HyperfusionConfig:
