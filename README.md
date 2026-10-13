@@ -133,9 +133,11 @@ credentials and signer authority out of Git.
 - **Every live run:** configure `SETTLEDIFF_CONTEXTDEV_API_KEY` and the Logfire
   endpoint/token described below.
 - **Choose a rail:** complete the prerequisites in this table.
-- **For live model explanations:** configure `SETTLEDIFF_HYPERFUSION_BASE_URL`,
-  `SETTLEDIFF_HYPERFUSION_API_KEY`, and `SETTLEDIFF_HYPERFUSION_MODEL`. Without a
-  configured model, the application uses its deterministic fallback explanation.
+- **For live model explanations:** select `SETTLEDIFF_MODEL_PROVIDER=groq` and
+  configure `SETTLEDIFF_GROQ_API_KEY` and `SETTLEDIFF_GROQ_MODEL`. Hyperfusion remains
+  supported with explicit provider selection and its existing settings. Without a
+  model configured for the selected provider, use the deterministic fallback. See
+  the [model setup and compatibility guide](docs/development/model-providers.md).
 - **Before payment:** select the exact request and budget, inspect the displayed
   terms, and approve the one-use authorization. A new attempt needs new approval.
 

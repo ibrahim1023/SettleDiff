@@ -80,11 +80,12 @@ Review trajectory assertions, not just final prose:
 - valid finding/artifact citations;
 - no contradiction with the machine report.
 
-## Hyperfusion compatibility loop
+## Model compatibility loop
 
-This loop is unpaid but live and never runs in default CI:
+These loops use live model API credits and never run in default CI. Run only the selected provider:
 
 ```bash
+SETTLEDIFF_LIVE_GROQ=1 uv run pytest tests/contract/test_groq_live.py -m live_groq -q
 SETTLEDIFF_LIVE_HYPERFUSION=1 uv run pytest tests/contract/test_hyperfusion_live.py -m live_hyperfusion -q
 ```
 

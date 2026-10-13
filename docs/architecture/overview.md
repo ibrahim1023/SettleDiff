@@ -170,7 +170,7 @@ Issues bounded unsigned GET/POST challenge requests without redirects. Remote re
 
 ### Investigation Agent
 
-One PydanticAI agent chooses among typed tools. Hyperfusion supplies the model through an OpenAI-compatible Chat Completions client. PydanticAI owns the model/tool loop; SettleDiff owns authorization, evidence state, limits, and all financial checks.
+One PydanticAI agent chooses among typed tools. Groq or Hyperfusion supplies the explicitly selected model through the shared OpenAI-compatible Chat Completions factory. PydanticAI owns the model/tool loop; SettleDiff owns authorization, evidence state, limits, and all financial checks.
 
 ### Activity matcher
 
@@ -242,7 +242,7 @@ This makes context selection observable and testable while avoiding a separate R
 ## Failure policy
 
 - Invalid input: stop before external action.
-- Hyperfusion transient failure: the investigation may end without an explanation; the machine report remains authoritative.
+- Model provider transient failure: the investigation may end without an explanation; the machine report remains authoritative.
 - Perflo read failure: retry only when the error is explicitly recoverable and the operation is read-only.
 - Perflo mutation failure: never retry until submission certainty is resolved; ambiguous outcome requires explicit user approval before any new attempt.
 - Parse failure: preserve raw evidence and mark the affected check unknown.

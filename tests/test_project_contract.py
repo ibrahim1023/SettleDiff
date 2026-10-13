@@ -85,6 +85,10 @@ def test_environment_example_contains_only_blank_safe_assignments() -> None:
 
     parsed = dict(line.split("=", maxsplit=1) for line in assignments)
     assert parsed == {
+        "SETTLEDIFF_MODEL_PROVIDER": "",
+        "SETTLEDIFF_GROQ_API_KEY": "",
+        "SETTLEDIFF_GROQ_MODEL": "",
+        "SETTLEDIFF_LIVE_GROQ": "",
         "SETTLEDIFF_CONTEXTDEV_API_KEY": "",
         "SETTLEDIFF_DATABASE_PATH": "",
         "SETTLEDIFF_HYPERFUSION_API_KEY": "",
