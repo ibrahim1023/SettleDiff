@@ -172,6 +172,15 @@ An alternative current route, GET
 0.001 test USDC price and passes production-adapter signed-offer inspection.
 No purchase of that different exact target is authorized by this record.
 
+A further single trial at 07:33 UTC combined the official SDK's epoch-zero start
+with the verified-offer expiry cap. It also returned HTTP 402 without a settlement
+response or error reason. The runtime preserves that SDK start while bounding the
+future expiry; the earlier recent-start policy did not resolve acceptance. A
+07:37 trial removed only extension schemas while preserving both signed `info`
+objects; it also returned HTTP 402. That unsuccessful wire projection was removed,
+and the original SDK extension echo remains. These experiments do not justify
+changing financial findings or claiming a successful live purchase.
+
 ## Observability
 
 The live command required authenticated OTLP configuration and emitted redacted

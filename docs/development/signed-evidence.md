@@ -76,12 +76,14 @@ must stop execution. Invoke it from the repository root through
 `uv run --no-sync python scripts/x402_signer_offer.py`; keep its input in pipes,
 not command arguments or files. Signer runtime files and wallet setup remain local.
 
-The local runtime also narrows EIP-3009 validity to the advertised timeout instead
-of using an epoch-zero start. Its five-second past-clock allowance is included in
-the total interval; the signature and serialized authorization contain identical
-timestamps. It supports 12–300-second timeouts and refuses other lifetimes before
-submission. This local signing policy does not change the selected terms, paid
-budget, or deterministic verification criteria.
+The local runtime preserves the official SDK's epoch-zero `validAfter`, and caps
+the future `validBefore` to the earlier of the advertised timeout or five seconds
+before the verified offer's `validUntil`. The signature and serialized
+authorization contain identical timestamps. It supports 12–300-second advertised
+timeouts and refuses before submission if fewer than 12 seconds remain after the
+offer-expiry allowance. This policy bounds how long a newly created authorization
+remains spendable; it does not change the selected terms, paid budget, or
+deterministic verification criteria.
 
 Raw JWS strings and DID documents are used in memory. Persisted schema-4
 `provider_signatures` contain assessments, digests, timestamps, and source handles;
@@ -109,10 +111,7 @@ signed receipt. The bounded-window signer trial also received that rejection.
 Receipt verification remains covered offline; a successful live signed-purchase
 trial is still outstanding. No automatic retry followed an uncertain submission.
 
-The installed signer also caps `validBefore` to five seconds before the verified
-offer's `validUntil`, even when the advertised timeout is longer. It refuses
-before submission if fewer than 12 seconds remain after that allowance. A returned
-HTTP 402 challenge can contain duplicate seller signatures in its body; retain
+A returned HTTP 402 challenge can contain duplicate seller signatures in its body; retain
 its HTTP status and exact byte count while omitting that parsed body from signer
 output. Seller proofs remain restricted to their permitted extension envelopes.
 
