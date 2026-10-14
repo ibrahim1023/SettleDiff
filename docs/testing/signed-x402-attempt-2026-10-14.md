@@ -181,6 +181,44 @@ objects; it also returned HTTP 402. That unsuccessful wire projection was remove
 and the original SDK extension echo remains. These experiments do not justify
 changing financial findings or claiming a successful live purchase.
 
+## Authorized alternative route and historical token diagnostic
+
+The owner separately approved up to five GET trials of
+`https://api-stg.pubfi.ai/v1/gateway/beefy/articles/latest`, no body, maximum 0.001
+test USDC per trial and 0.005 total. All five authorized trial slots were used;
+that is an authorization cap, not a claim that 0.005 USDC settled.
+
+| UTC time | Trial | Retained HTTP status |
+| --- | --- | --- |
+| 08:38:53 | Existing offer-bounded signer | 402 |
+| 08:40:32 | Official SDK signing with advertised 90-second future expiry | 400 |
+| 08:45:58 | Omit only nonstandard `resource.serviceName` | 400 |
+| 08:48:19 | Raw HTTP/1 transport with payment-header capitalization | 402 |
+| 08:51:21 | Existing signer with private provider correlation capture | 402 |
+
+The HTTP 400 bodies contain `x402.invalid_payment`. HTTP 402 returns another
+challenge, without a signed receipt or transaction reference. All five reports
+remain `UNVERIFIABLE`; all five private bundles verify that unchanged result and
+exclude raw JWS. Each trial sent at most one paid request. Failed compatibility
+projections were reverted rather than kept as fixes. A private correlation ID was
+retained separately for provider-side diagnosis, without payment payloads or keys.
+
+After automatic approval review rejected signature-bearing RPC diagnostics, the
+owner explicitly approved one historical read-only `eth_call` on the official Base
+Sepolia RPC. The script required the authorization to be expired against the
+current chain timestamp before signing or RPC egress. At the selected historical
+block, the token accepted `transferWithAuthorization` from the configured buyer to
+the advertised payee for 1,000 units with the advertised EIP-712 domain. The local
+signature check also passed. No transaction was broadcast. This validates the
+basic token path at that historical state, not current provider intake, receipt,
+delivery, or settlement.
+
+Narrow read-only payer searches after the trials found no matching transfer;
+absence still does not prove non-submission. The next useful evidence is the
+provider's validation/facilitation-stage diagnostic for these UTC windows. A
+redacted support report is prepared locally, but no external message is authorized
+by this record and no public issue has been posted.
+
 ## Observability
 
 The live command required authenticated OTLP configuration and emitted redacted
