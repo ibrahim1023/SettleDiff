@@ -56,7 +56,11 @@ the result stays schema 3. A signed-service-compatible signer must preserve the
 challenge's public offer extension and the provider settlement's public receipt
 extension. Only those exact namespaces admit bounded public seller JWS strings.
 Wallet signatures, payment payloads, credentials, and other nested signatures are
-still rejected. Run the existing metadata/doctor compatibility check before any
+still rejected. Before returning its result, the signer must project challenge
+extensions to `offer-receipt.info.offers` and settlement extensions to
+`offer-receipt.info.receipt`. Extension schema metadata and unrelated signed vendor
+markers do not belong in this output. Passing the entire extension tree through
+can trigger refusal even when its primary offer is valid. Run the existing metadata/doctor compatibility check before any
 separately authorized live trial; offline integration does not prove an external
 signer's signed-service compatibility.
 
@@ -90,9 +94,10 @@ Tests use generated synthetic Ed25519 keys, fixed clocks, mocked HTTP/RPC, and a
 intercepted signer. They cover authorization drift, bad/missing receipts, uncertain
 results, forbidden signer material, persistence, bundle consistency, and public
 projection. An [unpaid live staging inspection](../testing/signed-x402-readiness-2026-10-13.md)
-verified a seller offer. The updated external signer also matches the production authorization digest on
-unpaid staging evidence. Paid receipt collection remains verified offline; no paid
-signed-service trial has been performed.
+verified a seller offer. The updated external signer also matches the production
+authorization digest on unpaid staging evidence. One [approved staging attempt](../testing/signed-x402-attempt-2026-10-14.md)
+ended unresolved without usable execution or receipt evidence. Receipt verification remains covered offline; a successful live signed-purchase
+trial is still outstanding. No automatic retry followed.
 
 ```bash
 uv run pytest tests/unit/x402/test_signed.py tests/unit/x402/test_signed_extension.py tests/unit/x402/test_seller_identity_http.py tests/unit/x402/test_signed_adapter.py tests/unit/domain/test_provider_signatures.py -q

@@ -263,3 +263,22 @@ def test_non_submission_result_rejects_contradictory_evidence(
 ) -> None:
     with pytest.raises(ValidationError, match="non-submission"):
         result(**updates)
+
+
+@pytest.mark.parametrize("namespace", ["schema", "vendor_marker"])
+def test_signed_metadata_outside_public_proof_envelopes_is_still_refused(namespace: str) -> None:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from tests.unit.x402.test_signed_adapter import challenge
+
+    required = challenge(Ed25519PrivateKey.generate())
+    assert isinstance(required["extensions"], dict)
+    extensions = required["extensions"]
+    if namespace == "schema":
+        extension = extensions["offer-receipt"]
+        assert isinstance(extension, dict)
+        extension["schema"] = {"properties": {"signature": {"type": "string"}}}
+    else:
+        extensions["pubfi-contract"] = {"info": {"marker": {"signature": "synthetic-marker"}}}
+    with pytest.raises(ValidationError, match="secret-bearing"):
+        result(challenge=required)

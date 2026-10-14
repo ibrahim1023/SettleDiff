@@ -61,5 +61,13 @@ refused. Synthetic regression tests cover both acceptance and contradictions.
   before payment, the real pipe bridge, and exactly one intercepted paid request.
 - A paid trial requires fresh approval of the exact request and test-USDC budget,
   with interactive authorization and no automatic retry.
-- The separate Groq compatibility and synthetic production-investigator suite now
-  passes with the accepted setup in the [model guide](../development/model-providers.md).
+- The narrow Groq compatibility and two-case investigator suite passed on
+  2026-10-13. The later expanded gate found failures; current results are in the
+  [model guide](../development/model-providers.md).
+
+## Subsequent approved attempt
+
+The owner approved one staging execution on 2026-10-14. It ended unresolved and
+`UNVERIFIABLE`; see the [attempt record](signed-x402-attempt-2026-10-14.md) for retained
+evidence, the output-envelope correction, and the outstanding gate. No retry was
+performed. The earlier unpaid inspections remain offer validation only.

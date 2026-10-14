@@ -117,7 +117,9 @@ private reports and bundles retain assessments and digests. Bundle checks cannot
 replay cryptographic verification without the raw proof. The
 [signed-evidence guide](docs/development/signed-evidence.md) explains the supported
 profile and limits. An [unpaid live staging inspection](docs/testing/signed-x402-readiness-2026-10-13.md)
-verified a signed offer; paid signed-receipt verification remains tested offline.
+verified a signed offer. A [subsequent approved attempt](docs/testing/signed-x402-attempt-2026-10-14.md)
+ended unresolved. Receipt verification is covered offline; a successful live
+signed-purchase trial is still outstanding.
 
 Controlled live tests have demonstrated disagreements, independent x402 settlement,
 and a settled delivery failure. Historical report schemas have different settlement
@@ -207,6 +209,10 @@ Changed cases are marked incomparable; any failing grader makes the runner exit
 nonzero. Reviewed production failures can become synthetic regression cases without
 copying private live payloads. See the [eval guide](docs/development/evals.md) for
 criteria, baseline comparison, and promotion.
+
+The live Groq gate now covers eight synthetic production scenarios three times
+each. Its latest expanded run found fallback failures; see the
+[model guide](docs/development/model-providers.md) for results and limits.
 
 These scripted evals test enforcement and wiring. Live model quality requires
 separate opt-in trials and calibrated graders.
