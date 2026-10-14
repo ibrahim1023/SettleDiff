@@ -76,6 +76,13 @@ must stop execution. Invoke it from the repository root through
 `uv run --no-sync python scripts/x402_signer_offer.py`; keep its input in pipes,
 not command arguments or files. Signer runtime files and wallet setup remain local.
 
+The local runtime also narrows EIP-3009 validity to the advertised timeout instead
+of using an epoch-zero start. Its five-second past-clock allowance is included in
+the total interval; the signature and serialized authorization contain identical
+timestamps. It supports 12–300-second timeouts and refuses other lifetimes before
+submission. This local signing policy does not change the selected terms, paid
+budget, or deterministic verification criteria.
+
 Raw JWS strings and DID documents are used in memory. Persisted schema-4
 `provider_signatures` contain assessments, digests, timestamps, and source handles;
 raw signatures are redacted from captured snapshots and excluded from SQLite,

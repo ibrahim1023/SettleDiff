@@ -65,6 +65,40 @@ A fresh unpaid production-adapter inspection still verifies the staging offer at
 0.001000 test USDC. A read-only token balance check confirms sufficient funds for
 that budget. Neither observation establishes settlement or authorizes execution.
 
+## Fresh live attempts and payment rejection
+
+Fresh owner-authorized attempts at 06:09 and 06:17 UTC used the corrected output
+projection. Both retained real execution evidence with HTTP 400 and
+`x402.invalid_payment`. Their reports remain `UNVERIFIABLE`: neither response
+supplied a transaction reference or signed receipt. Both private bundles now
+export and verify consistently without raw JWS. These results resolve the original
+output-loss symptom; they do not establish successful settlement.
+
+The second attempt aligned the local runtime with the
+[official PubFi example's client dependencies](https://github.com/helixbox/pubfi-docs/blob/main/examples/agents/x402-base-sepolia/package.json):
+`@x402/core`, `@x402/evm`, and `@x402/fetch` 2.26.0, plus viem 2.56.0. Alignment alone
+did not resolve the rejection. The official
+[failure-action guide](https://docs.pubfi.ai/getting-started/x402#failure-actions)
+describes `invalid_payment` as a rejection; its generic message does not identify
+which validation rule failed.
+
+A read-only protocol check with a synthetic buyer confirmed mathematical signature
+validity, a matching on-chain token domain separator, unchanged accepted terms,
+matching recipient and amount, preserved vendor marker, and agreement between the
+unpaid header and body. It sent no payment request. Narrow block-range searches
+found no matching transfer near the rejected attempts, and the payer remains
+funded. Those searches do not prove non-submission.
+
+A further compatibility hypothesis concerns the SDK's epoch-zero `validAfter`.
+The local signer now signs and serializes the same shorter authorization window,
+using a five-second past-clock allowance and the advertised timeout as the total
+window length. The supported local timeout range is 12–300 seconds. It never
+extends the advertised expiry horizon or spending limit. A new test failed on the
+unbounded interval, then passed after the correction; it independently verifies
+the resulting typed signature. All 19 local signer checks and the 17-check
+synthetic end-to-end pipeline pass. The seller's generic error does not prove that
+this interval was its rejection cause; a fresh authorized trial is still needed.
+
 ## Observability
 
 The live command required authenticated OTLP configuration and emitted redacted
