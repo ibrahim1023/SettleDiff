@@ -60,6 +60,18 @@ still rejected. Run the existing metadata/doctor compatibility check before any
 separately authorized live trial; offline integration does not prove an external
 signer's signed-service compatibility.
 
+The locally installed signer now calls `scripts/x402_signer_offer.py` before
+creating a payment payload. The helper receives exactly `challenge` and `request`
+(the schema-2 signer envelope) as JSON on stdin, reuses the production read-only
+adapter to validate the offer and fetch its seller identity, and emits only
+`{"signed_offer_digest":"…"}`. It refuses malformed, expired, revoked, redirected,
+or oversized evidence. It has no signing key, payment port, persistence, or model.
+The signer inserts the returned digest into schema-4 payment terms and compares
+that full digest with the authorization before signing. A refusal or mismatch
+must stop execution. Invoke it from the repository root through
+`uv run --no-sync python scripts/x402_signer_offer.py`; keep its input in pipes,
+not command arguments or files. Signer runtime files and wallet setup remain local.
+
 Raw JWS strings and DID documents are used in memory. Persisted schema-4
 `provider_signatures` contain assessments, digests, timestamps, and source handles;
 raw signatures are redacted from captured snapshots and excluded from SQLite,
@@ -78,7 +90,8 @@ Tests use generated synthetic Ed25519 keys, fixed clocks, mocked HTTP/RPC, and a
 intercepted signer. They cover authorization drift, bad/missing receipts, uncertain
 results, forbidden signer material, persistence, bundle consistency, and public
 projection. An [unpaid live staging inspection](../testing/signed-x402-readiness-2026-10-13.md)
-verified a seller offer. Paid receipt collection remains verified offline; no paid
+verified a seller offer. The updated external signer also matches the production authorization digest on
+unpaid staging evidence. Paid receipt collection remains verified offline; no paid
 signed-service trial has been performed.
 
 ```bash

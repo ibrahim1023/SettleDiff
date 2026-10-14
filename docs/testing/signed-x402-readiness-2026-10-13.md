@@ -48,10 +48,17 @@ refused. Synthetic regression tests cover both acceptance and contradictions.
 ## Remaining live gates
 
 - The installed external signer metadata probe and Base Sepolia RPC chain check pass.
-- The installed signer's payment-terms digest calculation lacks the new
-  `signed_offer_digest` field. It needs independent compatibility work before the
-  signed paid path can pass exact-term authorization. Its unchanged digest should
-  refuse execution before payment; no paid execution was attempted to test this.
+- On 2026-10-14, the installed signer was updated to revalidate the seller proof
+  through the tracked read-only `scripts/x402_signer_offer.py` bridge. A live
+  unpaid compatibility check confirmed a valid offer and an exact match between
+  the signer's schema-4 digest and the production application's authorization.
+  No payment payload was created. This also exposed an asset-spelling difference:
+  contract identity uses the supported canonical USDC address, while the settlement
+  profile preserves the advertised spelling. Both now match the application.
+- Seven tracked offline bridge checks cover proof equivalence, expiry, revocation,
+  redirects, size bounds, unsigned services, and redacted refusal output. Seventeen
+  local signer checks cover Python/JavaScript digest vectors, changed proof refusal
+  before payment, the real pipe bridge, and exactly one intercepted paid request.
 - A paid trial requires fresh approval of the exact request and test-USDC budget,
   with interactive authorization and no automatic retry.
 - The separate Groq compatibility and synthetic production-investigator suite now
