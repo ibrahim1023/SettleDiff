@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import pytest
 from pydantic_ai import models
 
 from settlediff.config import Settings
+from settlediff.domain.models import Verdict
 from settlediff.telemetry.setup import configure_telemetry
 from tests.contract.model_compatibility import check_chat_compatibility
 
@@ -38,11 +40,24 @@ async def test_groq_supports_structured_output_and_tool_continuation(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "fixture", ["perflo-v8-provider-only-success", "x402-independent-confirmed"]
+    ("fixture", "expected_verdict"),
+    [
+        ("perflo-v8-provider-only-success", Verdict.UNVERIFIABLE),
+        ("x402-independent-confirmed", Verdict.VERIFIED),
+        ("missing-activity", Verdict.UNVERIFIABLE),
+        ("ambiguous-activity", Verdict.UNVERIFIABLE),
+        ("x402-uncertain-submission", Verdict.UNVERIFIABLE),
+        ("paid-failure", Verdict.PAID_FAILURE),
+        ("recipient-diff", Verdict.VERIFIED_WITH_WARNINGS),
+        ("x402-wrong-amount", Verdict.VERIFIED_WITH_WARNINGS),
+    ],
 )
+@pytest.mark.parametrize("trial", range(1, 4))
 async def test_groq_production_investigator_preserves_grounded_report(
     monkeypatch: pytest.MonkeyPatch,
     fixture: str,
+    expected_verdict: Verdict,
+    trial: int,
 ) -> None:
     import json
     from datetime import UTC, datetime
@@ -56,6 +71,8 @@ async def test_groq_production_investigator_preserves_grounded_report(
 
     if os.getenv("SETTLEDIFF_LIVE_GROQ") != "1":
         pytest.skip("set SETTLEDIFF_LIVE_GROQ=1 for the synthetic production-investigator check")
+    # Space independent cases below the observed 8,000-token/minute provider bucket.
+    await asyncio.sleep(20)
     monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", True)
     settings = Settings()
     settings.require_observability()
@@ -64,6 +81,7 @@ async def test_groq_production_investigator_preserves_grounded_report(
     try:
         root = Path(__file__).resolve().parents[2] / "fixtures" / fixture
         report = replay_fixture(root)
+        assert report.verdict == expected_verdict
         before = report.model_dump_json()
         artifacts = tuple(
             EvidenceArtifact(
@@ -89,7 +107,14 @@ async def test_groq_production_investigator_preserves_grounded_report(
             )
         assert report.model_dump_json() == before
         assert result.explanation.deterministic_verdict == report.verdict
-        assert not result.used_fallback
+        telemetry.model_requests(result.model_requests, "groq")
+        telemetry.tool_calls(result.tool_calls, "groq")
+        telemetry.token_usage(result.input_tokens, result.output_tokens, "groq")
+        assert 1 <= result.model_requests <= 4
+        assert result.tool_calls <= 6
+        assert result.input_tokens <= 8000
+        assert result.output_tokens <= 1000
+        assert not result.used_fallback, f"{fixture} trial {trial} fell back"
         assert result.rejected_output is None
     finally:
         assert model.provider is not None
