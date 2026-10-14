@@ -916,3 +916,65 @@ def test_unknown_compatibility_metadata_is_not_accepted(field: str, value: objec
     payload["compatibility"][field] = value
     with pytest.raises(BundleError):
         load_bundle(json.dumps(payload).encode())
+
+
+@pytest.mark.parametrize("has_receipt", [False, True])
+def test_unresolved_launch_without_execution_evidence_exports_without_phantom_citations(
+    tmp_path: Path,
+    has_receipt: bool,
+) -> None:
+    from settlediff.domain.checks import run_checks
+    from settlediff.domain.matching import match_activity
+    from settlediff.domain.models import SettlementStatus
+    from settlediff.domain.settlement import compare_settlement
+    from settlediff.domain.verdict import derive_verdict
+    from settlediff.observers.evm_transfer import unavailable_settlement
+
+    baseline = replay_fixture(FIXTURES / "x402-independent-confirmed")
+    observation = unavailable_settlement(
+        "NO_TRANSACTION_REFERENCE", source="synthetic.rpc", observed_at=EVENT.occurred_at
+    )
+    findings = run_checks(
+        baseline.intent,
+        baseline.contract,
+        None,
+        match_activity(None, ()),
+        receipt=baseline.receipt if has_receipt else None,
+        independent=observation,
+    )
+    report = MachineReport(
+        schema_version=4,
+        run_id=baseline.run_id,
+        intent=baseline.intent,
+        contract=baseline.contract,
+        execution=None,
+        receipt=baseline.receipt if has_receipt else None,
+        ledger=None,
+        findings=findings,
+        verdict=derive_verdict(findings),
+        adapter_id="x402",
+        independent_settlement=observation,
+        settlement_comparison=compare_settlement(
+            SettlementStatus.UNKNOWN,
+            observation,
+            provider_evidence_ids=(),
+            observer_evidence_ids=(),
+        ),
+    )
+    repository = SQLiteReportRepository(tmp_path / "unresolved.sqlite3")
+    try:
+        artifacts = tuple(
+            artifact
+            for artifact in _fixture_artifacts("x402-independent-confirmed", report.run_id)
+            if artifact.artifact_type is ArtifactType.SERVICE_CONTRACT
+            or has_receipt
+            and artifact.artifact_type is ArtifactType.PAYMENT_RECEIPT
+        )
+        repository.save(report, artifacts=artifacts)
+        bundle = export_bundle(repository, report.run_id)
+        checked = verify_bundle(load_bundle(serialize_bundle(bundle)))
+        assert checked.verdict is Verdict.UNVERIFIABLE
+        assert checked.execution is None
+        assert all("execution" not in finding.artifact_ids for finding in checked.findings)
+    finally:
+        repository.close()

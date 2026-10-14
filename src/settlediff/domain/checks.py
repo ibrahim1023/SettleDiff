@@ -433,8 +433,16 @@ def _settlement(
     else:
         status = _independent_effective_settlement_status(execution, receipt, independent)
         provider_artifact, provider_field = _provider_settlement_citation(receipt)
-        artifact_ids = (provider_artifact, "independent_settlement")
-        field_paths = (provider_field, "independent_settlement.status")
+        artifact_ids = (
+            (provider_artifact, "independent_settlement")
+            if execution is not None or receipt is not None
+            else ("independent_settlement",)
+        )
+        field_paths = (
+            (provider_field, "independent_settlement.status")
+            if execution is not None or receipt is not None
+            else ("independent_settlement.status",)
+        )
         if status is SettlementStatus.UNKNOWN:
             return _finding(
                 "settlement",
@@ -521,6 +529,17 @@ def _paid_failure(
             provider_field,
             "independent_settlement.status",
         )
+        if execution is None:
+            artifact_ids = (
+                ("receipt", "independent_settlement")
+                if receipt is not None
+                else ("independent_settlement",)
+            )
+            field_paths = (
+                (provider_field, "independent_settlement.status")
+                if receipt is not None
+                else ("independent_settlement.status",)
+            )
     if (
         execution is None
         or execution.upstream_http_status is None
