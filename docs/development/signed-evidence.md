@@ -109,6 +109,13 @@ signed receipt. The bounded-window signer trial also received that rejection.
 Receipt verification remains covered offline; a successful live signed-purchase
 trial is still outstanding. No automatic retry followed an uncertain submission.
 
+The installed signer also caps `validBefore` to five seconds before the verified
+offer's `validUntil`, even when the advertised timeout is longer. It refuses
+before submission if fewer than 12 seconds remain after that allowance. A returned
+HTTP 402 challenge can contain duplicate seller signatures in its body; retain
+its HTTP status and exact byte count while omitting that parsed body from signer
+output. Seller proofs remain restricted to their permitted extension envelopes.
+
 ```bash
 uv run pytest tests/unit/x402/test_signed.py tests/unit/x402/test_signed_extension.py tests/unit/x402/test_seller_identity_http.py tests/unit/x402/test_signed_adapter.py tests/unit/domain/test_provider_signatures.py -q
 ```

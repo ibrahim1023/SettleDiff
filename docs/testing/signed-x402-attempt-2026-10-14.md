@@ -127,6 +127,51 @@ pipeline still does not establish acceptance by the live seller. Further diagnos
 needs a specific failing validation rule from the seller or a reproducible
 compatibility difference before another paid trial.
 
+## Further compatibility trials
+
+The owner then requested continued corrected attempts. An intercepted comparison
+using one live unpaid challenge and a synthetic buyer found matching request body,
+accepted terms, resource, and extension contents between the manual signer and
+the official fetch wrapper, apart from nonces, signatures, and the deliberately
+bounded validity window. The manual request now also carries the wrapper's
+`Access-Control-Expose-Headers` header. This alignment did not establish live
+acceptance: a diagnostic trial at 07:16 UTC retained another HTTP 400.
+
+Unpaid inspection exposed a second deadline: the signed offer and vendor marker
+share an expiry that can precede the advertised 90-second timeout. The signer now
+caps authorization to five seconds before the verified offer expires, and refuses
+before submission when fewer than 12 seconds remain. A regression failed before
+that cap and passed afterward. This fixes an observable permission-lifetime
+mismatch; it does not prove why the seller rejected earlier requests.
+
+Trials at 07:19, 07:26, and 07:27 UTC returned HTTP 402 challenges. The first exposed
+another output-contract failure: its parsed service body duplicated signature
+material outside the permitted seller-proof namespaces. A regression now keeps
+the response status and byte count while omitting the parsed signed challenge
+body. Later reports retain the HTTP 402 outcome instead of losing execution
+evidence. All 22 installed runtime tests and the 17-check synthetic pipeline pass.
+No financial verifier was relaxed.
+
+The 07:27 response carried `PAYMENT-REQUIRED`, without `PAYMENT-RESPONSE`, an error
+reason, or transaction reference. Independent settlement remains unavailable;
+these are not successful purchases. Narrow searches around each submitted trial
+found no matching transfer, including a payer-only check after the last trial.
+They do not prove non-submission. Separate attempts refused on offer drift or
+insufficient remaining lifetime before signing or submission; they were not
+counted as successful live runs.
+
+The configured buyer's typed signature verifies locally. Public reads show an
+ordinary account, no token pause, no buyer blacklist, and adequate test funds.
+A proposed signature-bearing RPC simulation was rejected by automatic approval
+review because it could expose a spend-capable authorization to the RPC operator.
+It was not run. The replacement check verified the signature locally and sent
+no authorization to another service.
+
+An alternative current route, GET
+`https://api-stg.pubfi.ai/v1/gateway/beefy/articles/latest`, advertises the same
+0.001 test USDC price and passes production-adapter signed-offer inspection.
+No purchase of that different exact target is authorized by this record.
+
 ## Observability
 
 The live command required authenticated OTLP configuration and emitted redacted
