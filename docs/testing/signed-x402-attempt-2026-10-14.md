@@ -51,6 +51,20 @@ verification passes. This historical record was not rewritten or exported as if
 it passed. Bundle verification cannot recreate the absent receipt or replay a raw
 signature.
 
+## Follow-up preflight
+
+A full synthetic test through the locally installed official SDK, external-process
+result validator, signed adapter, independent RPC observer, deterministic checks,
+SQLite, and bundle verification reproduces refusal for the original extension
+tree and returns `VERIFIED` after projection. All 17 checks pass in the corrected
+path. The two SDK resource requests are intercepted, the buyer and seller keys
+are synthetic, and no external payment request is sent. This is local runtime
+validation rather than a live purchase or ordinary CI coverage.
+
+A fresh unpaid production-adapter inspection still verifies the staging offer at
+0.001000 test USDC. A read-only token balance check confirms sufficient funds for
+that budget. Neither observation establishes settlement or authorizes execution.
+
 ## Observability
 
 The live command required authenticated OTLP configuration and emitted redacted
