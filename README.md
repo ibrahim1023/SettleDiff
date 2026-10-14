@@ -117,8 +117,9 @@ private reports and bundles retain assessments and digests. Bundle checks cannot
 replay cryptographic verification without the raw proof. The
 [signed-evidence guide](docs/development/signed-evidence.md) explains the supported
 profile and limits. An [unpaid live staging inspection](docs/testing/signed-x402-readiness-2026-10-13.md)
-verified a signed offer. A [subsequent approved attempt](docs/testing/signed-x402-attempt-2026-10-14.md)
-ended unresolved. Receipt verification is covered offline; a successful live
+verified a signed offer. [Approved paid trials](docs/testing/signed-x402-attempt-2026-10-14.md)
+remain unresolved: the latest retained responses are HTTP 400 `x402.invalid_payment`,
+including the bounded-window signer trial. Receipt verification is covered offline; a successful live
 signed-purchase trial is still outstanding.
 
 Controlled live tests have demonstrated disagreements, independent x402 settlement,

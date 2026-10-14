@@ -96,8 +96,36 @@ window length. The supported local timeout range is 12–300 seconds. It never
 extends the advertised expiry horizon or spending limit. A new test failed on the
 unbounded interval, then passed after the correction; it independently verifies
 the resulting typed signature. All 19 local signer checks and the 17-check
-synthetic end-to-end pipeline pass. The seller's generic error does not prove that
-this interval was its rejection cause; a fresh authorized trial is still needed.
+synthetic end-to-end pipeline pass. The seller's generic error does not identify
+the rejected validation rule.
+
+## Bounded-window live trial
+
+The owner approved one bounded-window purchase under the same exact target,
+no-body digest, and 0.001 test USDC budget. The first invocation stopped before
+signer launch because the signed offer changed between preflight and execution;
+it sent no paid request. A fresh invocation under that unused purchase approval
+passed reinspection and sent one paid request at 06:50 UTC.
+
+The seller again returned HTTP 400 `x402.invalid_payment`, without a transaction
+reference or signed receipt. The retained report is `UNVERIFIABLE`, independent
+settlement is `UNAVAILABLE (NO_TRANSACTION_REFERENCE)`, and submission remains
+unresolved. Its private bundle exports and verifies with the same verdict and no
+raw JWS. The bounded-window change did not resolve the live rejection; it must not
+be described as the proven cause or a successful payment fix. No further paid
+request followed this rejection.
+
+A read-only search across 25 blocks around the attempt found no matching
+1,000-unit transfer, and the payer still has sufficient test USDC. This bounded
+search does not prove non-submission or change the persisted verdict.
+
+Comparing the installed EIP-3009 client against the official HTTP example confirms
+that its base signing path requires only an address and typed-data signing. The
+example's additional read-only client capabilities serve extension flows; their
+absence alone does not explain this EIP-3009 rejection. A successful synthetic
+pipeline still does not establish acceptance by the live seller. Further diagnosis
+needs a specific failing validation rule from the seller or a reproducible
+compatibility difference before another paid trial.
 
 ## Observability
 

@@ -102,9 +102,12 @@ intercepted signer. They cover authorization drift, bad/missing receipts, uncert
 results, forbidden signer material, persistence, bundle consistency, and public
 projection. An [unpaid live staging inspection](../testing/signed-x402-readiness-2026-10-13.md)
 verified a seller offer. The updated external signer also matches the production
-authorization digest on unpaid staging evidence. One [approved staging attempt](../testing/signed-x402-attempt-2026-10-14.md)
-ended unresolved without usable execution or receipt evidence. Receipt verification remains covered offline; a successful live signed-purchase
-trial is still outstanding. No automatic retry followed.
+authorization digest on unpaid staging evidence. [Approved staging trials](../testing/signed-x402-attempt-2026-10-14.md)
+remain unresolved. The original attempt lacked usable execution evidence; later
+trials retained HTTP 400 `x402.invalid_payment` responses without a transaction or
+signed receipt. The bounded-window signer trial also received that rejection.
+Receipt verification remains covered offline; a successful live signed-purchase
+trial is still outstanding. No automatic retry followed an uncertain submission.
 
 ```bash
 uv run pytest tests/unit/x402/test_signed.py tests/unit/x402/test_signed_extension.py tests/unit/x402/test_seller_identity_http.py tests/unit/x402/test_signed_adapter.py tests/unit/domain/test_provider_signatures.py -q
