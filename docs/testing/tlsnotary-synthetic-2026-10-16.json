@@ -1,0 +1,122 @@
+{
+  "upstream_commit": "47aee45b53e06648c1b2ad3689b367b8c923fdec",
+  "synthetic": true,
+  "body_bytes": 722,
+  "body_sha256": "f28f20173ca63f3693b01ac50dbbbfb214b1ddb7a40f8c2c3b7e1fbd2e036a38",
+  "artifacts": {
+    "example-json.attestation.tlsn": 7184,
+    "example-json.presentation.tlsn": 9908,
+    "research-notary-key.bin": 42
+  },
+  "results": [
+    {
+      "case": "fresh-session",
+      "exit": 0,
+      "seconds": 0.343308
+    },
+    {
+      "case": "full-presentation",
+      "exit": 0,
+      "seconds": 0.501387
+    },
+    {
+      "case": "valid-contract",
+      "exit": 0,
+      "seconds": 0.006496,
+      "output": {
+        "body_bytes": 722,
+        "body_sha256": "f28f20173ca63f3693b01ac50dbbbfb214b1ddb7a40f8c2c3b7e1fbd2e036a38",
+        "http_status": 200,
+        "research_only": true,
+        "result": "SYNTHETIC_TLS_CONTRACT_PASS",
+        "server": "test-server.io"
+      }
+    },
+    {
+      "case": "wrong-notary",
+      "exit": 1,
+      "seconds": 0.004584
+    },
+    {
+      "case": "wrong-server",
+      "exit": 1,
+      "seconds": 0.004341
+    },
+    {
+      "case": "wrong-body",
+      "exit": 1,
+      "seconds": 0.004423
+    },
+    {
+      "case": "stale-session",
+      "exit": 1,
+      "seconds": 0.010829
+    },
+    {
+      "case": "altered-proof",
+      "exit": 1,
+      "seconds": 0.006885
+    },
+    {
+      "case": "trailing-bytes",
+      "exit": 1,
+      "seconds": 0.005411
+    },
+    {
+      "case": "present-omit-identity",
+      "exit": 0,
+      "seconds": 0.00485
+    },
+    {
+      "case": "reject-omit-identity",
+      "exit": 1,
+      "seconds": 0.003627
+    },
+    {
+      "case": "present-omit-transcript",
+      "exit": 0,
+      "seconds": 0.004101
+    },
+    {
+      "case": "reject-omit-transcript",
+      "exit": 1,
+      "seconds": 0.003461
+    },
+    {
+      "case": "present-redact-body",
+      "exit": 0,
+      "seconds": 0.003991
+    },
+    {
+      "case": "reject-redact-body",
+      "exit": 1,
+      "seconds": 0.003339
+    },
+    {
+      "case": "present-redact-status",
+      "exit": 0,
+      "seconds": 0.003767
+    },
+    {
+      "case": "reject-redact-status",
+      "exit": 1,
+      "seconds": 0.002942
+    },
+    {
+      "case": "valid-replay",
+      "exit": 0,
+      "seconds": 0.003262,
+      "output": {
+        "body_bytes": 722,
+        "body_sha256": "f28f20173ca63f3693b01ac50dbbbfb214b1ddb7a40f8c2c3b7e1fbd2e036a38",
+        "http_status": 200,
+        "research_only": true,
+        "result": "SYNTHETIC_TLS_CONTRACT_PASS",
+        "server": "test-server.io"
+      }
+    }
+  ],
+  "recorded_date": "2026-10-16",
+  "scope": "synthetic loopback HTTPS only; no financial verdict",
+  "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), aarch64-apple-darwin"
+}

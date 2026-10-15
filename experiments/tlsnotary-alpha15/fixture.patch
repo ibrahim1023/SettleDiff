@@ -1,0 +1,78 @@
+diff --git a/crates/examples/attestation/present.rs b/crates/examples/attestation/present.rs
+index 3e67646..bffa323 100644
+--- a/crates/examples/attestation/present.rs
++++ b/crates/examples/attestation/present.rs
+@@ -17,0 +18,8 @@ struct Args {
++    #[clap(long)]
++    omit_identity: bool,
++    #[clap(long)]
++    omit_transcript: bool,
++    #[clap(long)]
++    redact_body: bool,
++    #[clap(long)]
++    redact_status: bool,
+@@ -22,0 +31,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
++    if !matches!(&args.example_type, ExampleType::Json) {
++        return Err(std::io::Error::other("research supports synthetic JSON only").into());
++    }
+@@ -24 +35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
+-    create_presentation(&args.example_type).await
++    create_presentation(&args).await
+@@ -27 +38,2 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
+-async fn create_presentation(example_type: &ExampleType) -> Result<(), Box<dyn std::error::Error>> {
++async fn create_presentation(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
++    let example_type = &args.example_type;
+@@ -45,0 +58 @@ async fn create_presentation(example_type: &ExampleType) -> Result<(), Box<dyn s
++    builder.reveal_sent(request)?;
+@@ -70 +83,3 @@ async fn create_presentation(example_type: &ExampleType) -> Result<(), Box<dyn s
+-    builder.reveal_recv(response.without_data())?;
++    if !args.redact_status {
++        builder.reveal_recv(response.without_data())?;
++    }
+@@ -80 +95 @@ async fn create_presentation(example_type: &ExampleType) -> Result<(), Box<dyn s
+-            let reveal_all = false;
++            let reveal_all = !args.redact_body;
+@@ -82 +97,5 @@ async fn create_presentation(example_type: &ExampleType) -> Result<(), Box<dyn s
+-                builder.reveal_recv(response)?;
++                if args.redact_status {
++                    builder.reveal_recv(body)?;
++                } else {
++                    builder.reveal_recv(response)?;
++                }
+@@ -101,3 +120,6 @@ async fn create_presentation(example_type: &ExampleType) -> Result<(), Box<dyn s
+-    builder
+-        .identity_proof(secrets.identity_proof())
+-        .transcript_proof(transcript_proof);
++    if !args.omit_identity {
++        builder.identity_proof(secrets.identity_proof());
++    }
++    if !args.omit_transcript {
++        builder.transcript_proof(transcript_proof);
++    }
+diff --git a/crates/examples/attestation/prove.rs b/crates/examples/attestation/prove.rs
+index 6e25508..4c00d51 100644
+--- a/crates/examples/attestation/prove.rs
++++ b/crates/examples/attestation/prove.rs
+@@ -22 +22 @@ use tlsn::{
+-        signing::Secp256k1Signer,
++        signing::{Secp256k1Signer, Signer},
+@@ -54,0 +55,3 @@ async fn main() -> Result<()> {
++    if !matches!(&args.example_type, ExampleType::Json) {
++        return Err(std::io::Error::other("research supports synthetic JSON only").into());
++    }
+@@ -76,0 +80,4 @@ async fn prover<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
++    anyhow::ensure!(
++        server_host == "127.0.0.1",
++        "research fixture must use loopback"
++    );
+@@ -354,2 +361,2 @@ async fn notary<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
+-    // Load a dummy signing key.
+-    let signing_key = k256::ecdsa::SigningKey::from_bytes(&[1u8; 32].into())?;
++    // Fresh research-only key; private bytes remain in this local notary task.
++    let signing_key = k256::ecdsa::SigningKey::random(&mut k256::elliptic_curve::rand_core::OsRng);
+@@ -356,0 +364,5 @@ async fn notary<S: AsyncWrite + AsyncRead + Send + Sync + Unpin + 'static>(
++    tokio::fs::write(
++        "research-notary-key.bin",
++        bincode::serialize(&signer.verifying_key())?,
++    )
++    .await?;
