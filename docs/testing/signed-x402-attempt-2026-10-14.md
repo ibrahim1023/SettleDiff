@@ -215,9 +215,22 @@ delivery, or settlement.
 
 Narrow read-only payer searches after the trials found no matching transfer;
 absence still does not prove non-submission. The next useful evidence is the
-provider's validation/facilitation-stage diagnostic for these UTC windows. A
-redacted support report is prepared locally, but no external message is authorized
-by this record and no public issue has been posted.
+provider's validation/facilitation-stage diagnostic for these UTC windows.
+
+## Provider report
+
+The owner approved publishing the prepared redacted report. GitHub refused issue
+creation in `helixbox/pubfi-issue-report` because that repository is archived.
+The owner then separately approved PubFi's active documentation Q&A channel. The
+report is published as [PubFi discussion 94](https://github.com/helixbox/pubfi-docs/discussions/94).
+It contains the routes, UTC trial windows, SDK versions, and bounded diagnostic
+results, without wallet addresses, payment signatures, raw seller proofs, keys,
+transaction identifiers, or the private provider correlation ID.
+
+The next needed evidence remains the provider's validation/facilitation-stage
+diagnostic. Publication does not establish the cause, successful settlement, or a
+verified purchase. The five-trial authorization cap remains consumed; this report
+does not authorize further paid attempts.
 
 ## Observability
 
