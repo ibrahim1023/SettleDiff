@@ -200,6 +200,16 @@ high-confidence, the canonical status is `CONFIRMED`, and a normalized amount is
 
 SQLite schema 4 creates and backfills durable run records, events, artifacts, and explanations; schema 5 adds insert-only evidence timelines; schema 6 adds immutable content-addressed contract snapshots plus append-only observations keyed by target — the contract URL for HTTP/x402 rails and the catalog slug for Perflo contracts. A run record is created before live preflight, redacted events and artifacts are appended during execution, and finalization writes the report, explanation, and immutable timeline atomically in one transaction. Timeline rows are written once and never updated or deleted individually. Repository open deterministically backfills only missing timelines for finalized pre-schema-5 records from persisted report, events, and artifacts; unavailable source times remain null, existing timelines are never rewritten, and historical evidence is preserved. Timeline source timestamps are used only when canonical evidence supplies them; otherwise observation time and generation order provide a deterministic supported partial order, not a claim of exact chronology. Failed and refused runs remain inspectable without a final report. Every run records `fixture`, `controlled_live`, or `external_live` provenance. Fixtures remain versioned JSON so CI and demos do not depend on a database.
 
+### Private bundle issuer assurance
+
+Detached issuer authentication sits at the bundle export/verification boundary
+(ADR 0015). It signs exact schema-3 bundle bytes and each logical object's digest,
+length, path, and role using a dedicated encrypted local Ed25519 key. Offline
+recipients must supply an independently trusted key/fingerprint; authentication
+results are separate from machine verdicts. Report schemas, legacy integrity-only
+verification, public publication, and financial evidence semantics are unchanged.
+See the [issuer-assurance guide](../development/issuer-assurance.md).
+
 ### Interfaces
 
 Typer provides automation and developer output, including non-paying readiness checks and persisted-evidence inspection/recovery. FastAPI renders active, failed, and completed run records. Historical reports retain Expected/Executed/Recorded diffs; schema-4 reports label the final column Independently observed and display provider claims separately. The run list polls the same SQLite ledger, so a separate CLI writer becomes visible without restarting the server.

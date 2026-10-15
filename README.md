@@ -134,6 +134,25 @@ semantics; see the dated [real-world assurance record](docs/testing/assurance-re
 and [Perflo v8/x402 validation](docs/testing/pr2-live-validation-2026-09-28.md) for
 exact terms, masked observations, and limitations.
 
+## Authenticate a shared private bundle
+
+Checksums detect changes relative to a known digest. For issuer authentication,
+optionally attach an Ed25519 assurance signature to an exported private bundle:
+
+```bash
+uv run settlediff sign-bundle .local/bundle.json \
+  --issuer-key "$HOME/.settlediff-issuer/issuer.pem" --output .local/bundle.assurance.json
+uv run settlediff verify-assurance bundle.json \
+  --signature bundle.assurance.json --issuer-public-key trusted-issuer.pub.pem
+```
+
+First follow the [issuer-assurance guide](docs/development/issuer-assurance.md) to
+explicitly create an encrypted dedicated issuer key and distribute its public key
+through a trusted channel. Verification is offline and needs no database, wallet,
+or private key. `AUTHENTIC` authenticates issuance and exact artifact bytes; the
+financial verdict remains separate. A signature does not prove payment, delivery,
+or evidence truth, and is not a ZKP. Default `verify-bundle` stays integrity-only.
+
 ## Before a live investigation
 
 Use [.env.example](.env.example) to populate the ignored `.env` file. Keep
@@ -239,7 +258,7 @@ refunds, settle disputes, or automatically retry ambiguous payments.
 
 - [Testing and fixture matrix](docs/testing/strategy.md)
 - [Architecture overview](docs/architecture/overview.md) and [decisions](docs/decisions/README.md)
-- [Security and data handling](docs/security/data-handling.md)
+- [Security and data handling](docs/security/data-handling.md) and [issuer assurance](docs/development/issuer-assurance.md)
 - [Eval guide](docs/development/evals.md) and [observability guide](docs/development/observability.md)
 - [Audit results](docs/development/audit-2026-10-12.md)
 - [Shared Codex/Devin skills](skills/matt-pocock/README.md)

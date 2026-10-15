@@ -19,7 +19,7 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 
 ### Secrets
 
-- Load secrets through environment-backed settings.
+- Load API credentials through environment-backed settings; dedicated issuer keys use the encrypted file provider described below.
 - `.env` is ignored; `.env.example` contains names and safe descriptions only.
 - Never persist or include secrets in exceptions, prompts, fixtures, reports, or telemetry.
 - Fail startup for a requested live feature whose credential is absent.
@@ -68,8 +68,17 @@ SettleDiff may encounter API credentials, paid request bodies, service responses
 - Mask identifiers by default; explicit local expansion is auditable.
 - Send the model normalized summaries and artifact handles, not unrestricted raw data.
 - Keep reports local for MVP. Retain sanitized reports until explicit per-run deletion or an owner-applied age purge; do not retain x402 signatures, reusable authorizations, signer secrets, or raw live captures in the report database.
-- Export only redacted artifacts and checksum-protected compatibility metadata. Schema-3 bundles are a single JSON document of named logical objects; logical paths are verified in memory and are never extracted to the filesystem. Bundle verification detects checksum changes and internal inconsistency — digests provide integrity, not authenticity — and does not authenticate origin; authenticated provenance requires a separately accepted signing-key owner and trust model. Bundle export never upgrades provider evidence into independent evidence and never exports signer material.
+- Export only redacted artifacts and checksum-protected compatibility metadata. Schema-3 bundles are a single JSON document of named logical objects; logical paths are verified in memory and are never extracted to the filesystem. Bundle verification detects checksum changes and internal inconsistency — digests provide integrity, not authenticity — and does not authenticate origin. Opt-in detached issuer assurance adds authentication against a separately trusted key under ADR 0015; it never upgrades evidence provenance or financial truth. Bundle export never upgrades provider evidence into independent evidence and never exports signer material.
 - `publish` emits a separate public artifact, not a redacted bundle copy. It is produced by a dedicated strict allowlist projection (`PublicReport`/`PublicManifest`) — generic redaction of local evidence is not sufficient for public disclosure. Public schema 2 adds only independent/comparison statuses and diagnostics, five verification booleans, and `REQUIRED` payer policy. It excludes observer source, transaction reference, profile, ledgers, provider Activity, and evidence IDs. `public_run_id` is masked; evidence timestamps are reproducible; a recursive disclosure guard rejects URLs, emails, unmasked hex identifiers, local paths, and credential-shaped keys. The static `index.html` has no scripts, external assets, or tracking, and publication uploads nothing.
+
+### Issuer signing
+
+- Use a dedicated issuer Ed25519 key, distinct from payer/wallet and seller identities. Never import wallet secrets as issuer keys.
+- Key generation is explicit; encrypted PKCS8 private files require owner-only access, hidden passphrases, and storage outside the repository. No private key/password enters settings, reports, bundles, SQLite, or telemetry.
+- No-follow descriptor-relative file access rejects ancestor/file symlinks and nonregular inputs. Bounded reads and exclusive 0600 writes prevent silent replacement. Private hard links are refused.
+- Offline authentication requires a separately trusted public key or fingerprint; an embedded key alone is insufficient. Caller-supplied revocations override trust. There is no online revocation or trusted timestamp.
+- `AUTHENTIC` describes issuance and integrity, separately from financial verdicts. Key compromise requires revocation, independent redistribution, and reassessment of prior signatures. Encrypted backups and passphrases must be held separately.
+- The [issuer guide](../development/issuer-assurance.md) documents setup, local OS trust, partial-write recovery, rotation, and limitations. [ADR 0015](../decisions/0015-issuer-signed-private-bundles.md) specifies the format. Public publication is unsigned; no ZKP or transparency log is implemented.
 
 ### Web UI
 
