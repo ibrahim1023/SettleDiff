@@ -427,3 +427,15 @@ def test_signing_never_emits_an_envelope_over_the_verifier_limit(
     monkeypatch.setattr(assurance, "MAX_SIGNATURE_BYTES", 1024)
     with pytest.raises(AssuranceError):
         sign_bundle(bundle_data, Ed25519PrivateKey.generate())
+
+
+@pytest.mark.parametrize("field", ["schema_id", "algorithm"])
+def test_envelope_requires_explicit_format_discriminators(bundle_data: bytes, field: str) -> None:
+    key = Ed25519PrivateKey.generate()
+    envelope: dict[str, Any] = json.loads(sign_bundle(bundle_data, key))
+    del envelope[field]
+    result = verify_assurance(
+        bundle_data, canonical_json_bytes(envelope), expected_public_key=key.public_key()
+    )
+    assert result.status == "UNSUPPORTED_FORMAT"
+    assert result.machine_verdict is None

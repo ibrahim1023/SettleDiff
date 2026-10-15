@@ -81,8 +81,8 @@ class AssuranceManifest(BaseModel):
 class AssuranceEnvelope(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
-    schema_id: Literal["assurance-signature/v1"] = "assurance-signature/v1"
-    algorithm: Literal["Ed25519"] = "Ed25519"
+    schema_id: Literal["assurance-signature/v1"]
+    algorithm: Literal["Ed25519"]
     public_key: str = Field(max_length=44)
     payload: str = Field(max_length=MAX_SIGNATURE_BYTES)
     signature: str = Field(max_length=88)
@@ -132,6 +132,8 @@ def sign_bundle(data: bytes, key: Ed25519PrivateKey) -> bytes:
     if len(encoded_payload) > MAX_SIGNATURE_BYTES:
         raise AssuranceError("assurance envelope exceeds size limit")
     envelope = AssuranceEnvelope(
+        schema_id="assurance-signature/v1",
+        algorithm="Ed25519",
         public_key=base64.b64encode(key.public_key().public_bytes_raw()).decode("ascii"),
         payload=encoded_payload,
         signature=base64.b64encode(key.sign(DOMAIN + payload)).decode("ascii"),
