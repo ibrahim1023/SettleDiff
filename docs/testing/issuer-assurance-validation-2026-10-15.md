@@ -104,3 +104,36 @@ partial-write recovery, rotation, compromise response, and offline verification.
 requires independently witnessed shared history. A local log alone would not
 provide non-equivocation. TLSNotary and ZK phases remain unimplemented and require
 separate approval, authenticated inputs, and a concrete verifier need.
+
+## Follow-up review — 2026-10-15
+
+The shared two-axis review compared `fb290f3...8a40c16` against repository standards
+and the approved Phase 1 proposal/ADR. The Standards axis found no documented
+violations or actionable code smells. The Spec axis found one format-contract gap:
+missing envelope `schema_id` or `algorithm` fields were supplied by model defaults,
+so an otherwise valid envelope was accepted. This was not an issuer-authentication
+bypass: the signed payload still bound the version and algorithm.
+
+Four regression cases failed before the fix, covering both fields and historical/
+current report fixtures. Both fields are now required, and signing supplies them
+explicitly. Missing either returns `UNSUPPORTED_FORMAT` without a machine verdict.
+A separate malformed-Unicode probe exposed an unhandled bundle encoding exception
+while signing. A failing-then-passing regression now ensures it becomes the existing
+sanitized `AssuranceError`. Legacy bundle behavior and financial semantics remain
+unchanged. The Spec reviewer rechecked the fixes and confirmed resolution without
+new deviations.
+
+Executed focused checks:
+
+```bash
+UV_CACHE_DIR=/private/tmp/settlediff-uv-cache uv run pytest tests/unit/application/test_assurance.py tests/unit/application/test_bundle.py tests/unit/test_assurance_cli.py -q
+UV_CACHE_DIR=/private/tmp/settlediff-uv-cache uv run pytest tests/unit/application/test_assurance.py tests/unit/test_assurance_cli.py -q
+```
+
+The first run passed **151 tests** after the discriminator fix; the second passed
+**94 tests** after adding the Unicode fix. The complete offline gate was rerun
+with the same coverage command above: **1,535 passed, 2 skipped, 25 deselected**,
+36.91 seconds, **92% overall coverage**. Lock, format, lint, typing, docs, and
+whitespace checks passed. Manual CLI inspection confirmed malformed envelopes
+return JSON `UNSUPPORTED_FORMAT`, null issuer/verdict fields, and exit code 2.
+No live/paid operations or later-phase implementation occurred.
