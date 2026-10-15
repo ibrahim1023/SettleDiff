@@ -439,3 +439,11 @@ def test_envelope_requires_explicit_format_discriminators(bundle_data: bytes, fi
     )
     assert result.status == "UNSUPPORTED_FORMAT"
     assert result.machine_verdict is None
+
+
+def test_signing_rejects_unpaired_unicode_with_boundary_error() -> None:
+    from settlediff.application.assurance import AssuranceError
+
+    malformed = b'{"schema_version":3,"run_id":"\\ud800"}'
+    with pytest.raises(AssuranceError, match="bundle cannot be signed"):
+        sign_bundle(malformed, Ed25519PrivateKey.generate())

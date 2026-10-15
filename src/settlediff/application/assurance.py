@@ -125,7 +125,7 @@ def sign_bundle(data: bytes, key: Ed25519PrivateKey) -> bytes:
     """Authenticate already-exported bytes; never generate a key or change a report."""
     try:
         manifest, _verdict = _manifest(data, issuer_fingerprint(key.public_key()))
-    except (BundleError, ValidationError, RecursionError) as error:
+    except (BundleError, ValidationError, UnicodeError, RecursionError) as error:
         raise AssuranceError("bundle cannot be signed") from error
     payload = canonical_json_bytes(manifest.model_dump(mode="json"))
     encoded_payload = base64.b64encode(payload).decode("ascii")
