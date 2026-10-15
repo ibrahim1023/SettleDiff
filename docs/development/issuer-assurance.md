@@ -107,4 +107,7 @@ The exact wire format, domain separation, trust assumptions, and compatibility a
 specified in [ADR 0015](../decisions/0015-issuer-signed-private-bundles.md). Its narrow
 raw-byte JSON encoding is not advertised as RFC 8785 JCS. The existing maintained
 cryptography dependency supplies Ed25519; no new dependency or identity service is
-introduced. Transparency logs, TLSNotary, and ZK proofs need separate approval.
+introduced. [Phase 2's design](evidence-transparency-design.md) recommends deferring
+transparency-log implementation until an independent history consumer and operating
+witness/monitor arrangement exist. It adds no logging requirement to this guide.
+TLSNotary and ZK proofs still need separate approval.

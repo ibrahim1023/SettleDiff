@@ -153,6 +153,10 @@ or private key. `AUTHENTIC` authenticates issuance and exact artifact bytes; the
 financial verdict remains separate. A signature does not prove payment, delivery,
 or evidence truth, and is not a ZKP. Default `verify-bundle` stays integrity-only.
 
+Shared-history transparency is [designed but deferred](docs/development/evidence-transparency-design.md):
+there is no committed external history verifier or independent witness arrangement.
+No public log, TLSNotary, or ZK proof is implemented.
+
 ## Before a live investigation
 
 Use [.env.example](.env.example) to populate the ignored `.env` file. Keep
