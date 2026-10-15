@@ -213,3 +213,205 @@ def test_changed_financial_verdict_fails_authentication(bundle_data: bytes) -> N
     )
     assert result.status == "CONTENT_MISMATCH"
     assert result.machine_verdict is None
+
+
+@pytest.mark.parametrize("mutation", ["change", "remove", "add"])
+def test_recomputed_unsigned_checksums_do_not_restore_authentication(
+    bundle_data: bytes, mutation: str
+) -> None:
+    from hashlib import sha256
+
+    key = Ed25519PrivateKey.generate()
+    payload: dict[str, Any] = json.loads(bundle_data)
+    if mutation == "change":
+        payload["compatibility"]["settlediff_version"] = "0.1.1"
+    elif mutation == "remove":
+        payload["objects"].pop("timeline.json")
+    else:
+        payload["objects"]["injected.json"] = {"claim": "synthetic"}
+    payload["manifest"] = [
+        {"path": path, "sha256": sha256(canonical_json_bytes(value)).hexdigest()}
+        for path, value in sorted(payload["objects"].items())
+    ]
+    del payload["bundle_sha256"]
+    payload["bundle_sha256"] = sha256(canonical_json_bytes(payload)).hexdigest()
+    changed = canonical_json_bytes(payload)
+    if mutation == "change":
+        from settlediff.application.bundle import load_bundle, verify_bundle
+
+        verify_bundle(load_bundle(changed))  # Checksum-only verification can be recomputed.
+    assert (
+        verify_assurance(
+            changed, sign_bundle(bundle_data, key), expected_public_key=key.public_key()
+        ).status
+        == "CONTENT_MISMATCH"
+    )
+
+
+def test_legacy_bundle_is_integrity_only(bundle_data: bytes) -> None:
+    from hashlib import sha256
+
+    from settlediff.application.assurance import AssuranceError
+    from settlediff.application.bundle import load_bundle, verify_bundle
+
+    modern: dict[str, Any] = json.loads(bundle_data)
+    legacy = {
+        "schema_version": 2,
+        "run_id": modern["run_id"],
+        "report": modern["objects"]["report.json"],
+        "explanation": None,
+        "events": modern["objects"]["run-events.json"],
+        "artifacts": [
+            value for path, value in modern["objects"].items() if path.startswith("artifacts/")
+        ],
+        "compatibility": modern["compatibility"],
+    }
+    legacy["integrity"] = sha256(canonical_json_bytes(legacy)).hexdigest()
+    data = canonical_json_bytes(legacy)
+    verify_bundle(load_bundle(data))
+    with pytest.raises(AssuranceError):
+        sign_bundle(data, Ed25519PrivateKey.generate())
+
+
+def test_cli_signing_and_fresh_process_verification(bundle_data: bytes, tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import sys
+
+    from typer.testing import CliRunner
+
+    from settlediff.cli import app
+
+    runner = CliRunner()
+    private, public = tmp_path / "private.pem", tmp_path / "public.pem"
+    bundle, signature = tmp_path / "bundle.json", tmp_path / "assurance.json"
+    bundle.write_bytes(bundle_data)
+    created = runner.invoke(
+        app,
+        ["issuer-keygen", "--private-key", str(private), "--public-key", str(public)],
+        input="synthetic-only\nsynthetic-only\n",
+    )
+    assert created.exit_code == 0, created.output
+    signed = runner.invoke(
+        app,
+        ["sign-bundle", str(bundle), "--issuer-key", str(private), "--output", str(signature)],
+        input="synthetic-only\n",
+    )
+    assert signed.exit_code == 0, signed.output
+    assert "synthetic-only" not in created.output + signed.output
+    assert private.read_bytes() not in signature.read_bytes()
+    assert "issuer.sqlite" not in signature.read_text()
+    private.unlink()
+    (tmp_path / "issuer.sqlite").unlink()
+    # A new interpreter, different cwd, no database/key, and network disabled.
+    code = """import socket, sys
+socket.socket.connect = lambda *a, **kw: (_ for _ in ()).throw(AssertionError("network"))
+socket.socket.connect_ex = socket.socket.connect
+from settlediff.cli import app
+app(args=sys.argv[1:])
+"""
+    environment = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(Path(__file__).parents[3] / "src"),
+    }
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            code,
+            "verify-assurance",
+            str(bundle),
+            "--signature",
+            str(signature),
+            "--issuer-public-key",
+            str(public),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["status"] == "AUTHENTIC"
+
+
+def test_independent_node_verifies_wire_format(bundle_data: bytes, tmp_path: Path) -> None:
+    import shutil
+    import subprocess
+
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node standard crypto is unavailable")
+    key = Ed25519PrivateKey.generate()
+    (tmp_path / "bundle.json").write_bytes(bundle_data)
+    (tmp_path / "assurance.json").write_bytes(sign_bundle(bundle_data, key))
+    (tmp_path / "trusted.pem").write_bytes(
+        key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    )
+    program = r"""
+const fs = require('node:fs'), crypto = require('node:crypto');
+const assert = require('node:assert/strict');
+const envelope = JSON.parse(fs.readFileSync('assurance.json'));
+const key = crypto.createPublicKey(fs.readFileSync('trusted.pem'));
+const payload = Buffer.from(envelope.payload, 'base64');
+const message = Buffer.concat([Buffer.from('SettleDiff assurance manifest v1\0'), payload]);
+assert(crypto.verify(null, message,
+                     key, Buffer.from(envelope.signature, 'base64')));
+const hash = x => crypto.createHash('sha256').update(x).digest('hex');
+const manifest = JSON.parse(payload);
+const canonical = x => Array.isArray(x) ? x.map(canonical) : x && typeof x === 'object'
+    ? Object.fromEntries(Object.keys(x).sort().map(k => [k, canonical(x[k])])) : x;
+assert.equal(JSON.stringify(canonical(manifest)), payload.toString());
+const raw = fs.readFileSync('bundle.json'), bundle = JSON.parse(raw);
+for (const entry of manifest.artifacts) {
+  const bytes = entry.role === 'private_bundle' ? raw
+    : Buffer.from(JSON.stringify(canonical(bundle.objects[entry.path])));
+  assert.equal(bytes.length, entry.byte_length);
+  assert.equal(hash(bytes), entry.sha256);
+}
+const spki = key.export({type:'spki', format:'der'});
+assert.equal(hash(spki.subarray(-32)), manifest.issuer_fingerprint);
+console.log('AUTHENTIC');
+"""
+    result = subprocess.run(
+        [node, "-e", program], cwd=tmp_path, capture_output=True, text=True, timeout=10, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "AUTHENTIC"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"schema_id":NaN}',
+        b'{"value":1.0}',
+        b"\xff",
+        b'{"value":1,"value":2}',
+        b"[" * 2000,
+        b" " * (2 * 1024 * 1024 + 1),
+    ],
+)
+def test_hostile_envelope_is_bounded_and_rejected(bundle_data: bytes, raw: bytes) -> None:
+    assert (
+        verify_assurance(
+            bundle_data, raw, expected_public_key=Ed25519PrivateKey.generate().public_key()
+        ).status
+        == "UNSUPPORTED_FORMAT"
+    )
+
+
+def test_signature_from_another_issuer_is_invalid(bundle_data: bytes) -> None:
+    key = Ed25519PrivateKey.generate()
+    envelope: dict[str, Any] = json.loads(sign_bundle(bundle_data, key))
+    other: dict[str, Any] = json.loads(sign_bundle(bundle_data, Ed25519PrivateKey.generate()))
+    envelope["signature"] = other["signature"]
+    assert (
+        verify_assurance(
+            bundle_data, canonical_json_bytes(envelope), expected_public_key=key.public_key()
+        ).status
+        == "INVALID_SIGNATURE"
+    )

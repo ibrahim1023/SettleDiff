@@ -78,6 +78,7 @@ from settlediff.application.run import (
     SubmissionRecovery,
 )
 from settlediff.application.timeline import build_evidence_timeline
+from settlediff.assurance_cli import issuer_keygen, sign_private_bundle, verify_private_assurance
 from settlediff.config import Settings
 from settlediff.contextdev.client import ContextDevClient
 from settlediff.domain.drift import (
@@ -168,6 +169,11 @@ VERSION_OPTION = typer.Option(
     is_eager=True,
     help="Show the installed SettleDiff version and exit.",
 )
+
+
+app.command("issuer-keygen")(issuer_keygen)
+app.command("sign-bundle")(sign_private_bundle)
+app.command("verify-assurance")(verify_private_assurance)
 
 
 @app.callback()
