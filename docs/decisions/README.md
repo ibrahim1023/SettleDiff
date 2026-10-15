@@ -17,5 +17,6 @@
 | [0013](0013-required-live-observability.md) | Required export for live investigations (supersedes 0006 export policy) | Accepted |
 
 | [0014](0014-groq-explanation-provider.md) | Groq explanation provider | Accepted |
+| [0015](0015-issuer-signed-private-bundles.md) | Issuer-signed private bundles | Accepted |
 
 New decisions use the next four-digit number. ADRs are immutable after acceptance except for typo/link corrections; changed decisions supersede earlier records.
