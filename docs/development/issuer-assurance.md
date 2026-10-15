@@ -110,4 +110,6 @@ cryptography dependency supplies Ed25519; no new dependency or identity service 
 introduced. [Phase 2's design](evidence-transparency-design.md) recommends deferring
 transparency-log implementation until an independent history consumer and operating
 witness/monitor arrangement exist. It adds no logging requirement to this guide.
-TLSNotary and ZK proofs still need separate approval.
+[Synthetic TLSNotary research](../testing/tlsnotary-synthetic-2026-10-16.md) now has
+a separate reproducible experiment. Paid TLSNotary integration and ZK policy proof
+work still need separate approval and do not affect issuer authentication.

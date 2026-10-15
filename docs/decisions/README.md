@@ -19,5 +19,6 @@
 | [0014](0014-groq-explanation-provider.md) | Groq explanation provider | Accepted |
 | [0015](0015-issuer-signed-private-bundles.md) | Issuer-signed private bundles | Accepted |
 | [0016](0016-defer-evidence-transparency.md) | Defer evidence transparency pending an independent consumer | Proposed (design only) |
+| [0017](0017-tlsnotary-synthetic-research-only.md) | Keep TLSNotary in synthetic research | Proposed (paid integration deferred) |
 
 New decisions use the next four-digit number. ADRs are immutable after acceptance except for typo/link corrections; changed decisions supersede earlier records.

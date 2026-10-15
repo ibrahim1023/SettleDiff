@@ -99,3 +99,11 @@ compatibility, privacy review, acceptable measured cost, and separate approval.
 Even a valid delivery transcript proves server bytes under protocol assumptions;
 it does not prove settlement or subjective fulfillment. Do not upgrade a machine
 verdict from this experiment.
+
+## Executed follow-up
+
+The [October 16 synthetic validation](../testing/tlsnotary-synthetic-2026-10-16.md)
+ran the pinned workflow with a fresh local notary key, strict offline contract
+verification, ten negative cases, and measured stage/artifact sizes. The
+[retained experiment](../../experiments/tlsnotary-alpha15/README.md) is separate
+from production code. The production/paid no-go above remains in place.

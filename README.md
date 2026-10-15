@@ -155,7 +155,12 @@ or evidence truth, and is not a ZKP. Default `verify-bundle` stays integrity-onl
 
 Shared-history transparency is [designed but deferred](docs/development/evidence-transparency-design.md):
 there is no committed external history verifier or independent witness arrangement.
-No public log, TLSNotary, or ZK proof is implemented.
+No public log or SettleDiff ZK policy proof is implemented.
+
+A [synthetic TLSNotary experiment](docs/testing/tlsnotary-synthetic-2026-10-16.md)
+authenticated a new local HTTPS session and rejected ten negative cases. It remains
+research only: test certificates and a co-hosted notary do not establish independent
+production provenance. TLSNotary is not integrated with paid execution or verdicts.
 
 ## Before a live investigation
 

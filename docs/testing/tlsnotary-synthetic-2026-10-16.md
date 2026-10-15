@@ -115,8 +115,9 @@ accepts strict result schema 3. `SignerServiceResponse` returns status, media ty
 byte count, truncation, and optional parsed JSON; it carries no TLS session proof.
 Static inspection of the local reference signer sources found Node/x402 SDK code,
 a raw `node:https` transport branch, and no TLSNotary integration. Only import/
-transport metadata was inspected; no signer was launched and no key/configuration
-or paid payload was read. Local sources are not a portable supported adapter.
+transport metadata was inspected; no signer was launched. No wallet key files,
+ignored environment configuration, or live payload captures were read. Local sources
+are not a portable supported adapter.
 
 TLSNotary's MPC participant must help establish the original TLS session. Copying
 an already received response, request log, or saved bundle into Rust cannot create
@@ -138,3 +139,29 @@ release, independent notary/key distribution, accepted disclosure/retention rule
 a signer-owned client design, compatible target TLS/HTTP behavior, measured resource
 budgets, and separate exact paid authorization where needed. Even then, authenticated
 server bytes do not establish actual settlement or subjective service fulfillment.
+
+## Repository verification
+
+The full Python offline gate passed **1,535 tests**, with **2 skipped**,
+**25 deselected**, **92% application coverage**, in 35.38 seconds:
+
+```bash
+uv lock --check
+uv run ruff format --check .
+uv run ruff check .
+uv run pyright
+uv run pyright experiments/tlsnotary-alpha15/trial.py
+uv run pytest -m 'not live and not paid' --cov=settlediff --cov-report=term-missing
+uv run python scripts/check_docs.py
+git diff --check
+```
+
+Rust's separate contract test and the explicit loopback experiment are not included
+in that Python test/coverage count. The fixture patch was applied to pristine
+pinned source in a separate temporary directory and reproduced both tested files
+byte for byte. Rustfmt checked the retained verifier. Initial network downloads
+were toolchain/source/dependency setup; the session itself used only loopback.
+
+Separate read-only standards and specification reviews found no actionable issues
+in the research changes. Both confirmed that production integration and financial
+semantics remain outside this experiment.
