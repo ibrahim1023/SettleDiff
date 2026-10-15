@@ -110,6 +110,11 @@ the observer checks the receipt and exact ERC-20 transfer. Pending receipts,
 unavailable RPC evidence, and contradictions remain explicit. See
 [independent settlement observation](docs/decisions/0010-independent-settlement-observation.md).
 
+A [fresh public x402 purchase on 2026-10-15](docs/testing/public-x402-validation-2026-10-15.md)
+returned `VERIFIED`: the weather service delivered HTTP 200, independent on-chain
+observation confirmed the exact 0.001 test USDC transfer, and all 13 checks passed.
+The saved report and exported evidence bundle preserve that result.
+
 For advertised JWS/Ed25519 offers, SettleDiff verifies the same-origin seller key,
 binds the proof into authorization, and rechecks it before payment. It assesses
 receipts after normal and uncertain results. Raw JWS strings remain ephemeral;
