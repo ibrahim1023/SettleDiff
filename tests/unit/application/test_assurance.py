@@ -22,11 +22,12 @@ from settlediff.domain.models import ArtifactType, EvidenceArtifact
 from settlediff.storage.sqlite import SQLiteReportRepository
 
 
-@pytest.fixture
-def bundle_data(tmp_path: Path) -> bytes:
-    report = replay_fixture(Path(__file__).parents[3] / "fixtures" / "clean-success")
+@pytest.fixture(params=["clean-success", "x402-independent-confirmed"])
+def bundle_data(tmp_path: Path, request: pytest.FixtureRequest) -> bytes:
+    scenario = str(request.param)
+    report = replay_fixture(Path(__file__).parents[3] / "fixtures" / scenario)
     repository = SQLiteReportRepository(tmp_path / "issuer.sqlite")
-    directory = Path(__file__).parents[3] / "fixtures" / "clean-success"
+    directory = Path(__file__).parents[3] / "fixtures" / scenario
     kinds = {
         "contract.json": ArtifactType.SERVICE_CONTRACT,
         "execution.json": ArtifactType.EXECUTION,
@@ -124,7 +125,7 @@ def test_envelope_attacks(bundle_data: bytes, mutation: str) -> None:
         expected = "INVALID_SIGNATURE"
     elif mutation == "payload":
         payload = json.loads(base64.b64decode(envelope["payload"]))
-        payload["report_schema_version"] = 4
+        payload["report_schema_version"] = 1 if payload["report_schema_version"] == 4 else 4
         envelope["payload"] = base64.b64encode(canonical_json_bytes(payload)).decode()
         expected = "INVALID_SIGNATURE"
     elif mutation == "algorithm":
@@ -415,3 +416,14 @@ def test_signature_from_another_issuer_is_invalid(bundle_data: bytes) -> None:
         ).status
         == "INVALID_SIGNATURE"
     )
+
+
+def test_signing_never_emits_an_envelope_over_the_verifier_limit(
+    bundle_data: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from settlediff.application import assurance
+    from settlediff.application.assurance import AssuranceError
+
+    monkeypatch.setattr(assurance, "MAX_SIGNATURE_BYTES", 1024)
+    with pytest.raises(AssuranceError):
+        sign_bundle(bundle_data, Ed25519PrivateKey.generate())

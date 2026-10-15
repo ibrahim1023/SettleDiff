@@ -47,3 +47,54 @@ def test_missing_assurance_is_diagnostic(tmp_path: Path) -> None:
     )
     assert result.exit_code != 0
     assert "MISSING_ARTIFACT" in result.stdout
+
+
+def test_key_setup_empty_password_and_signing_missing_key(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "issuer-keygen",
+            "--private-key",
+            str(tmp_path / "key"),
+            "--public-key",
+            str(tmp_path / "public"),
+        ],
+        input="\n\n",
+    )
+    assert result.exit_code != 0
+    assert not (tmp_path / "key").exists()
+    result = runner.invoke(
+        app,
+        [
+            "sign-bundle",
+            str(tmp_path / "bundle"),
+            "--issuer-key",
+            str(tmp_path / "missing"),
+            "--output",
+            str(tmp_path / "sidecar"),
+        ],
+        input="synthetic-password\n",
+    )
+    assert result.exit_code == 2
+    assert not (tmp_path / "sidecar").exists()
+    assert "synthetic-password" not in result.output
+
+
+def test_unsafe_files_fail_closed(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.write_bytes(b"{}")
+    link = tmp_path / "link"
+    link.symlink_to(target)
+    result = runner.invoke(
+        app,
+        [
+            "verify-assurance",
+            str(link),
+            "--signature",
+            str(target),
+            "--issuer-fingerprint",
+            "0" * 64,
+        ],
+    )
+    assert result.exit_code == 2
+    assert "UNSUPPORTED_FORMAT" in result.stdout

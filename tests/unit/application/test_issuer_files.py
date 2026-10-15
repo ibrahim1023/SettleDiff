@@ -93,3 +93,29 @@ def test_empty_passphrase_creates_nothing(tmp_path: Path) -> None:
     with pytest.raises(IssuerFileError):
         write_issuer_keypair(tmp_path / "key", tmp_path / "public", b"")
     assert list(tmp_path.iterdir()) == []
+
+
+def test_incompatible_key_types_and_malformed_public_key(tmp_path: Path) -> None:
+    from cryptography.hazmat.primitives.asymmetric.ed448 import Ed448PrivateKey
+    from cryptography.hazmat.primitives.serialization import BestAvailableEncryption, PublicFormat
+
+    from settlediff.application.issuer_files import load_public_key
+
+    key = Ed448PrivateKey.generate()
+    private, public = tmp_path / "wrong.pem", tmp_path / "wrong.pub"
+    write_exclusive(
+        private,
+        key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, BestAvailableEncryption(b"synthetic")),
+    )
+    write_exclusive(
+        public, key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    )
+    with pytest.raises(IssuerFileError):
+        load_issuer_key(private, b"synthetic")
+    with pytest.raises(IssuerFileError):
+        load_public_key(public)
+    public.write_bytes(b"not a key")
+    with pytest.raises(IssuerFileError):
+        load_public_key(public)
+    with pytest.raises(IssuerFileError):
+        read_regular(tmp_path / ".." / "invalid", 100)

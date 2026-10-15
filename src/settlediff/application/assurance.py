@@ -125,15 +125,21 @@ def sign_bundle(data: bytes, key: Ed25519PrivateKey) -> bytes:
     """Authenticate already-exported bytes; never generate a key or change a report."""
     try:
         manifest, _verdict = _manifest(data, issuer_fingerprint(key.public_key()))
-    except (BundleError, ValidationError) as error:
+    except (BundleError, ValidationError, RecursionError) as error:
         raise AssuranceError("bundle cannot be signed") from error
     payload = canonical_json_bytes(manifest.model_dump(mode="json"))
+    encoded_payload = base64.b64encode(payload).decode("ascii")
+    if len(encoded_payload) > MAX_SIGNATURE_BYTES:
+        raise AssuranceError("assurance envelope exceeds size limit")
     envelope = AssuranceEnvelope(
         public_key=base64.b64encode(key.public_key().public_bytes_raw()).decode("ascii"),
-        payload=base64.b64encode(payload).decode("ascii"),
+        payload=encoded_payload,
         signature=base64.b64encode(key.sign(DOMAIN + payload)).decode("ascii"),
     )
-    return canonical_json_bytes(envelope.model_dump(mode="json"))
+    encoded = canonical_json_bytes(envelope.model_dump(mode="json"))
+    if len(encoded) > MAX_SIGNATURE_BYTES:
+        raise AssuranceError("assurance envelope exceeds size limit")
+    return encoded
 
 
 def _pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
