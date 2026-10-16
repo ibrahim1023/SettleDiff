@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 from pydantic import BaseModel, JsonValue
 
+from settlediff import __version__
 from settlediff.agent.grounding import fallback_explanation
 from settlediff.application.bundle import (
     BundleError,
@@ -179,7 +180,7 @@ def test_export_load_verify_round_trip(tmp_path: Path) -> None:
         assert path.startswith("artifacts/a-") and path.endswith(".json")
     assert [entry.path for entry in loaded.manifest] == paths
     assert loaded.compatibility == CompatibilityMetadata(
-        settlediff_version="0.1.0",
+        settlediff_version=__version__,
         report_schema_version=2,
         database_schema_version=6,
         contextdev_api_path="/web/scrape/markdown",
