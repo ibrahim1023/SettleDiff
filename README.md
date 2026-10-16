@@ -261,7 +261,9 @@ separate opt-in trials and calibrated graders.
 
 ## Architecture and project status
 
-SettleDiff **0.1.0rc1** is an MIT-licensed release candidate available from source. It is not published
+SettleDiff **0.1.0rc1** is an MIT-licensed release candidate available from source;
+see the [recipient trial guide](docs/releases/0.1.0rc1-recipient.md) for the prepared
+handoff, installation steps and trust assumptions. It is not published
 to a package registry or offered as a hosted service. The application uses Python,
 strict Pydantic models, a bounded PydanticAI investigator, Typer, FastAPI, SQLite,
 and OpenTelemetry. Only deterministic code produces financial findings.

@@ -45,6 +45,9 @@ source = ["settlediff"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/settlediff"]
 
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/README.md", "/LICENSE", "/pyproject.toml", "/uv.lock"]
+
 [tool.pyright]
 include = ["scripts", "src", "tests"]
 pythonVersion = "3.12"

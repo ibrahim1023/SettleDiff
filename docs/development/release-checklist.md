@@ -70,6 +70,31 @@ uv pip install --python "$release_tmp/venv/bin/python" "$release_tmp"/dist/*.whl
 - [ ] The wheel and source distribution contain only intended tracked package content.
 - [ ] The isolated command prints `settlediff 0.1.0rc1`.
 
+The source distribution deliberately includes only `src/`, README, license,
+`pyproject.toml`, `uv.lock` and builder-generated metadata/ignore rules. It is
+buildable package source; the full repository supplies development tests, fixtures,
+skills and research. Build release assets from a clean archive of the selected
+commit, not a working directory containing ignored keys or local evidence.
+
+## Recipient release-candidate handoff
+
+Use the [0.1.0rc1 release notes](../releases/0.1.0rc1.md) and
+[standalone recipient guide](../releases/0.1.0rc1-recipient.md).
+
+- [ ] Build the wheel from the focused source distribution and inspect both archives.
+- [ ] Export only runtime requirements with hashes, without local-path header comments.
+- [ ] Generate the synthetic example with `scripts/assurance_portability.py issue`.
+- [ ] Include only its three evidence files, the recipient check script and derived public test key in the example ZIP. Never serialize the ephemeral private key or retain its temporary SQLite database.
+- [ ] Record the exact source commit/version and public fingerprint in `BUILD-INFO.json`; do not present this self-reported metadata as signed provenance.
+- [ ] Copy the standalone guide to `RECIPIENT.md` and checksum every other asset in `SHA256SUMS`.
+- [ ] Install the final wheel in a new environment outside the checkout using the exported hash-locked requirements, then pass all seven recipient checks.
+- [ ] Verify uploaded draft assets match their local checksums. Keep the draft unpublished until the owner chooses how to share it.
+- [ ] Give the chosen tester the issuer fingerprint through a separately authenticated channel. A public key/fingerprint in the same archive is not an independent trust anchor.
+- [ ] Record actual external feedback separately; local or CI passes are not an external trial.
+
+No external tester or contact is selected yet. Preparation does not authorize
+outreach, release publication, package-registry upload or production issuer keys.
+
 ## Security and evidence review
 
 - [ ] Fixture sanitization rejects credentials, private keys, unmasked identifiers, email addresses, and unexpected entropy.
