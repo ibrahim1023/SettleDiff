@@ -212,3 +212,17 @@ def test_documentation_checker_passes_repository() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_assurance_recipient_job_has_no_checkout_or_issuer_state() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    recipient = workflow.split("  assurance-recipient:\n", 1)[1]
+
+    assert "actions/checkout" not in recipient
+    assert "needs: assurance-issuer" in recipient
+    assert "needs.assurance-issuer.outputs.issuer_fingerprint" in recipient
+    assert "--require-hashes" in recipient
+    assert "--no-deps" in recipient
+    assert 'python" -I ' in recipient
+    assert "retention-days: 1" in workflow
+    assert "path: ${{ runner.temp }}/assurance-transfer" in workflow

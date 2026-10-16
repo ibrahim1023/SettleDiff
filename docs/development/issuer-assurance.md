@@ -94,6 +94,90 @@ Output is JSON: `status`, `issuer_fingerprint`, and `machine_verdict`. Only
 There is no fallback to checksum-only success. `verify-bundle` remains the
 explicit integrity-only command; it cannot authenticate issuance.
 
+## Automated recipient check
+
+The [CI workflow](../../.github/workflows/ci.yml) runs two additional Linux jobs
+after the offline quality matrix passes:
+
+1. **Build synthetic issuer delivery** builds the wheel and exports hash-locked
+   runtime requirements from `uv.lock`. The portability script replays only the
+   tracked `x402-independent-confirmed` fixture, exports its redacted bundle and a
+   legacy schema-2 counterpart, and signs the schema-3 bundle with a freshly
+   generated in-memory test key. Its temporary SQLite database is removed before
+   transfer; the key is never serialized. Only this explicit synthetic test creates
+   an ephemeral key; normal bundle signing still requires a provisioned issuer key.
+2. **Verify in a fresh recipient environment** runs on another hosted runner with
+   no repository checkout. It downloads the wheel, requirements, check script and
+   three synthetic evidence files, creates a new virtual environment, installs
+   hash-checked runtime dependencies and the wheel without editable source, and
+   executes the recipient checks from outside the checkout using Python `-I`.
+
+The expected issuer fingerprint travels through GitHub's job-output channel,
+separately from the artifact's embedded key. The recipient does not derive its pin
+from the evidence. The workflow and both runners remain under this repository's
+control: GitHub's workflow channel is the test's trust anchor, not an independent
+auditor or production key-distribution service.
+
+| Recipient case | Required result |
+|---|---|
+| Original bundle and separately supplied fingerprint | `AUTHENTIC`, existing `VERIFIED` fixture verdict |
+| Changed bundle bytes | `CONTENT_MISMATCH`, no machine verdict |
+| Wrong external fingerprint | `UNTRUSTED_ISSUER`, no machine verdict |
+| Explicitly revoked fingerprint | `UNTRUSTED_ISSUER`, no machine verdict |
+| Missing detached signature | `MISSING_ARTIFACT`, no machine verdict |
+| Legacy schema-2 checksum verification | Success explicitly labeled integrity-only |
+| Legacy bundle presented with the schema-3 signature | `CONTENT_MISMATCH`, no authentication fallback |
+
+Each CLI verification runs in a subprocess with an empty working directory,
+minimal environment and a Python audit hook blocking socket connections and DNS
+lookups. This catches accidental network use; it is not an OS sandbox against
+malicious native code. Package installation, action setup and artifact transport
+use the network **before** verification. No production issuer/wallet key, database,
+credentials, raw seller signature or live evidence is transferred. The synthetic
+artifact has one-day retention. Public-repository logs/artifacts must never be used
+for private customer bundles.
+
+The integration test runs the same seven CLI cases locally without downloading
+packages:
+
+```bash
+uv run pytest tests/integration/test_assurance_portability.py -q
+```
+
+To reproduce the wheel installation and recipient check locally on macOS/Linux:
+
+```bash
+recipient_tmp="$(mktemp -d)"
+uv build --wheel --out-dir "$recipient_tmp/dist"
+uv export --locked --no-dev --no-emit-project --quiet \
+  --output-file "$recipient_tmp/requirements.txt"
+fingerprint="$(uv run --locked python scripts/assurance_portability.py issue "$recipient_tmp/evidence")"
+cp scripts/assurance_portability.py "$recipient_tmp/"
+uv venv --python 3.12 "$recipient_tmp/venv"
+uv pip install --python "$recipient_tmp/venv/bin/python" --require-hashes \
+  --requirements "$recipient_tmp/requirements.txt"
+uv pip install --python "$recipient_tmp/venv/bin/python" --no-deps "$recipient_tmp"/dist/*.whl
+(
+  cd "$recipient_tmp"
+  "$recipient_tmp/venv/bin/python" -I "$recipient_tmp/assurance_portability.py" verify \
+    "$recipient_tmp/evidence" --issuer-fingerprint "$fingerprint"
+)
+```
+
+The command prints a JSON map of the seven expected outcomes and exits nonzero
+if a case differs. Use a new temporary directory for each trial; existing delivery
+directories are refused. The helper is a synthetic release check, not a general
+bundle ingestion or key-management command. For real evidence, use `verify-assurance`
+with an independently authenticated production issuer key as documented above.
+
+The workflow uses standard hosted runners with read-only repository permissions,
+immutable action references and no repository secrets. Standard hosted runner usage
+is free for public repositories; private repositories consume their plan's included
+allowance and may incur charges. Artifact storage has separate limits; one-day
+retention keeps this small test short-lived. See
+[GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
+and [job outputs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/pass-job-outputs).
+
 ## Rotation and compromise
 
 Distribute each new public key/fingerprint independently before accepting it.

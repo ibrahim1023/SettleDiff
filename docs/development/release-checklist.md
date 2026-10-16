@@ -1,6 +1,6 @@
 # Release Checklist
 
-SettleDiff is MIT-licensed and versioned (`0.1.0`). No public distribution channel is selected. This gate builds and installs local artifacts only; it does not publish, sign, pay, or invoke live providers.
+SettleDiff is MIT-licensed and versioned (`0.1.0`). No public distribution channel is selected. This gate builds and installs test artifacts; it does not publish, use production issuer keys, pay, or invoke live providers. The recipient portability check signs only synthetic evidence with an ephemeral test key.
 
 ## Offline quality gate
 
@@ -22,6 +22,7 @@ SettleDiff is MIT-licensed and versioned (`0.1.0`). No public distribution chann
 - [ ] A schema-4 database migrates forward through migrations 5 (evidence timeline) and 6 (immutable contract snapshots and observations), preserving report, events, artifacts, and explanation with idempotent timeline backfill on open.
 - [ ] The cohesive offline release tests cover delivery, timeline, retry, persisted drift, embedded Bazaar comparison, purchase investigation, and public publication without external calls.
 - [ ] Bundle checksum changes and internal inconsistencies are rejected; authenticated provenance is not claimed.
+- [ ] Both [recipient portability jobs](issuer-assurance.md#automated-recipient-check) pass: a fresh runner installs the wheel without a checkout and verifies the synthetic bundle against the separately supplied fingerprint. Tampered/wrong-key/revoked/missing-signature cases fail; legacy checksum verification remains integrity-only.
 - [ ] Public schema-1 reports remain unchanged; public schema 2 exposes only settlement statuses/diagnostics, verification dimensions, and `REQUIRED` payer policy. Publication still emits exactly three static files.
 - [ ] Facilitator comparison remains deferred under ADR 0009 (per-run provenance is absent); it is not claimed.
 - [ ] The synthetic Perflo v8 corpus under `tests/contract/perflo/` matches the locally inspected `@perflo/cli@8.0.0` package declarations whose npm integrity is recorded in the testing strategy; no fixture is represented as captured live evidence.
@@ -45,6 +46,16 @@ uv run settlediff verify-fixture fixtures/x402-independent-confirmed --json
 ```
 
 The focused release-hardening test persists complete cited artifacts before exercising byte-stable bundle export, verification, and deliberate tamper rejection.
+
+Run the synthetic issuer/recipient checks directly:
+
+```bash
+uv run pytest tests/integration/test_assurance_portability.py -q
+```
+
+This local test exercises the CLI cases; the separate CI jobs additionally check
+wheel installation and runner isolation. The [issuer guide](issuer-assurance.md#automated-recipient-check)
+includes a local wheel-based reproduction, trust limits and artifact handling.
 
 ## Build and isolated install
 

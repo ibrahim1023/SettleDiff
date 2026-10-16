@@ -80,6 +80,20 @@ Review trajectory assertions, not just final prose:
 - valid finding/artifact citations;
 - no contradiction with the machine report.
 
+## Issuer/recipient portability loop
+
+```bash
+uv run pytest tests/integration/test_assurance_portability.py tests/unit/application/test_assurance.py tests/unit/application/test_issuer_files.py tests/unit/test_assurance_cli.py -q
+```
+
+Use only synthetic evidence and temporary test keys. The two recipient CI jobs
+must pass after the offline matrix: the issuer transfers no database or private key;
+the recipient installs the wheel on a fresh runner without a checkout, receives its
+expected fingerprint through job outputs, and blocks network connection/DNS events
+in each verification subprocess. Check all seven expected outcomes in the
+[issuer guide](issuer-assurance.md#automated-recipient-check). Dependency installation
+and artifact transport are online setup, separate from offline verification.
+
 ## Model compatibility loop
 
 These loops use live model API credits and never run in default CI. Run only the selected provider:

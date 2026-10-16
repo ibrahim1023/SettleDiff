@@ -153,6 +153,13 @@ or private key. `AUTHENTIC` authenticates issuance and exact artifact bytes; the
 financial verdict remains separate. A signature does not prove payment, delivery,
 or evidence truth, and is not a ZKP. Default `verify-bundle` stays integrity-only.
 
+[CI tests a separate recipient environment](docs/development/issuer-assurance.md#automated-recipient-check).
+One job creates synthetic signed evidence; a fresh job installs the built wheel
+and verifies using a fingerprint passed separately from the evidence artifact.
+It checks tampering, wrong/revoked issuers, missing signatures, and legacy bundles,
+without production keys or live services. This demonstrates portability, not an
+independently operated auditor.
+
 Shared-history transparency is [designed but deferred](docs/development/evidence-transparency-design.md):
 there is no committed external history verifier or independent witness arrangement.
 No public log or SettleDiff ZK policy proof is implemented.

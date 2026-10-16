@@ -44,3 +44,69 @@ jobs:
         run: uv run --python ${{ matrix.python }} pytest -m "not live and not paid" --cov=settlediff --cov-branch --cov-report=term --cov-fail-under=91
       - name: Check documentation
         run: uv run python scripts/check_docs.py
+
+  assurance-issuer:
+    name: Build synthetic issuer delivery
+    needs: offline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      issuer_fingerprint: ${{ steps.issue.outputs.issuer_fingerprint }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install uv
+        uses: astral-sh/setup-uv@b75a909f75acd358c2196fb9a5f1299a9a8868a4 # v6.7.0
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Build wheel and locked runtime requirements
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/assurance-transfer/dist"
+          uv export --locked --no-dev --no-emit-project --quiet \
+            --output-file "$RUNNER_TEMP/assurance-transfer/requirements.txt"
+          cp scripts/assurance_portability.py "$RUNNER_TEMP/assurance-transfer/"
+      - name: Issue synthetic evidence with an ephemeral key
+        id: issue
+        run: |
+          fingerprint="$(uv run --locked --python 3.12 python scripts/assurance_portability.py \
+            issue "$RUNNER_TEMP/assurance-transfer/evidence")"
+          printf 'issuer_fingerprint=%s\n' "$fingerprint" >> "$GITHUB_OUTPUT"
+      - name: Transfer only the wheel, runtime requirements, check script and synthetic evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: synthetic-assurance-delivery
+          path: ${{ runner.temp }}/assurance-transfer
+          if-no-files-found: error
+          retention-days: 1
+
+  assurance-recipient:
+    name: Verify in a fresh recipient environment
+    needs: assurance-issuer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPECTED_ISSUER_FINGERPRINT: ${{ needs.assurance-issuer.outputs.issuer_fingerprint }}
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@b75a909f75acd358c2196fb9a5f1299a9a8868a4 # v6.7.0
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Receive the synthetic delivery
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: synthetic-assurance-delivery
+          path: ${{ runner.temp }}/assurance-received
+      - name: Install the built wheel with locked runtime dependencies
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/recipient-venv"
+          uv pip install --python "$RUNNER_TEMP/recipient-venv/bin/python" --require-hashes \
+            --requirements "$RUNNER_TEMP/assurance-received/requirements.txt"
+          uv pip install --python "$RUNNER_TEMP/recipient-venv/bin/python" --no-deps \
+            "$RUNNER_TEMP"/assurance-received/dist/*.whl
+      - name: Check recipient authentication and failures without network access
+        run: |
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/recipient-venv/bin/python" -I \
+            "$RUNNER_TEMP/assurance-received/assurance_portability.py" verify \
+            "$RUNNER_TEMP/assurance-received/evidence" \
+            --issuer-fingerprint "$EXPECTED_ISSUER_FINGERPRINT"
