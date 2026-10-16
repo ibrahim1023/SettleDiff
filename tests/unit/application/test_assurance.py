@@ -441,9 +441,17 @@ def test_envelope_requires_explicit_format_discriminators(bundle_data: bytes, fi
     assert result.machine_verdict is None
 
 
-def test_signing_rejects_unpaired_unicode_with_boundary_error() -> None:
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        b'{"schema_version":' + b"9" * 5000 + b"}",
+        b'{"schema_version":3,"objects":' + b"[" * 10000 + b"0" + b"]" * 10000 + b"}",
+        b'{"schema_version":3,"run_id":"\\ud800"}',
+    ],
+    ids=["integer-limit", "nesting-limit", "unpaired-surrogate"],
+)
+def test_signing_rejects_malformed_json_with_boundary_error(malformed: bytes) -> None:
     from settlediff.application.assurance import AssuranceError
 
-    malformed = b'{"schema_version":3,"run_id":"\\ud800"}'
     with pytest.raises(AssuranceError, match="bundle cannot be signed"):
         sign_bundle(malformed, Ed25519PrivateKey.generate())

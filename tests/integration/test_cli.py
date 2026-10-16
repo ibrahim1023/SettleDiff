@@ -1435,6 +1435,27 @@ def test_export_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
     assert output.read_text() == "existing"
 
 
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        b'{"schema_version":' + b"9" * 5000 + b"}",
+        b'{"schema_version":3,"objects":' + b"[" * 10000 + b"0" + b"]" * 10000 + b"}",
+        b'{"schema_version":3,"run_id":"\\ud800"}',
+    ],
+    ids=["integer-limit", "nesting-limit", "unpaired-surrogate"],
+)
+def test_verify_bundle_malformed_json_fails_cleanly(tmp_path: Path, malformed: bytes) -> None:
+    path = tmp_path / "malformed.bundle.json"
+    path.write_bytes(malformed)
+
+    result = runner.invoke(app, ["verify-bundle", str(path)])
+
+    assert result.exit_code == 2
+    assert result.stderr.strip() == "Bundle verification failed: invalid evidence bundle"
+    assert result.stdout == ""
+    assert isinstance(result.exception, SystemExit)
+
+
 def test_export_missing_run_and_tampered_bundle_fail_cleanly(tmp_path: Path) -> None:
     database, run_id = _persisted_fixture_report(tmp_path)
     output = tmp_path / "run.bundle.json"

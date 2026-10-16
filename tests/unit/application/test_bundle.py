@@ -343,6 +343,20 @@ def test_load_rejects_duplicate_json_keys_and_non_object(tmp_path: Path) -> None
     repository.close()
 
 
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        b'{"schema_version":' + b"9" * 5000 + b"}",
+        b'{"schema_version":3,"objects":' + b"[" * 10000 + b"0" + b"]" * 10000 + b"}",
+        b'{"schema_version":3,"run_id":"\\ud800"}',
+    ],
+    ids=["integer-limit", "nesting-limit", "unpaired-surrogate"],
+)
+def test_load_wraps_malformed_json_failures(malformed: bytes) -> None:
+    with pytest.raises(BundleError, match="invalid evidence bundle"):
+        load_bundle(malformed)
+
+
 def test_verify_rejects_artifact_path_content_mismatch(tmp_path: Path) -> None:
     repository, report = _persist(tmp_path, "clean-success")
     bundle = export_bundle(repository, report.run_id)

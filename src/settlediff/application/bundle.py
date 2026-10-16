@@ -564,13 +564,13 @@ def load_bundle(data: bytes) -> Bundle:
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_json_constant,
         )
-    except (json.JSONDecodeError, UnicodeDecodeError, BundleError) as error:
+        if not isinstance(decoded, dict):
+            raise BundleError("invalid evidence bundle")
+        payload = cast(dict[str, JsonValue], decoded)
+        encoded = canonical_json_bytes(payload)
+    except (ValueError, RecursionError) as error:
         raise BundleError("invalid evidence bundle") from error
-    if not isinstance(decoded, dict):
-        raise BundleError("invalid evidence bundle")
-    payload = cast(dict[str, JsonValue], decoded)
     version = payload.get("schema_version")
-    encoded = canonical_json_bytes(payload)
     try:
         if version == 2:
             return EvidenceBundle.model_validate_json(encoded, strict=True)
