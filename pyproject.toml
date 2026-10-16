@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "settlediff"
-version = "0.1.0"
+version = "0.1.0rc1"
 description = "Deterministic verification for agent-initiated purchases"
 readme = "README.md"
 license = "MIT"

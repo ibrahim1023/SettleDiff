@@ -1,6 +1,6 @@
 # Release Checklist
 
-SettleDiff is MIT-licensed and versioned (`0.1.0`). No public distribution channel is selected. This gate builds and installs test artifacts; it does not publish, use production issuer keys, pay, or invoke live providers. The recipient portability check signs only synthetic evidence with an ephemeral test key.
+SettleDiff is MIT-licensed and versioned (`0.1.0rc1`). This release candidate is prepared as a draft GitHub release for recipient trials; it is not published to a package registry. This gate builds and installs test artifacts; it does not publish, use production issuer keys, pay, or invoke live providers. The recipient portability check signs only synthetic evidence with an ephemeral test key.
 
 ## Offline quality gate
 
@@ -63,12 +63,12 @@ includes a local wheel-based reproduction, trust limits and artifact handling.
 release_tmp="$(mktemp -d)"
 uv build --out-dir "$release_tmp/dist"
 uv venv "$release_tmp/venv"
-uv pip install --python "$release_tmp/venv/bin/python" "$release_tmp/dist/settlediff-0.1.0-py3-none-any.whl"
+uv pip install --python "$release_tmp/venv/bin/python" "$release_tmp"/dist/*.whl
 "$release_tmp/venv/bin/settlediff" --version
 ```
 
 - [ ] The wheel and source distribution contain only intended tracked package content.
-- [ ] The isolated command prints `settlediff 0.1.0`.
+- [ ] The isolated command prints `settlediff 0.1.0rc1`.
 
 ## Security and evidence review
 
