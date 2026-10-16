@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import subprocess
@@ -25,6 +26,7 @@ from settlediff.application.replay import replay_fixture
 from settlediff.domain.integrity import canonical_json_bytes, sha256_digest
 from settlediff.domain.models import ArtifactType, EvidenceArtifact
 from settlediff.storage.sqlite import SQLiteReportRepository
+from settlediff.subprocess_io import OutputLimitExceeded, communicate_bounded
 
 _FILES = {"bundle.json", "bundle.assurance.json", "legacy.bundle.json"}
 _OFFLINE_CLI = """
@@ -93,15 +95,35 @@ def issue_fixture(output: Path) -> str:
 
 
 def _recipient_cli(directory: Path, arguments: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-I", "-c", _OFFLINE_CLI, *arguments],
-        cwd=directory,
-        env={"PATH": os.defpath, "NO_COLOR": "1"},
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
+    async def invoke() -> subprocess.CompletedProcess[str]:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-I",
+            "-c",
+            _OFFLINE_CLI,
+            *arguments,
+            cwd=directory,
+            env={"PATH": os.defpath, "NO_COLOR": "1"},
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                communicate_bounded(process, 16 * 1024), timeout=30
+            )
+        except OutputLimitExceeded:
+            raise RuntimeError("recipient CLI output limit exceeded") from None
+        except TimeoutError:
+            raise RuntimeError("recipient CLI timed out") from None
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+        return subprocess.CompletedProcess(
+            arguments, await process.wait(), stdout.decode("utf-8"), stderr.decode("utf-8")
+        )
+
+    return asyncio.run(invoke())
 
 
 def verify_recipient(delivery: Path, fingerprint: str) -> dict[str, str]:
@@ -133,14 +155,20 @@ def verify_recipient(delivery: Path, fingerprint: str) -> dict[str, str]:
                 *extra,
             ],
         )
-        payload = json.loads(result.stdout)
+        diagnostic = f"exit={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            raise RuntimeError(
+                f"recipient check returned invalid JSON: {name}; {diagnostic}"
+            ) from None
         verdict = "VERIFIED" if expected == "AUTHENTIC" else None
         if (
             result.returncode != (0 if expected == "AUTHENTIC" else 2)
             or payload["status"] != expected
             or payload["machine_verdict"] != verdict
         ):
-            raise RuntimeError(f"recipient check failed: {name}")
+            raise RuntimeError(f"recipient check failed: {name}; {diagnostic}")
         checks[name] = expected
 
     with TemporaryDirectory(prefix="settlediff-synthetic-recipient-") as temporary:
@@ -163,7 +191,10 @@ def verify_recipient(delivery: Path, fingerprint: str) -> dict[str, str]:
         legacy = delivery / "legacy.bundle.json"
         result = _recipient_cli(working, ["verify-bundle", str(legacy)])
         if result.returncode != 0 or "authenticity is not established" not in result.stdout:
-            raise RuntimeError("recipient check failed: legacy integrity-only verification")
+            raise RuntimeError(
+                "recipient check failed: legacy integrity-only verification; "
+                f"exit={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
+            )
         checks["legacy_integrity"] = "INTEGRITY_ONLY"
         authenticate("legacy_authentication", legacy, "CONTENT_MISMATCH")
     return checks

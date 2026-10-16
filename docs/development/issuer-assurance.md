@@ -128,10 +128,11 @@ auditor or production key-distribution service.
 | Legacy schema-2 checksum verification | Success explicitly labeled integrity-only |
 | Legacy bundle presented with the schema-3 signature | `CONTENT_MISMATCH`, no authentication fallback |
 
-Each CLI verification runs in a subprocess with an empty working directory,
-minimal environment and a Python audit hook blocking socket connections and DNS
-lookups. This catches accidental network use; it is not an OS sandbox against
-malicious native code. Package installation, action setup and artifact transport
+Each CLI verification runs in a subprocess with a temporary working directory
+outside the checkout, a minimal environment, a 30-second timeout, a 16-KiB limit
+per output stream, and a Python audit hook blocking socket connections and DNS
+lookups. Failures include bounded diagnostics. This catches accidental network use;
+it is not an OS sandbox against malicious native code. Package installation, action setup and artifact transport
 use the network **before** verification. No production issuer/wallet key, database,
 credentials, raw seller signature or live evidence is transferred. The synthetic
 artifact has one-day retention. Public-repository logs/artifacts must never be used

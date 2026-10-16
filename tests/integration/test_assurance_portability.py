@@ -41,3 +41,19 @@ def test_recipient_trial_rejects_unexpected_transferred_files(tmp_path: Path) ->
 
     with pytest.raises(ValueError, match="exactly the three expected files"):
         verify_recipient(delivery, fingerprint)
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_recipient_trial_bounds_child_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stream: str
+) -> None:
+    delivery = tmp_path / "delivery"
+    fingerprint = issue_fixture(delivery)
+    executable = tmp_path / "synthetic-child"
+    redirect = " >&2" if stream == "stderr" else ""
+    executable.write_text(f"#!/bin/sh\nprintf '%20000s' synthetic{redirect}\n")
+    executable.chmod(0o700)
+    monkeypatch.setattr("sys.executable", str(executable))
+
+    with pytest.raises(RuntimeError, match="recipient CLI output limit exceeded"):
+        verify_recipient(delivery, fingerprint)
