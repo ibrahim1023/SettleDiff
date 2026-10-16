@@ -22,6 +22,15 @@ SettleDiff is a local developer tool: a CLI, a loopback UI, and SQLite evidence
 records. Use it to investigate payment/delivery disagreements, inspect retry
 safety, and share masked reports with supporting private evidence bundles.
 
+**Release status:** `0.1.0rc1` is an MIT-licensed release candidate. Its recipient
+handoff is prepared, but the GitHub release remains an unpublished draft. SettleDiff
+is available from source; it is not on a package registry or offered as a hosted service.
+
+Start with the [offline demo](#try-it-offline), or follow the
+[recipient trial guide](docs/releases/0.1.0rc1-recipient.md) to verify a candidate
+provided by a maintainer. [Live investigations](#before-a-live-investigation)
+require additional setup and exact-request payment authorization.
+
 ## Try it offline
 
 Requires Python 3.12 or 3.13 and [uv](https://docs.astral.sh/uv/). Install from source:
@@ -110,10 +119,9 @@ the observer checks the receipt and exact ERC-20 transfer. Pending receipts,
 unavailable RPC evidence, and contradictions remain explicit. See
 [independent settlement observation](docs/decisions/0010-independent-settlement-observation.md).
 
-A [fresh public x402 purchase on 2026-10-15](docs/testing/public-x402-validation-2026-10-15.md)
-returned `VERIFIED`: the weather service delivered HTTP 200, independent on-chain
-observation confirmed the exact 0.001 test USDC transfer, and all 13 checks passed.
-The saved report and exported evidence bundle preserve that result.
+A [public x402 weather purchase on 2026-10-15](docs/testing/public-x402-validation-2026-10-15.md)
+returned `VERIFIED`, with an independently confirmed 0.001 test USDC transfer and
+13 passing checks. This is a bounded testnet result.
 
 For advertised JWS/Ed25519 offers, SettleDiff verifies the same-origin seller key,
 binds the proof into authorization, and rechecks it before payment. It assesses
@@ -121,35 +129,47 @@ receipts after normal and uncertain results. Raw JWS strings remain ephemeral;
 private reports and bundles retain assessments and digests. Bundle checks cannot
 replay cryptographic verification without the raw proof. The
 [signed-evidence guide](docs/development/signed-evidence.md) explains the supported
-profile and limits. An [unpaid live staging inspection](docs/testing/signed-x402-readiness-2026-10-13.md)
-verified a signed offer. [Approved paid trials](docs/testing/signed-x402-attempt-2026-10-14.md)
-remain unresolved: retained responses include HTTP 400 `x402.invalid_payment` and
-fresh HTTP 402 challenges without settlement evidence, across two signed routes.
-Receipt verification is covered offline; a successful live
-signed-purchase trial is still outstanding.
+profile and limits. Live inspection verified a signed offer, but a successful live
+signed-purchase trial remains outstanding; receipt verification is covered offline.
+See the [signed-offer inspection](docs/testing/signed-x402-readiness-2026-10-13.md)
+and [unresolved paid-trial record](docs/testing/signed-x402-attempt-2026-10-14.md).
 
-Controlled live tests have demonstrated disagreements, independent x402 settlement,
-and a settled delivery failure. Historical report schemas have different settlement
-semantics; see the dated [real-world assurance record](docs/testing/assurance-real-world-validation-2026-09-22.md)
-and [Perflo v8/x402 validation](docs/testing/pr2-live-validation-2026-09-28.md) for
-exact terms, masked observations, and limitations.
+Earlier disagreements and delivery-failure tests are documented in the
+[real-world assurance record](docs/testing/assurance-real-world-validation-2026-09-22.md)
+and [Perflo v8/x402 validation](docs/testing/pr2-live-validation-2026-09-28.md).
+Those dated records retain their original report-schema semantics.
 
 ## Authenticate a shared private bundle
 
 Checksums detect changes relative to a known digest. For issuer authentication,
-optionally attach an Ed25519 assurance signature to an exported private bundle:
+optionally attach an Ed25519 assurance signature to a private bundle.
+
+First follow the [issuer-assurance guide](docs/development/issuer-assurance.md) to
+create an encrypted dedicated issuer key. Then replace `RUN_ID` below with a saved
+investigation that retained its cited evidence, and export and sign it:
 
 ```bash
+mkdir -p .local
+uv run settlediff export RUN_ID --database .local/settlediff.sqlite3 --output .local/bundle.json
 uv run settlediff sign-bundle .local/bundle.json \
   --issuer-key "$HOME/.settlediff-issuer/issuer.pem" --output .local/bundle.assurance.json
+```
+
+The quickstart's `verify-fixture --database` saves a report without its cited
+artifacts, so it cannot supply this export. Use the
+[synthetic recipient example](docs/releases/0.1.0rc1-recipient.md) to try
+authentication without a saved investigation.
+
+Share the bundle and detached signature privately. The recipient obtains the
+issuer's public key through a separately trusted channel and runs:
+
+```bash
 uv run settlediff verify-assurance bundle.json \
   --signature bundle.assurance.json --issuer-public-key trusted-issuer.pub.pem
 ```
 
-First follow the [issuer-assurance guide](docs/development/issuer-assurance.md) to
-explicitly create an encrypted dedicated issuer key and distribute its public key
-through a trusted channel. Verification is offline and needs no database, wallet,
-or private key. `AUTHENTIC` authenticates issuance and exact artifact bytes; the
+Verification is offline and needs no database, wallet, or private key.
+`AUTHENTIC` authenticates issuance and exact artifact bytes; the
 financial verdict remains separate. A signature does not prove payment, delivery,
 or evidence truth, and is not a ZKP. Default `verify-bundle` stays integrity-only.
 
@@ -261,11 +281,8 @@ separate opt-in trials and calibrated graders.
 
 ## Architecture and project status
 
-SettleDiff **0.1.0rc1** is an MIT-licensed release candidate available from source;
-see the [recipient trial guide](docs/releases/0.1.0rc1-recipient.md) for the prepared
-handoff, installation steps and trust assumptions. It is not published
-to a package registry or offered as a hosted service. The application uses Python,
-strict Pydantic models, a bounded PydanticAI investigator, Typer, FastAPI, SQLite,
+The application uses Python, strict Pydantic models, a bounded PydanticAI
+investigator, Typer, FastAPI, SQLite,
 and OpenTelemetry. Only deterministic code produces financial findings.
 
 The supported x402 profile is narrow; RPC availability and operator trust remain
